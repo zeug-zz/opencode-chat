@@ -11,7 +11,7 @@ describe("TextPartView", () => {
     it("HTML コンテンツをレンダリングすること", () => {
       const part = createTextPart("Hello world");
       const { container } = render(<TextPartView part={part} />);
-      expect(container.querySelector("span")).toBeInTheDocument();
+      expect(container.querySelector(".markdown")).toBeInTheDocument();
     });
 
     // renders the text
