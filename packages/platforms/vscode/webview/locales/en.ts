@@ -31,6 +31,7 @@ export const en = {
   "message.thought": "Thought",
   "message.thinking": "Thinking…",
   "message.toggleThought": "Toggle thought details",
+  "message.copyMarkdown": "Copy Markdown",
 
   // MessagesArea
   "checkpoint.revertTitle": "Revert to this point",

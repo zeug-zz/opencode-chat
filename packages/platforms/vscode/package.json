@@ -34,7 +34,9 @@
     "AI",
     "Chat"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:opencode.chatView"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {

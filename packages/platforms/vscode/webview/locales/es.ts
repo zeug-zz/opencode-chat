@@ -33,6 +33,7 @@ export const es: LocaleSchema = {
   "message.thought": "Pensamiento",
   "message.thinking": "Pensando…",
   "message.toggleThought": "Alternar detalles de pensamiento",
+  "message.copyMarkdown": "Copiar Markdown",
 
   // MessagesArea
   "checkpoint.revertTitle": "Revertir a este punto",

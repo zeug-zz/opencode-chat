@@ -1,8 +1,15 @@
-import type { QuestionRequest, ReasoningPart as ReasoningPartType, TextPart, ToolPart } from "@opencodegui/core";
+import type {
+  MessagePart,
+  QuestionRequest,
+  ReasoningPart as ReasoningPartType,
+  TextPart,
+  ToolPart,
+} from "@opencodegui/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MessageWithParts } from "../../../App";
 import { useAppContext } from "../../../contexts/AppContext";
 import { useLocale } from "../../../locales";
+import { postMessage } from "../../../vscode-api";
 import { ActionButton } from "../../atoms/ActionButton";
 import { ChevronRightIcon, EditIcon, InfoCircleIcon, SpinnerIcon } from "../../atoms/icons";
 import { ShellResultView } from "../../molecules/ShellResultView";
@@ -12,12 +19,49 @@ import { isTaskToolPart, type SubtaskPart, SubtaskPartView } from "../SubtaskPar
 import { ToolPartView } from "../ToolPartView";
 import styles from "./MessageItem.module.css";
 
+// コピー用アイコン（二重ページのクリップボード）と、コピー完了時のチェックマーク。
+// TextPartView のコードブロックコピーボタンと同じ視覚言語に合わせた。
+const COPY_ICON = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 4l1-1h5.414L14 6.586V14l-1 1H5l-1-1V4zm9 3l-3-3H5v10h8V7z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M3 1L2 2v10l1 1V2h6.414l-1-1H3z"/></svg>`;
+const CHECK_ICON = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M14.431 3.323l-8.47 10-.79-.036-3.35-4.77.818-.574 2.978 4.24 8.051-9.506.763.646z"/></svg>`;
+
 type Props = {
   message: MessageWithParts;
   activeSessionId: string;
   questions: Map<string, QuestionRequest>;
   onEditAndResend?: (messageId: string, text: string) => void;
 };
+
+/**
+ * アシスタントメッセージの可視テキストパートから、コピー用の Markdown ソースを組み立てる。
+ *
+ * - `type === "text"` のパートのみを対象とする（tool/reasoning/subtask/file 等は除外）。
+ * - 複数パートは Markdown ブロック境界を保つため `\n\n` で連結する。
+ * - 空文字列のパートは可視コンテンツではないので除外する。
+ * - コピー対象が存在しない場合は `null` を返す（no-copy sentinel）。
+ */
+export function getAssistantMarkdownSource(parts: MessagePart[]): string | null {
+  const texts = parts
+    .filter((part): part is TextPart => part.type === "text")
+    .map((part) => part.text)
+    .filter((text) => text.length > 0);
+
+  return texts.length > 0 ? texts.join("\n\n") : null;
+}
+
+/**
+ * メッセージのコンテキスト（role / shell 判定）に応じてコピー対象を絞り込む。
+ *
+ * - ユーザーメッセージ・シェル結果のアシスタントメッセージはコピー対象外。
+ * - それ以外（通常の assistant）で可視テキストパートがあれば Step 1.1 の Markdown ソースを返す。
+ * - 可視テキストパートが無ければ `null`（no-copy sentinel）。
+ */
+export function getCopyableAssistantMarkdownSource(
+  parts: MessagePart[],
+  options: { isUser: boolean; isShell: boolean },
+): string | null {
+  if (options.isUser || options.isShell) return null;
+  return getAssistantMarkdownSource(parts);
+}
 
 export function MessageItem({ message, activeSessionId, questions, onEditAndResend }: Props) {
   const t = useLocale();
@@ -29,6 +73,16 @@ export function MessageItem({ message, activeSessionId, questions, onEditAndRese
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const editRef = useRef<HTMLTextAreaElement>(null);
+  // コピー直後にチェックマークへ切り替えるための短時間フラグ。
+  // 連続クリックでも前のタイマーが残らないように ref で管理する。
+  const [copied, setCopied] = useState(false);
+  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
+    };
+  }, []);
 
   // このメッセージに紐づく質問リクエストを取得する
   // QuestionRequest.tool.messageID でメッセージと紐付ける
@@ -55,6 +109,10 @@ export function MessageItem({ message, activeSessionId, questions, onEditAndRese
           return basename;
         })
     : [];
+
+  // コピー対象の Markdown ソースを組み立てる。
+  // user メッセージ / shell 結果 / 可視テキスト無しの場合は null。
+  const copyableMarkdown = getCopyableAssistantMarkdownSource(parts, { isUser, isShell });
 
   const handleStartEdit = useCallback(() => {
     if (!isUser || !userText) return;
@@ -183,6 +241,25 @@ export function MessageItem({ message, activeSessionId, questions, onEditAndRese
           {messageQuestions.map((q) => (
             <QuestionView key={q.id} question={q} />
           ))}
+          {copyableMarkdown && (
+            <button
+              type="button"
+              className={`${styles.copyMarkdownButton}${copied ? ` ${styles.copied}` : ""}`}
+              aria-label={t["message.copyMarkdown"]}
+              title={t["message.copyMarkdown"]}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                postMessage({ type: "copyToClipboard", text: copyableMarkdown });
+                setCopied(true);
+                if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
+                copiedTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {/* biome-ignore lint/security/noDangerouslySetInnerHtml: 固定 SVG 文字列を差し込むだけ */}
+              <span dangerouslySetInnerHTML={{ __html: copied ? CHECK_ICON : COPY_ICON }} />
+            </button>
+          )}
         </div>
       )}
     </div>

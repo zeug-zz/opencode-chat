@@ -1,4 +1,5 @@
 import { fireEvent, render } from "@testing-library/react";
+import { Marked } from "marked";
 import { describe, expect, it, vi } from "vitest";
 import { TextPartView } from "../../../components/molecules/TextPartView";
 import { postMessage } from "../../../vscode-api";
@@ -100,6 +101,53 @@ describe("TextPartView", () => {
         filePath: "/home/user/project/src/main.ts",
         line: 42,
       });
+    });
+  });
+
+  // code-block copy button posts only the <pre><code> text, independent of the
+  // message-level Copy Markdown action added in copy-chat-markdown.
+  context("コードブロックのコピーボタンをクリックした場合", () => {
+    // The global Marked mock returns `<p>${text}</p>`, which never emits a
+    // `.code-block-wrapper`. For these tests we override the prototype to
+    // produce the structure that TextPartView's custom renderer would emit.
+    function stubCodeBlockHtml(html: string) {
+      return vi.spyOn(Marked.prototype, "parse").mockReturnValueOnce(html);
+    }
+
+    // posts the raw <pre><code> text only, not the full Markdown source
+    it("コード本文のみを postMessage に送信すること", () => {
+      const spy = stubCodeBlockHtml(
+        '<div class="code-block-wrapper"><div class="code-block-header"><button class="code-block-copy" type="button" aria-label="Copy code">Copy</button></div><pre><code class="hljs language-ts">const x = 1;</code></pre></div>',
+      );
+      const part = createTextPart("```ts\nconst x = 1;\n```");
+      const { container } = render(<TextPartView part={part} />);
+      const copyBtn = container.querySelector<HTMLElement>(".code-block-copy");
+      expect(copyBtn).toBeInTheDocument();
+      fireEvent.click(copyBtn!);
+      expect(vi.mocked(postMessage)).toHaveBeenCalledWith({
+        type: "copyToClipboard",
+        text: "const x = 1;",
+      });
+      spy.mockRestore();
+    });
+
+    // does not include the code fence or surrounding prose
+    it("コードフェンスや前後の文章を含まないこと", () => {
+      const spy = stubCodeBlockHtml(
+        '<div class="code-block-wrapper"><div class="code-block-header"><button class="code-block-copy" type="button">Copy</button></div><pre><code class="hljs language-py">print("hi")</code></pre></div>',
+      );
+      const part = createTextPart('Here is code:\n\n```py\nprint("hi")\n```\n\nDone.');
+      const { container } = render(<TextPartView part={part} />);
+      const copyBtn = container.querySelector<HTMLElement>(".code-block-copy");
+      expect(copyBtn).toBeInTheDocument();
+      fireEvent.click(copyBtn!);
+      const call = vi.mocked(postMessage).mock.calls[0]?.[0];
+      expect(call).toEqual({ type: "copyToClipboard", text: 'print("hi")' });
+      // フェンスや前後に投稿された場合の文字列が混入していないこと
+      expect(call?.text).not.toContain("```");
+      expect(call?.text).not.toContain("Here is code");
+      expect(call?.text).not.toContain("Done.");
+      spy.mockRestore();
     });
   });
 });
