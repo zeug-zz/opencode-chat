@@ -33,6 +33,7 @@ export const ja: LocaleSchema = {
   "message.thought": "思考",
   "message.thinking": "思考中…",
   "message.toggleThought": "思考の詳細を切り替え",
+  "message.copyMarkdown": "マークダウンをコピー",
 
   // MessagesArea
   "checkpoint.revertTitle": "ここまで巻き戻す",

@@ -33,6 +33,7 @@ export const ptBr: LocaleSchema = {
   "message.thought": "Pensamento",
   "message.thinking": "Pensando…",
   "message.toggleThought": "Alternar detalhes do pensamento",
+  "message.copyMarkdown": "Copiar Markdown",
 
   // MessagesArea
   "checkpoint.revertTitle": "Reverter para este ponto",

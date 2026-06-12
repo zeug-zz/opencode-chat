@@ -33,6 +33,7 @@ export const zhCn: LocaleSchema = {
   "message.thought": "思考",
   "message.thinking": "思考中…",
   "message.toggleThought": "切换思考详情",
+  "message.copyMarkdown": "复制 Markdown",
 
   // MessagesArea
   "checkpoint.revertTitle": "回退到此处",

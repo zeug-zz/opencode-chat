@@ -33,6 +33,7 @@ export const ko: LocaleSchema = {
   "message.thought": "사고",
   "message.thinking": "사고 중…",
   "message.toggleThought": "사고 상세 전환",
+  "message.copyMarkdown": "마크다운 복사",
 
   // MessagesArea
   "checkpoint.revertTitle": "이 지점으로 되돌리기",

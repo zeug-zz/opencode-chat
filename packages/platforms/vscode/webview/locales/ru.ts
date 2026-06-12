@@ -33,6 +33,7 @@ export const ru: LocaleSchema = {
   "message.thought": "Мысль",
   "message.thinking": "Думаю…",
   "message.toggleThought": "Переключить детали мысли",
+  "message.copyMarkdown": "Копировать Markdown",
 
   // MessagesArea
   "checkpoint.revertTitle": "Вернуться к этой точке",
