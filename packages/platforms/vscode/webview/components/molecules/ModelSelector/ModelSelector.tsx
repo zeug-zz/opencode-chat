@@ -1,4 +1,4 @@
-import type { ProviderInfo as CoreProviderInfo } from "@opencodegui/core";
+import type { ModelVariantRef, ProviderInfo as CoreProviderInfo } from "@opencodegui/core";
 import { useMemo, useState } from "react";
 import { useLocale } from "../../../locales";
 import type { AllProvidersData, ModelInfo, ProviderInfo } from "../../../vscode-api";
@@ -12,6 +12,14 @@ type Props = {
   allProvidersData: AllProvidersData | null;
   selectedModel: { providerID: string; modelID: string } | null;
   onSelect: (model: { providerID: string; modelID: string }) => void;
+  /**
+   * Optional explicit model effort/variant for the selected model.
+   * When unset, the selector shows only the model name (no separator
+   * or placeholder like "default"). When set, the effort label (or
+   * id fallback) is rendered compactly next to the model name with a
+   * middle-dot separator. Display-only; click handling lives elsewhere.
+   */
+  selectedModelEffort?: ModelVariantRef;
 };
 
 function formatContextK(context: number): string {
@@ -30,10 +38,17 @@ const badgeClass: Record<string, string> = {
   deprecated: styles.deprecated,
 };
 
-export function ModelSelector({ providers, allProvidersData, selectedModel, onSelect }: Props) {
+export function ModelSelector({
+  providers,
+  allProvidersData,
+  selectedModel,
+  onSelect,
+  selectedModelEffort,
+}: Props) {
   const t = useLocale();
   const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // 表示用プロバイダーリスト: allProvidersData があればそちらを使い、なければ従来の providers を使う
   const allDisplayProviders = useMemo(() => {
@@ -75,6 +90,35 @@ export function ModelSelector({ providers, allProvidersData, selectedModel, onSe
 
   const hasDisconnected = useMemo(() => allDisplayProviders.some((p) => !p.connected), [allDisplayProviders]);
 
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const isSearching = normalizedSearchQuery.length > 0;
+
+  const visibleProviders = useMemo(() => {
+    if (!isSearching) return displayProviders;
+
+    return displayProviders
+      .map((provider) => {
+        const providerMatches =
+          provider.name.toLowerCase().includes(normalizedSearchQuery) ||
+          provider.id.toLowerCase().includes(normalizedSearchQuery);
+
+        const models = providerMatches
+          ? provider.models
+          : provider.models.filter((model) => {
+              const modelName = model.name || "";
+              return (
+                modelName.toLowerCase().includes(normalizedSearchQuery) ||
+                model.id.toLowerCase().includes(normalizedSearchQuery)
+              );
+            });
+
+        return { ...provider, models };
+      })
+      .filter((provider) => provider.models.length > 0);
+  }, [displayProviders, isSearching, normalizedSearchQuery]);
+
+  const hasSearchResults = visibleProviders.length > 0;
+
   const selectedModelName = useMemo(() => {
     if (!selectedModel) return t["model.selectModel"];
     for (const p of allDisplayProviders) {
@@ -83,6 +127,17 @@ export function ModelSelector({ providers, allProvidersData, selectedModel, onSe
     }
     return selectedModel.modelID;
   }, [selectedModel, allDisplayProviders, t["model.selectModel"]]);
+
+  // Effort display text. Prefer the normalized `label`; fall back to `id`.
+  // Only render when both a model is selected and an explicit effort is set.
+  // The label is intentionally compact (e.g. "Low" / "Medium" / "High") and
+  // uses a middle-dot separator so the rendered text reads as
+  // "GPT-5.4 · Low" without dominating the model name.
+  const selectedModelEffortText = useMemo(() => {
+    if (!selectedModel) return null;
+    if (!selectedModelEffort) return null;
+    return selectedModelEffort.label || selectedModelEffort.id;
+  }, [selectedModel, selectedModelEffort]);
 
   const toggleProvider = (id: string) => {
     setCollapsedProviders((prev) => {
@@ -98,7 +153,19 @@ export function ModelSelector({ providers, allProvidersData, selectedModel, onSe
       className={styles.root}
       trigger={({ open, toggle }) => (
         <button type="button" className={styles.button} onClick={toggle} title={t["model.selectModel"]}>
-          <span className={styles.label}>{selectedModelName}</span>
+          <span className={styles.label}>
+            <span className={styles.modelName}>{selectedModelName}</span>
+            {selectedModelEffortText && (
+              <>
+                <span className={styles.separator} aria-hidden="true">
+                  ·
+                </span>
+                <span className={styles.effort} title={`effort: ${selectedModelEffortText}`}>
+                  {selectedModelEffortText}
+                </span>
+              </>
+            )}
+          </span>
           <span className={`${styles.chevron} ${open ? styles.expanded : ""}`}>
             <ChevronRightIcon />
           </span>
@@ -107,14 +174,16 @@ export function ModelSelector({ providers, allProvidersData, selectedModel, onSe
       panel={({ close }) => (
         <div className={styles.panel}>
           <div className={styles.panelBody}>
-            {displayProviders.map((provider) => {
+            {visibleProviders.map((provider) => {
               if (provider.models.length === 0) return null;
-              const isCollapsed = collapsedProviders.has(provider.id);
+              const isCollapsed = !isSearching && collapsedProviders.has(provider.id);
               return (
                 <div key={provider.id} className={styles.section}>
                   <div
                     className={`${styles.sectionTitle} ${!provider.connected ? styles.disconnected : ""}`}
-                    onClick={() => toggleProvider(provider.id)}
+                    onClick={() => {
+                      if (!isSearching) toggleProvider(provider.id);
+                    }}
                   >
                     <span className={`${styles.chevron} ${isCollapsed ? "" : styles.expanded}`}>
                       <ChevronRightIcon />
@@ -156,8 +225,17 @@ export function ModelSelector({ providers, allProvidersData, selectedModel, onSe
                 </div>
               );
             })}
+            {!hasSearchResults && <div className={styles.noResults}>{t["model.noSearchResults"]}</div>}
           </div>
-          {hasDisconnected && (
+          <div className={styles.searchBox}>
+            <input
+              className={styles.searchInput}
+              placeholder={t["model.searchPlaceholder"]}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+          </div>
+          {!isSearching && hasDisconnected && (
             <div className={styles.footer}>
               <LinkButton
                 onClick={() => setShowAll((s) => !s)}
