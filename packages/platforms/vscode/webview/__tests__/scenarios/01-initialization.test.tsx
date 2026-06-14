@@ -1,9 +1,107 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { postMessage } from "../../vscode-api";
 import { createAllProvidersData, createProvider, createSession } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
+
+/**
+ * Primary-agent initialization fixture set.
+ *
+ * The exact `plan`-first selection is verified for three orderings:
+ *   - `build` (`primary`) then `plan` (`primary`)
+ *   - `build` (`primary`) then `plan` (`all`)
+ *   - `plan` (`all`) then `build` (`primary`)
+ *
+ * The fallback (no `plan` agent) is verified for `build` (`primary`)
+ * only and a subagent-only list.
+ */
+const buildPrimaryPlanPrimaryAgents = [
+  {
+    name: "build",
+    description: "Primary build agent",
+    mode: "primary",
+    builtIn: true,
+    permission: { edit: "ask", bash: {} },
+    tools: {},
+    options: {},
+  },
+  {
+    name: "plan",
+    description: "Primary plan agent",
+    mode: "primary",
+    builtIn: true,
+    permission: { edit: "deny", bash: {} },
+    tools: {},
+    options: {},
+  },
+] as any;
+
+const buildPrimaryPlanAllAgents = [
+  {
+    name: "build",
+    description: "Primary build agent",
+    mode: "primary",
+    builtIn: true,
+    permission: { edit: "ask", bash: {} },
+    tools: {},
+    options: {},
+  },
+  {
+    name: "plan",
+    description: "All-mode plan agent",
+    mode: "all",
+    builtIn: true,
+    permission: { edit: "deny", bash: {} },
+    tools: {},
+    options: {},
+  },
+] as any;
+
+const planAllBuildPrimaryAgents = [
+  {
+    name: "plan",
+    description: "All-mode plan agent",
+    mode: "all",
+    builtIn: true,
+    permission: { edit: "deny", bash: {} },
+    tools: {},
+    options: {},
+  },
+  {
+    name: "build",
+    description: "Primary build agent",
+    mode: "primary",
+    builtIn: true,
+    permission: { edit: "ask", bash: {} },
+    tools: {},
+    options: {},
+  },
+] as any;
+
+const buildOnlyPrimaryAgents = [
+  {
+    name: "build",
+    description: "Primary build agent",
+    mode: "primary",
+    builtIn: true,
+    permission: { edit: "ask", bash: {} },
+    tools: {},
+    options: {},
+  },
+] as any;
+
+const subagentOnlyAgents = [
+  {
+    name: "general",
+    description: "General purpose subagent",
+    mode: "subagent",
+    builtIn: true,
+    permission: { edit: "ask", bash: {} },
+    tools: {},
+    options: {},
+  },
+] as any;
 
 // Initialization
 describe("初期化", () => {
@@ -134,6 +232,171 @@ describe("初期化", () => {
       await sendExtMessage({ type: "locale", vscodeLanguage: "ja" });
 
       expect(screen.getByText("新しい会話を始めましょう。")).toBeInTheDocument();
+    });
+  });
+
+  // When agents message arrives with build before plan (both primary)
+  context("agents メッセージに plan を含む場合（build が先頭）", () => {
+    beforeEach(async () => {
+      renderApp();
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      await sendExtMessage({ type: "agents", agents: buildPrimaryPlanPrimaryAgents });
+    });
+
+    // Selector shows plan
+    it("AgentSelector が plan を表示すること", () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("plan");
+      expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("build");
+    });
+
+    // Send payload uses primaryAgent: "plan"
+    it('送信時に primaryAgent: "plan" が含まれること', async () => {
+      const user = userEvent.setup();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Hello{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Hello",
+          primaryAgent: "plan",
+        }),
+      );
+    });
+  });
+
+  // When agents message includes plan with mode: "all" alongside build primary
+  context("agents メッセージに plan（mode: all）と build（mode: primary）が含まれる場合", () => {
+    beforeEach(async () => {
+      renderApp();
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      await sendExtMessage({ type: "agents", agents: buildPrimaryPlanAllAgents });
+    });
+
+    // Selector shows plan
+    it("AgentSelector が plan を表示すること", () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("plan");
+    });
+  });
+
+  // When agents message starts with plan (mode: all) and build follows
+  context("agents メッセージが plan（mode: all）から始まる場合", () => {
+    beforeEach(async () => {
+      renderApp();
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      await sendExtMessage({ type: "agents", agents: planAllBuildPrimaryAgents });
+    });
+
+    // Selector still shows plan (no ordering regression)
+    it("AgentSelector が plan を表示すること", () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("plan");
+    });
+  });
+
+  // When agents message has no plan, fallback to first primary/all
+  context("agents メッセージに plan が含まれない場合", () => {
+    beforeEach(async () => {
+      renderApp();
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      await sendExtMessage({ type: "agents", agents: buildOnlyPrimaryAgents });
+    });
+
+    // Selector shows build
+    it("AgentSelector が build を表示すること（先頭の primary/all にフォールバック）", () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("build");
+    });
+
+    // Send payload uses primaryAgent: "build"
+    it('送信時に primaryAgent: "build" が含まれること', async () => {
+      const user = userEvent.setup();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Hi{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Hi",
+          primaryAgent: "build",
+        }),
+      );
+    });
+  });
+
+  // When agents message has only subagents (no eligible primary/all)
+  context("agents メッセージに primary/all エージェントが含まれない場合", () => {
+    beforeEach(async () => {
+      renderApp();
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      await sendExtMessage({ type: "agents", agents: subagentOnlyAgents });
+    });
+
+    // Selector is not rendered (no eligible primary agents)
+    it("AgentSelector が表示されないこと", () => {
+      expect(screen.queryByTitle("Select agent")).not.toBeInTheDocument();
+    });
+
+    // Send payload does NOT include primaryAgent
+    it("送信時に primaryAgent が含まれないこと", async () => {
+      const user = userEvent.setup();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Hi{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Hi",
+        }),
+      );
+      expect(postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          primaryAgent: expect.anything(),
+        }),
+      );
+    });
+  });
+
+  // When a primary agent is already user-selected and a new agents message
+  // includes an eligible plan agent, the existing selection must be preserved.
+  context("ユーザーが build を選択済みで、その後に plan を含む agents を受信した場合", () => {
+    beforeEach(async () => {
+      renderApp();
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      // Initial agents: build only — fallback selects build
+      await sendExtMessage({ type: "agents", agents: buildOnlyPrimaryAgents });
+    });
+
+    // Subsequent agents message with plan must not overwrite user choice
+    it("AgentSelector は build のまま上書きされないこと", async () => {
+      const user = userEvent.setup();
+
+      // Sanity: fallback selected build.
+      const trigger = screen.getByTitle("Select agent");
+      expect(trigger).toHaveTextContent("build");
+
+      // Simulate the user explicitly selecting build through the selector.
+      // The popover item name lives in a separate node from the trigger
+      // button label, so use getAllByText and pick the popover item.
+      await user.click(trigger);
+      const buildItems = screen.getAllByText("build");
+      // [0] is the trigger label, [1] is the popover item.
+      await user.click(buildItems[1]);
+
+      // Now an agents message arrives that includes plan (eligible).
+      await sendExtMessage({ type: "agents", agents: buildPrimaryPlanPrimaryAgents });
+
+      // The user selection must remain build.
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("build");
+      expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("plan");
+
+      // And the send payload must use build.
+      vi.mocked(postMessage).mockClear();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Persist{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Persist",
+          primaryAgent: "build",
+        }),
+      );
     });
   });
 });
