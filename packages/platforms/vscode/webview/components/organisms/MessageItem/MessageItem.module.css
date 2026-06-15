@@ -223,6 +223,41 @@
   margin-top: 0;
 }
 
+/* --- KaTeX (math) --- */
+
+.content :global(.markdown .katex) {
+  font-size: 1.05em;
+  line-height: 1.25;
+  text-rendering: auto;
+}
+
+.content :global(.markdown .katex-display) {
+  display: block;
+  margin: 10px 0;
+  padding: 4px 0 10px;
+  overflow-x: auto;
+  overflow-y: visible;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.content :global(.markdown .katex-display > .katex) {
+  display: block;
+  max-width: none;
+  white-space: nowrap;
+  text-align: center;
+  vertical-align: baseline;
+}
+
+.content :global(.markdown .katex-display > .katex > .katex-html) {
+  width: max-content;
+  min-width: 100%;
+}
+
+.content :global(.markdown p > .katex) {
+  vertical-align: -0.08em;
+}
+
 /* --- Code block wrapper with header & copy button --- */
 
 .content :global(.code-block-wrapper) {
@@ -274,6 +309,129 @@
 .content :global(.code-block-copy:hover) {
   color: var(--vscode-foreground);
   background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+/* --- Mermaid diagrams --- */
+
+/* Override the parent `.code-block-wrapper { overflow: hidden }` so the
+   scroll container inside can actually scroll large diagrams. */
+.content :global(.mermaid-block) {
+  overflow: visible;
+}
+
+/* Once a Mermaid diagram is rendered, it should look like an inline figure
+   rather than a code block.  Remove the code-block border and make the
+   header subtle so the diagram flows with the surrounding text/KaTeX. */
+.content :global(.mermaid-rendered) {
+  border: none;
+  background: transparent;
+  margin: 8px 0;
+}
+
+.content :global(.mermaid-rendered .code-block-header) {
+  background: transparent;
+  border-bottom: none;
+  padding: 2px 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+  min-height: auto;
+}
+
+.content :global(.mermaid-rendered:hover .code-block-header) {
+  opacity: 1;
+}
+
+.content :global(.mermaid-rendered .code-block-lang) {
+  display: none;
+}
+
+/* Hide raw source after successful render; source stays in DOM for copy. */
+.content :global(.mermaid-rendered .mermaid-source) {
+  display: none;
+}
+
+/* Render target: scrollable container for the SVG output.
+   `overflow-y: hidden` prevents a second scrollbar when the diagram is
+   wider than the viewport but shorter than the container. */
+.content :global(.mermaid-render-target) {
+  padding: 12px;
+  background-color: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 4px;
+}
+
+/* SVG inside render target: centred when smaller than the viewport,
+   left-anchored when larger (scrollbar appears). */
+.content :global(.mermaid-render-target svg) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+/*
+ * Theme overrides for Mermaid SVG output.
+ *
+ * Mermaid's bundled themes do not know about VS Code theme variables, so
+ * text can end up the same colour as the box/background.  We force labels
+ * (both SVG <text> and HTML labels inside <foreignObject>) to use the
+ * current VS Code foreground colour.  We do NOT override shape fills here,
+ * because Mermaid's theme already supplies contrasting fills/strokes and
+ * overriding them creates more problems than it solves.
+ */
+.content :global(.mermaid-render-target svg text) {
+  fill: var(--vscode-foreground) !important;
+}
+
+.content :global(.mermaid-render-target svg tspan) {
+  fill: var(--vscode-foreground) !important;
+}
+
+.content :global(.mermaid-render-target svg foreignObject) {
+  overflow: visible !important;
+}
+
+.content :global(.mermaid-render-target svg foreignObject *) {
+  color: var(--vscode-foreground) !important;
+  background-color: transparent !important;
+}
+
+.content :global(.mermaid-render-target svg .nodeLabel) {
+  color: var(--vscode-foreground) !important;
+  background-color: transparent !important;
+}
+
+.content :global(.mermaid-render-target svg .edgeLabel) {
+  color: var(--vscode-foreground) !important;
+  background-color: transparent !important;
+}
+
+.content :global(.mermaid-render-target svg .label) {
+  color: var(--vscode-foreground) !important;
+  background-color: transparent !important;
+}
+
+.content :global(.mermaid-render-target svg .nodeLabelText) {
+  color: var(--vscode-foreground) !important;
+  background-color: transparent !important;
+}
+
+/* Focus-visible outline so the scrollable container is keyboard-reachable. */
+.content :global(.mermaid-render-target:focus-visible) {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+
+/* Error state: concise parser message styled with error theme colour. */
+.content :global(.mermaid-error .mermaid-render-target) {
+  color: var(--vscode-errorForeground);
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
 }
 
 /* --- File path chip --- */
