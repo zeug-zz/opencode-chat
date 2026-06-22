@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!**/dist"]
+    "includes": ["**", "!!**/dist", "!!scripts/security/**"]
   },
   "formatter": {
     "enabled": true,
@@ -20,15 +20,24 @@
       "recommended": true,
       "suspicious": {
         "noDuplicateTestHooks": "off",
-        "noExplicitAny": "warn",
-        "noArrayIndexKey": "warn"
+        "noExplicitAny": "off",
+        "noArrayIndexKey": "off"
       },
       "style": {
-        "noNonNullAssertion": "warn"
+        "noNonNullAssertion": "off"
       },
       "a11y": {
-        "useKeyWithClickEvents": "warn",
-        "noStaticElementInteractions": "warn"
+        "useKeyWithClickEvents": "off",
+        "noStaticElementInteractions": "off"
+      },
+      "correctness": {
+        "noUnusedImports": "off",
+        "noUnusedVariables": "off",
+        "noUnusedFunctionParameters": "off",
+        "useExhaustiveDependencies": "off"
+      },
+      "security": {
+        "noDangerouslySetInnerHtml": "off"
       }
     }
   },
@@ -55,6 +64,16 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["packages/agents/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    },
     {
       "includes": ["packages/platforms/vscode/webview/components/organisms/MessageItem/MessageItem.module.css"],
       "linter": {

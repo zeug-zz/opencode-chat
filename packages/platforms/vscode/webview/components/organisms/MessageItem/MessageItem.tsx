@@ -256,7 +256,6 @@ export function MessageItem({ message, activeSessionId, questions, onEditAndRese
                 copiedTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
               }}
             >
-              {/* biome-ignore lint/security/noDangerouslySetInnerHtml: 固定 SVG 文字列を差し込むだけ */}
               <span dangerouslySetInnerHTML={{ __html: copied ? CHECK_ICON : COPY_ICON }} />
             </button>
           )}

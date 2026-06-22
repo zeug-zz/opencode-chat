@@ -53,9 +53,7 @@ export function useProviders() {
     // Detect model change so the current in-memory effort (which
     // belongs to the previous model) does not take precedence over
     // the new model's persisted effort (task 2.3 round-trip).
-    const newModelKey = selectedModel
-      ? `${selectedModel.providerID}/${selectedModel.modelID}`
-      : null;
+    const newModelKey = selectedModel ? `${selectedModel.providerID}/${selectedModel.modelID}` : null;
     const modelChanged = newModelKey !== prevModelKeyRef.current;
     prevModelKeyRef.current = newModelKey;
 

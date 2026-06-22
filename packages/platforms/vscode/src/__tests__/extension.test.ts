@@ -83,7 +83,10 @@ describe("extension", () => {
       expect(mockConnect).toHaveBeenCalled();
 
       // webview provider 登録
-      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalledWith("opencode-chat.chatView", expect.anything());
+      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalledWith(
+        "opencode-chat.chatView",
+        expect.anything(),
+      );
 
       // diff content provider 登録（2つ: before と after）
       expect(vscode.workspace.registerTextDocumentContentProvider).toHaveBeenCalledTimes(2);

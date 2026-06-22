@@ -435,7 +435,6 @@ export function TextPartView({ part }: Props) {
   const mermaidSvgCacheRef = useRef(new Map<string, MermaidRenderResult>());
   const [renderedTick, setRenderedTick] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: renderedTick intentionally triggers recompute when the Mermaid cache updates.
   const html = useMemo(() => {
     const preprocessed = preprocessNestedCodeBlocks(part.text);
     const raw = markdownParser.parse(preprocessed, { async: false }) as string;
@@ -448,7 +447,6 @@ export function TextPartView({ part }: Props) {
   // 動的インポート・初期化・レンダリングを実行する。
   // クリーンアップ時に AbortController を abort することで、
   // ストリーミング更新による古い SVG の DOM 書き込みを防止する。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: effect must rerun whenever the parsed HTML changes.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -568,10 +566,6 @@ export function TextPartView({ part }: Props) {
   }, []);
 
   return (
-    // biome-ignore lint/security/noDangerouslySetInnerHtml: DOMPurify でサニタイズ済みの HTML を描画する
-    // biome-ignore lint/a11y/useKeyWithClickEvents: コピーボタンとファイルリンクのイベント委譲
-    // biome-ignore lint/a11y/noStaticElementInteractions: コピーボタンとファイルリンクのイベント委譲
-    {/* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */}
     <div ref={containerRef} className="markdown" onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }

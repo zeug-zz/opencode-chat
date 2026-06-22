@@ -161,8 +161,6 @@ export function ToolPartView({ part }: Props) {
         {displayTitle && (
           <span className={styles.title} title={displayTitle}>
             {titleFilePath ? (
-              // biome-ignore lint/a11y/useKeyWithClickEvents: ツールタイトルのファイルパスリンク
-              // biome-ignore lint/a11y/noStaticElementInteractions: ツールタイトルのファイルパスリンク
               <span className={styles.fileChip} onClick={handleTitleClick}>
                 {(() => {
                   const fileName = titleFilePath.split("/").pop() || titleFilePath;

@@ -35,7 +35,6 @@ export function useAutoScroll(messages: unknown[]) {
   }, [scrollToBottom]);
 
   // messages 更新時、最下部付近にいれば追従スクロールする
-  // biome-ignore lint/correctness/useExhaustiveDependencies: messages の参照変化を検知して effect を再実行する意図的な依存
   useEffect(() => {
     if (isNearBottomRef.current) {
       scrollToBottom();

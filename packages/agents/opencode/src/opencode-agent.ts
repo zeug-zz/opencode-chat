@@ -350,7 +350,7 @@ export class OpenCodeAgent implements IAgent {
 
   // --- Permissions ---
 
-  async replyPermission(sessionId: string, permissionId: string, response: PermissionResponse): Promise<void> {
+  async replyPermission(_sessionId: string, permissionId: string, response: PermissionResponse): Promise<void> {
     const client = this.requireClient();
     await client.permission.reply({
       requestID: permissionId,
