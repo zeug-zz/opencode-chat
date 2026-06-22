@@ -54,10 +54,10 @@ For small fixes (typos, documentation improvements), you may open a PR directly.
 #### Submitting a Pull Request
 
 1. Fork the repository
-2. Create a branch from `development`
+2. Create a branch from `main`
 3. Make your changes
 4. Ensure `npm run check`, `npm run build` and `npm test` pass
-5. Open a pull request against `development`
+5. Open a pull request against `main`
 
 PRs are squash-merged to keep the commit history clean.
 
@@ -86,7 +86,7 @@ When your change affects behavior, add or update tests. Follow existing test pat
 
 ### Review Process
 
-All pull requests are reviewed by the maintainer ([@ktmage](https://github.com/ktmage)).
+All pull requests are reviewed by the maintainer ([@zeug-zz](https://github.com/zeug-zz)).
 
 ### License Agreement
 
@@ -137,10 +137,10 @@ npm test
 #### Pull Request の出し方
 
 1. リポジトリをフォークする
-2. `development` ブランチからブランチを作成する
+2. `main` ブランチからブランチを作成する
 3. 変更を加える
 4. `npm run check`、`npm run build`、`npm test` が通ることを確認する
-5. `development` ブランチに対して Pull Request を出す
+5. `main` ブランチに対して Pull Request を出す
 
 PR は Squash merge でマージされます。
 
@@ -169,7 +169,7 @@ npm run check:fix
 
 ### レビュー体制
 
-すべての Pull Request はメンテナー（[@ktmage](https://github.com/ktmage)）がレビューします。
+すべての Pull Request はメンテナー（[@zeug-zz](https://github.com/zeug-zz)）がレビューします。
 
 ### ライセンスへの同意
 
