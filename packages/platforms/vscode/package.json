@@ -85,7 +85,7 @@
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.25.0",
     "jsdom": "^28.1.0",
-    "marked": "^17.0.3",
+    "marked": "^18.0.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.0",
