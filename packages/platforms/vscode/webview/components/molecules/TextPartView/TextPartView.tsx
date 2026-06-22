@@ -438,9 +438,9 @@ export function TextPartView({ part }: Props) {
   const html = useMemo(() => {
     const preprocessed = preprocessNestedCodeBlocks(part.text);
     const raw = markdownParser.parse(preprocessed, { async: false }) as string;
-    const linked = linkifyAbsolutePaths(raw);
-    const sanitized = DOMPurify.sanitize(linked, PURIFY_CONFIG);
-    return injectRenderedMermaids(sanitized, mermaidSvgCacheRef.current);
+    const sanitized = DOMPurify.sanitize(raw, PURIFY_CONFIG);
+    const linked = linkifyAbsolutePaths(sanitized);
+    return injectRenderedMermaids(linked, mermaidSvgCacheRef.current);
   }, [part.text, renderedTick]);
 
   // Mermaid 描画エフェクト: html が変更されるたびに未描画の .mermaid-block を検出し、
