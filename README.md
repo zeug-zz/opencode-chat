@@ -1,8 +1,28 @@
 # OpenCode Chat
 
+[![Visual Studio Code](https://img.shields.io/badge/VS%20Code-^1.125.0-007ACC?logo=visual-studio-code)](https://code.visualstudio.com/)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/zeug-zz.opencode-chat?label=version&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=zeug-zz.opencode-chat)
+[![License](https://img.shields.io/github/license/zeug-zz/opencode-chat)](LICENSE)
+[![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
+[![Security Audit](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
+
 An unofficial VS Code chat companion for [OpenCode](https://github.com/anomalyco/opencode), designed to sit alongside the OpenCode TUI rather than replace it.
 
 **Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui)**.
+
+---
+
+### Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Development](#development)
+- [Project Structure](#project-structure)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ### OpenCode Chat
 
@@ -12,12 +32,13 @@ A focused chat window using your OpenCode models, memory, skills, and MCP server
 
 ### Documents
 
-| File                                          | Description          |
-| --------------------------------------------- | -------------------- |
-| [CONTRIBUTING.md](CONTRIBUTING.md)               | Contributing guide   |
-| [CHANGELOG.md](CHANGELOG.md)                     | Release history      |
-| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Third-party licenses |
-| [LICENSE](LICENSE)                               | MIT License          |
+| File | Description |
+| --- | --- |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contributing guide |
+| [CHANGELOG.md](./CHANGELOG.md) | Release history |
+| [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) | Third-party licenses |
+| [LICENSE](./LICENSE) | MIT License |
+| [SECURITY.md](./SECURITY.md) | Security policy |
 
 ### Features
 
