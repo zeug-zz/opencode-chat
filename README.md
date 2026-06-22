@@ -1,52 +1,35 @@
 # OpenCode Chat
 
-An unofficial VS Code sidebar chat interface for [OpenCode](https://github.com/anomalyco/opencode).
+An unofficial VS Code chat companion for [OpenCode](https://github.com/anomalyco/opencode), designed to sit alongside the OpenCode TUI rather than replace it.
 
-OpenCode の非公式 VS Code サイドバーチャットインターフェース。
-
-> **Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui).** Originally based on the upstream opencode-gui project.
-
-
-## Table of Contents / 目次
-
-- [English](#english)
-- [日本語](#japanese)
-
-<a id="english"></a>
-## English
+**Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui)**.
 
 ### OpenCode Chat
 
-Use all OpenCode features from a familiar sidebar chat UI.
+A focused chat window using your OpenCode models, memory, skills, and MCP servers alongside the excellent OpenCode TUI. The chat adds KaTeX and Mermaid rendering, Markdown copying, model search, effort toggles, and other writing-oriented enhancements that are not otherwise available in the code-oriented TUI.
 
-> **This is an unofficial, community-developed extension. It is not affiliated with or endorsed by the OpenCode project.**
-
-> [!CAUTION]
-> **Disclaimer:**
-> This project is experimental and developed primarily through AI-assisted coding. It is provided "as-is" without warranty of any kind. It may contain unexpected behavior, unconventional implementations, or undiscovered defects. Use at your own risk. The authors assume no liability for any damages arising from the use of this software.
-
-### Demo
-
-![Demo](media/demo.gif)
+**This is an unofficial, community-developed extension unaffiliated with or endorsed by the OpenCode project.**
 
 ### Documents
 
-| File | Description |
-|------|-------------|
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing guide |
-| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| File                                          | Description          |
+| --------------------------------------------- | -------------------- |
+| [CONTRIBUTING.md](CONTRIBUTING.md)               | Contributing guide   |
+| [CHANGELOG.md](CHANGELOG.md)                     | Release history      |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Third-party licenses |
-| [LICENSE](LICENSE) | MIT License |
+| [LICENSE](LICENSE)                               | MIT License          |
 
 ### Features
 
-- Chat UI (send/receive messages, streaming display)
-- Markdown rendering
+- Focused chat UI (send/receive messages, streaming display)
+- Markdown rendering with KaTeX math and Mermaid diagrams
+- Markdown copy actions for assistant replies
 - Tool call collapsible display
 - Permission approval UI (Allow / Once / Deny)
 - Session management (create, switch, fork, delete)
 - Message editing & checkpoint restore
-- Model selection
+- Model search and selection
+- Model effort toggles
 - Agent selector for primary agent selection
 - File context attachment
 - File changes diff view
@@ -181,177 +164,5 @@ packages/
 Contributions to this project are welcome. For details, please refer to [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### License
-
-[MIT](LICENSE)
-
-<a id="japanese"></a>
-## 日本語
-
-### OpenCode Chat
-
-OpenCode の全機能をサイドバーのチャット UI から操作できます。
-
-> **本拡張機能は非公式のコミュニティ開発プロジェクトです。OpenCode プロジェクトとは提携・推薦関係にありません。**
-
-> [!CAUTION]
-> **免責事項：**
-> 本プロジェクトは実験的な取り組みであり、主に AI を活用したコーディングにより開発されています。いかなる保証もなく「現状のまま」提供されます。予期しない動作、一般的でない実装、未発見の不具合が含まれる可能性があります。ご利用は自己責任でお願いいたします。本ソフトウェアの使用により生じたいかなる損害についても、作者は一切の責任を負いません。
-
-### デモ
-
-![デモ](media/demo.gif)
-
-### ドキュメント
-
-| ファイル | 説明 |
-|------|-------------|
-| [CONTRIBUTING.md](CONTRIBUTING.md) | コントリビュートガイド |
-| [CHANGELOG.md](CHANGELOG.md) | リリース履歴 |
-| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | サードパーティライセンス |
-| [LICENSE](LICENSE) | MIT ライセンス |
-
-### 機能
-
-- チャット UI（メッセージ送受信、ストリーミング表示）
-- Markdown レンダリング
-- ツールコールの折りたたみ表示
-- パーミッション承認 UI（Allow / Once / Deny）
-- セッション管理（作成、切替、フォーク、削除）
-- メッセージ編集とチェックポイント復元
-- モデル選択
-- エージェントセレクター（プライマリエージェント選択）
-- ファイルコンテキスト添付
-- ファイル変更差分表示
-- [difit](https://github.com/yoshiko-pg/difit) によるセッション差分レビュー（ブラウザで表示）
-- シェルコマンド実行
-- 推論（思考過程）表示
-- Todo 表示
-- Undo / Redo
-- セッション共有
-- エージェントメンション（`@` メンション）
-- 子セッションナビゲーション（サブタスク）
-- 設定パネル
-- インラインポップアップのキーボードナビゲーション（Tab / 矢印キー）
-- サブタスク表示
-- ストリーミング中の自動スクロール
-- ファイルタイプアイコン
-- ファイルパスリンク（拡張子別アイコン付きクリッカブルチップ）
-- コードブロックのシンタックスハイライト・コピーボタン
-- Quick-add ボタン（アクティブエディタのファイル表示）
-- 入力履歴ナビゲーション（ArrowUp / ArrowDown）
-- サウンド通知（アシスタント応答完了時）
-- 質問インタラクション UI（エージェントからの質問対応）
-- 多言語対応（英語、日本語、簡体字中国語、韓国語、繁体字中国語、スペイン語、ブラジルポルトガル語、ロシア語）
-
-### 必要条件
-
-- [OpenCode](https://github.com/anomalyco/opencode) がインストール済みであること
-- OpenCode 側で LLM プロバイダの認証が完了していること
-
-#### オプション
-
-- [difit](https://github.com/yoshiko-pg/difit) — セッション差分レビュー機能を有効にします。`npm install -g difit` でインストール。
-
-### インストール
-
-VS Code の拡張機能ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）で **OpenCode Chat** を検索し、**Install** をクリック。
-
-### 開発
-
-#### 前提条件
-
-- Node.js v22+
-- [pnpm](https://pnpm.io/) v10+
-
-#### セットアップ
-
-```sh
-pnpm install
-pnpm run build
-```
-
-#### ビルド
-
-```sh
-# 全体ビルド（全パッケージ）
-pnpm run build
-
-# Extension のみ（packages/platforms/vscode から）
-pnpm --filter opencode-chat run build:ext
-
-# Webview のみ（packages/platforms/vscode から）
-pnpm --filter opencode-chat run build:webview
-```
-
-#### Watch モード
-
-ターミナルを 2 つ開いて、それぞれ実行する。
-
-```sh
-# Terminal 1: Extension watch
-pnpm --filter opencode-chat run watch:ext
-
-# Terminal 2: Webview watch
-pnpm --filter opencode-chat run watch:webview
-```
-
-#### リント & フォーマット
-
-```sh
-pnpm run check
-```
-
-#### デバッグ実行
-
-1. `pnpm run build` でビルドする
-2. VS Code で `F5` を押して Extension Development Host を起動する
-3. サイドバーの OpenCode アイコンをクリックしてチャットパネルを開く
-
-#### テスト
-
-```sh
-pnpm test
-```
-
-### プロジェクト構造
-
-本プロジェクトは pnpm モノレポ構成です。
-
-```
-packages/
-  core/                   # @opencode-chat/core — ドメイン型・インターフェース・プロトコル
-    src/
-      domain.ts           # ドメイン型（メッセージ、セッション、ツール、パーミッション）
-      agent.interface.ts  # IAgent インターフェース
-      platform.interface.ts # IPlatformServices インターフェース
-      protocol.ts         # Webview ↔ Extension メッセージングプロトコル
-
-  agents/
-    opencode/             # @opencode-chat/agent-opencode — OpenCode SDK アダプター
-      src/
-        opencode-agent.ts # OpenCode 用 IAgent 実装
-        mappers.ts        # SDK ↔ ドメイン型マッパー
-
-  platforms/
-    vscode/               # opencode-chat — VS Code 拡張機能
-      src/
-        extension.ts      # 拡張機能エントリーポイント
-        chat-view-provider.ts   # Webview パネル & メッセージング
-        vscode-platform-services.ts # IPlatformServices 実装
-      webview/            # Webview (Browser, React)
-        App.tsx           # 状態管理 & SSE イベントハンドリング
-        components/       # React コンポーネント（Atoms / Molecules / Organisms）
-        hooks/            # カスタム React フック
-        contexts/         # React Context プロバイダー
-        locales/          # i18n ロケールファイル
-        utils/            # ユーティリティ関数
-        __tests__/        # テスト（単体、シナリオ）
-```
-
-### コントリビュート
-
-このプロジェクトへの貢献を歓迎します。詳しくは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
-
-### ライセンス
 
 [MIT](LICENSE)

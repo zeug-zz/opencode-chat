@@ -2,7 +2,7 @@ import type { AllProvidersData, ModelInfo, ProviderInfo } from "@opencode-chat/c
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { useProviders } from "../../hooks/useProviders";
-import { postMessage } from "../../vscode-api";
+import { getPersistedState, postMessage, setPersistedState } from "../../vscode-api";
 
 // ============================================================
 // Test fixtures (synthetic providers / models with variants)
@@ -218,6 +218,68 @@ describe("useProviders", () => {
     });
   });
 
+  // effort persistence write (Decision 3: write/clear on explicit selection)
+  context("effort の永続化書き込み", () => {
+    beforeEach(() => {
+      vi.mocked(getPersistedState).mockReturnValue(undefined);
+    });
+
+    it("有効な effort を設定すると setPersistedState が正しいキーと値で呼ばれること", () => {
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      act(() => result.current.setSelectedModelEffort({ id: "low" }));
+      expect(setPersistedState).toHaveBeenCalledWith({
+        modelEffortByModel: { "openai/gpt-5.4": "low" },
+      });
+    });
+
+    it("effort をクリアするとキーが削除されること", () => {
+      vi.mocked(getPersistedState).mockReturnValue({
+        modelEffortByModel: { "openai/gpt-5.4": "low" },
+      });
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      act(() => result.current.setSelectedModelEffort(undefined));
+      // The key was the only entry, so modelEffortByModel is removed entirely.
+      expect(setPersistedState).toHaveBeenCalledWith({});
+    });
+
+    it("unrelated fields (localeSetting, inputHistory) が effort 書き込み時に保持されること", () => {
+      vi.mocked(getPersistedState).mockReturnValue({
+        localeSetting: "ja",
+        inputHistory: ["hello"],
+      });
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      act(() => result.current.setSelectedModelEffort({ id: "medium" }));
+      expect(setPersistedState).toHaveBeenCalledWith({
+        localeSetting: "ja",
+        inputHistory: ["hello"],
+        modelEffortByModel: { "openai/gpt-5.4": "medium" },
+      });
+    });
+
+    it("unrelated fields (localeSetting, inputHistory) が effort クリア時に保持されること", () => {
+      vi.mocked(getPersistedState).mockReturnValue({
+        localeSetting: "ja",
+        inputHistory: ["world"],
+        modelEffortByModel: { "openai/gpt-5.4": "low" },
+      });
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      act(() => result.current.setSelectedModelEffort(undefined));
+      expect(setPersistedState).toHaveBeenCalledWith({
+        localeSetting: "ja",
+        inputHistory: ["world"],
+        // modelEffortByModel removed entirely (was the only entry)
+      });
+    });
+  });
+
   // effort invalidation on model change
   context("選択モデルを変更した場合", () => {
     // 3. switching to a model that supports the same effort keeps it
@@ -360,6 +422,172 @@ describe("useProviders", () => {
       };
       act(() => result.current.setAllProvidersData(refreshed));
       expect(result.current.selectedModelEffort).toBeUndefined();
+    });
+  });
+
+  // persisted effort restoration (Decision 2: validate before restore)
+  context("永続化された effort の復元", () => {
+    it("有効な persisted effort が復元されること", () => {
+      const mockGetPersistedState = vi.mocked(getPersistedState);
+      mockGetPersistedState.mockReturnValue({
+        modelEffortByModel: { "openai/gpt-5.4": "low" },
+      });
+
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+
+      expect(result.current.selectedModelEffort).toEqual({ id: "low", label: "Low" });
+    });
+
+    it("無効な persisted effort は復元されず unset のままとなること", () => {
+      const mockGetPersistedState = vi.mocked(getPersistedState);
+      mockGetPersistedState.mockReturnValue({
+        modelEffortByModel: { "openai/gpt-5.4": "nonexistent" },
+      });
+
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+
+      expect(result.current.selectedModelEffort).toBeUndefined();
+    });
+
+    it("persisted state が存在しない場合は unset のままとなること", () => {
+      // getPersistedState returns undefined by default (from setup mock).
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+
+      expect(result.current.selectedModelEffort).toBeUndefined();
+    });
+
+    it("インメモリの effort が persisted effort より優先されること", () => {
+      const mockGetPersistedState = vi.mocked(getPersistedState);
+      mockGetPersistedState.mockReturnValue({
+        modelEffortByModel: { "openai/gpt-5.4": "low" },
+      });
+
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      // Initially restored "low" from persistence.
+      expect(result.current.selectedModelEffort).toEqual({ id: "low", label: "Low" });
+
+      // Explicitly set a different valid effort — in-memory takes precedence.
+      act(() => result.current.setSelectedModelEffort({ id: "medium" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "medium", label: "Medium" });
+
+      // Trigger effect re-run via metadata refresh.
+      act(() => result.current.setAllProvidersData({ ...allProvidersDataFixture }));
+      // In-memory "medium" must be preserved, not overwritten by persisted "low".
+      expect(result.current.selectedModelEffort).toEqual({ id: "medium", label: "Medium" });
+    });
+  });
+
+  // model-switch round-trip (task 2.3): per-model remembered effort
+  context("モデル切替時の effort 保持（ラウンドトリップ）", () => {
+    it("A→B 切替で B の永続化 effort が復元されること", () => {
+      vi.mocked(getPersistedState).mockReturnValue({
+        modelEffortByModel: {
+          "openai/gpt-5.4": "low",
+          "anthropic/claude-opus": "medium",
+        },
+      });
+
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+
+      // Select gpt-5.4 → "low" restored
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "low", label: "Low" });
+
+      // Switch to claude-opus → "medium" restored (different model's own persisted effort)
+      act(() => result.current.setSelectedModel({ providerID: "anthropic", modelID: "claude-opus" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "medium", label: "Medium" });
+    });
+
+    it("B→A 切替で A の永続化 effort が復元されること", () => {
+      vi.mocked(getPersistedState).mockReturnValue({
+        modelEffortByModel: {
+          "openai/gpt-5.4": "low",
+          "anthropic/claude-opus": "medium",
+        },
+      });
+
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+
+      // Select claude-opus first → "medium" restored
+      act(() => result.current.setSelectedModel({ providerID: "anthropic", modelID: "claude-opus" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "medium", label: "Medium" });
+
+      // Switch to gpt-5.4 → "low" restored (back to first model's effort)
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "low", label: "Low" });
+    });
+
+    it("ラウンドトリップ: effort 設定→切替→復元が正しく動作すること", () => {
+      // Pre-populate claude-opus with medium only (gpt-5.4 will be set at runtime)
+      vi.mocked(getPersistedState).mockReturnValue({
+        modelEffortByModel: { "anthropic/claude-opus": "medium" },
+      });
+
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+
+      // Select gpt-5.4 → no persisted effort for it → undefined
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelEffort).toBeUndefined();
+
+      // Set effort to "high" explicitly → persisted
+      act(() => result.current.setSelectedModelEffort({ id: "high" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "high", label: "High" });
+
+      // Update getPersistedState to reflect what was written
+      vi.mocked(getPersistedState).mockReturnValue({
+        modelEffortByModel: {
+          "openai/gpt-5.4": "high",
+          "anthropic/claude-opus": "medium",
+        },
+      });
+
+      // Switch to claude-opus → "medium" restored (claude's persisted effort)
+      act(() => result.current.setSelectedModel({ providerID: "anthropic", modelID: "claude-opus" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "medium", label: "Medium" });
+
+      // Switch back to gpt-5.4 → "high" restored (gpt-5.4's persisted effort)
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "high", label: "High" });
+    });
+
+    it("一方のモデルの effort クリアが他方のモデルの永続化 effort に影響しないこと", () => {
+      vi.mocked(getPersistedState).mockReturnValue({
+        modelEffortByModel: {
+          "openai/gpt-5.4": "low",
+          "anthropic/claude-opus": "medium",
+        },
+      });
+
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+
+      // Select gpt-5.4 → "low" restored
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "low", label: "Low" });
+
+      // Clear effort on gpt-5.4
+      act(() => result.current.setSelectedModelEffort(undefined));
+      expect(result.current.selectedModelEffort).toBeUndefined();
+
+      // Verify setPersistedState removed only gpt-5.4 key, preserved claude-opus
+      expect(setPersistedState).toHaveBeenCalledWith({
+        modelEffortByModel: { "anthropic/claude-opus": "medium" },
+      });
+
+      // Switch to claude-opus → "medium" still restored (claude's effort untouched)
+      act(() => result.current.setSelectedModel({ providerID: "anthropic", modelID: "claude-opus" }));
+      expect(result.current.selectedModelEffort).toEqual({ id: "medium", label: "Medium" });
     });
   });
 });

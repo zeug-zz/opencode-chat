@@ -1,8 +1,8 @@
 import type { ModelInfo, ModelVariantRef, ProviderInfo } from "@opencode-chat/core";
 import { validateModelVariant } from "@opencode-chat/core";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AllProvidersData } from "../vscode-api";
-import { postMessage } from "../vscode-api";
+import { getPersistedState, postMessage, setPersistedState } from "../vscode-api";
 
 type SelectedModel = { providerID: string; modelID: string };
 
@@ -38,15 +38,89 @@ export function useProviders() {
   const [allProvidersData, setAllProvidersData] = useState<AllProvidersData | null>(null);
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(null);
   const [selectedModelEffort, setSelectedModelEffortRaw] = useState<ModelVariantRef | undefined>(undefined);
+  const prevModelKeyRef = useRef<string | null>(null);
 
   // Centralized revalidation: when the selected model or provider
   // metadata changes, validate the existing effort against the new
   // metadata. Keep if supported; clear if not. This single effect
   // covers both model-change and metadata-refresh invalidation.
   // - "Validate effort when the selected model changes" requirement.
+  // - Restore persisted effort when metadata becomes available
+  //   (Decision 2 in design.md: validate before restore).
   useEffect(() => {
     const info = findModelInfo(selectedModel, allProvidersData, providers);
-    setSelectedModelEffortRaw((prev) => (prev ? validateModelVariant(info, prev) : prev));
+
+    // Detect model change so the current in-memory effort (which
+    // belongs to the previous model) does not take precedence over
+    // the new model's persisted effort (task 2.3 round-trip).
+    const newModelKey = selectedModel
+      ? `${selectedModel.providerID}/${selectedModel.modelID}`
+      : null;
+    const modelChanged = newModelKey !== prevModelKeyRef.current;
+    prevModelKeyRef.current = newModelKey;
+
+    // Stale persisted entry cleanup (Decision 2 pt.5): if a stored
+    // effort for the current model is no longer advertised, remove it
+    // so it does not linger indefinitely in persisted state.
+    if (selectedModel && info) {
+      const key = `${selectedModel.providerID}/${selectedModel.modelID}`;
+      const persistedId = getPersistedState()?.modelEffortByModel?.[key];
+      if (persistedId) {
+        const restored = validateModelVariant(info, { id: persistedId });
+        if (!restored) {
+          const state = { ...getPersistedState() };
+          if (state.modelEffortByModel) {
+            const { [key]: _discard, ...otherEntries } = state.modelEffortByModel;
+            if (Object.keys(otherEntries).length > 0) {
+              setPersistedState({ ...state, modelEffortByModel: otherEntries });
+            } else {
+              const { modelEffortByModel: _omit, ...remaining } = state;
+              setPersistedState(remaining);
+            }
+          }
+        }
+      }
+    }
+
+    setSelectedModelEffortRaw((prev) => {
+      if (modelChanged) {
+        // Model changed: restore the new model's persisted effort
+        // first. Fall back to the in-memory effort from the
+        // previous model only if it happens to be valid for the
+        // new model (e.g. both models share the same variant id).
+        if (selectedModel && info) {
+          const key = `${selectedModel.providerID}/${selectedModel.modelID}`;
+          const persistedId = getPersistedState()?.modelEffortByModel?.[key];
+          if (persistedId) {
+            const restored = validateModelVariant(info, { id: persistedId });
+            if (restored) return restored;
+          }
+        }
+        // 3. No valid persisted effort — fall back to in-memory
+        //    effort if it works for the new model.
+        if (prev) {
+          const validated = validateModelVariant(info, prev);
+          if (validated) return validated;
+        }
+      } else {
+        // Same model (metadata refresh): in-memory takes precedence
+        // over persisted state.
+        if (prev) {
+          const validated = validateModelVariant(info, prev);
+          if (validated) return validated;
+        }
+        if (selectedModel && info) {
+          const key = `${selectedModel.providerID}/${selectedModel.modelID}`;
+          const persistedId = getPersistedState()?.modelEffortByModel?.[key];
+          if (persistedId) {
+            const restored = validateModelVariant(info, { id: persistedId });
+            if (restored) return restored;
+          }
+        }
+      }
+      // 4. No valid effort from any source — leave unset/default.
+      return undefined;
+    });
   }, [selectedModel, allProvidersData, providers]);
 
   const handleModelSelect = useCallback((model: SelectedModel) => {
@@ -63,10 +137,37 @@ export function useProviders() {
     (effort: ModelVariantRef | null | undefined) => {
       if (!effort) {
         setSelectedModelEffortRaw(undefined);
+        // Remove the current model key from persisted state (Decision 3).
+        if (selectedModel) {
+          const key = `${selectedModel.providerID}/${selectedModel.modelID}`;
+          const state = getPersistedState() ?? {};
+          if (state.modelEffortByModel) {
+            const { [key]: _removed, ...otherEntries } = state.modelEffortByModel;
+            if (Object.keys(otherEntries).length > 0) {
+              setPersistedState({ ...state, modelEffortByModel: otherEntries });
+            } else {
+              const { modelEffortByModel: _omit, ...remainingState } = state;
+              setPersistedState(remainingState);
+            }
+          }
+        }
         return;
       }
       const info = findModelInfo(selectedModel, allProvidersData, providers);
-      setSelectedModelEffortRaw(validateModelVariant(info, effort));
+      const normalized = validateModelVariant(info, effort);
+      if (normalized && selectedModel) {
+        // Write valid effort id into persisted state (Decision 3).
+        const key = `${selectedModel.providerID}/${selectedModel.modelID}`;
+        const state = getPersistedState() ?? {};
+        setPersistedState({
+          ...state,
+          modelEffortByModel: {
+            ...(state.modelEffortByModel ?? {}),
+            [key]: normalized.id,
+          },
+        });
+      }
+      setSelectedModelEffortRaw(normalized);
     },
     [selectedModel, allProvidersData, providers],
   );

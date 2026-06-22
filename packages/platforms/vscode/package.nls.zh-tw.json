@@ -1,4 +1,4 @@
 {
   "displayName": "OpenCode Chat",
-  "description": "【實驗性·非官方】OpenCode 的 VS Code 側邊欄聊天介面。本擴充功能主要透過 AI 輔助編碼開發，按原樣提供，不含任何保證。與 OpenCode 專案無關聯或背書關係。"
+  "description": "【實驗性·非官方】與 OpenCode TUI 搭配使用的 VS Code OpenCode 聊天夥伴。本擴充功能主要透過 AI 輔助編碼開發，按原樣提供，不含任何保證。與 OpenCode 專案無關聯或背書關係。"
 }

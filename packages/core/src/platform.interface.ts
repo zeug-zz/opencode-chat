@@ -31,6 +31,8 @@ export type UIPersistedState = {
   localeSetting?: "auto" | "en" | "ja";
   inputHistory?: string[];
   soundSettings?: SoundSettings;
+  /** Per-model effort variant selection, keyed by `${providerID}/${modelID}` */
+  modelEffortByModel?: Record<string, string>;
 };
 
 /** Platform-specific services */

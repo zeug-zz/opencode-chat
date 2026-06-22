@@ -14,9 +14,11 @@
  * that lives in task 3.1+.
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InputArea } from "../../components/organisms/InputArea/InputArea";
-import { createAllProvidersData, createProvider, createSession } from "../factories";
+import { getPersistedState, postMessage } from "../../vscode-api";
+import { createAllProvidersData, createMessage, createProvider, createSession, createTextPart } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
 // ============================================================
@@ -252,9 +254,9 @@ describe("Ctrl+T による effort サイクル", () => {
     });
   });
 
-  // 2. subsequent Ctrl+T cycles to next effort and wraps
+  // 2. subsequent Ctrl+T cycles to next effort and wraps back to default/unset
   context("2 回目以降の Ctrl+T", () => {
-    it("次の variant へ進み、最後で先頭に戻ること", async () => {
+    it("次の variant へ進み、最後から unset に戻ること", async () => {
       const textarea = await setupWithVariants();
 
       // 1st: low
@@ -269,21 +271,49 @@ describe("Ctrl+T による effort サイクル", () => {
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
       expect(document.querySelector(".effort")?.textContent).toBe("High");
 
-      // 4th: wraps to low
+      // 4th: cycles back to unset — effort label and separator disappear
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("Low");
+      expect(document.querySelector(".effort")).toBeNull();
+      expect(document.querySelector(".separator")).toBeNull();
     });
 
-    it("variant が 1 つだけのモデルでもサイクルして先頭固定で動作すること", async () => {
+    it("variant が 1 つだけのモデルでもサイクルして unset に戻ること", async () => {
       const textarea = await setupWithVariants("openai/gpt-5.4-mini");
 
       // Cycle once: should land on the only available variant.
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
       expect(document.querySelector(".effort")?.textContent).toBe("Minimal");
 
-      // Cycle again: still the same (wraps to itself).
+      // Cycle again: returns to unset (single variant: last === first).
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("Minimal");
+      expect(document.querySelector(".effort")).toBeNull();
+      expect(document.querySelector(".separator")).toBeNull();
+    });
+
+    it("最後の variant から Ctrl+T で effort がクリアされること", async () => {
+      const textarea = await setupWithVariants();
+
+      // Cycle through all three: low → medium → high
+      fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
+      expect(document.querySelector(".effort")?.textContent).toBe("Low");
+
+      fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
+      expect(document.querySelector(".effort")?.textContent).toBe("Medium");
+
+      fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
+      expect(document.querySelector(".effort")?.textContent).toBe("High");
+
+      // One more Ctrl+T: effort clears, separator gone
+      fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
+      expect(document.querySelector(".effort")).toBeNull();
+      expect(document.querySelector(".separator")).toBeNull();
+
+      // Subsequent send omits effort (verified by ModelSelector not
+      // showing effort text). The label contains only the model name.
+      expect(document.querySelector(".modelName")?.textContent).toBeTruthy();
+      expect(getModelButtonText()).not.toContain("Low");
+      expect(getModelButtonText()).not.toContain("Medium");
+      expect(getModelButtonText()).not.toContain("High");
     });
   });
 
@@ -417,5 +447,172 @@ describe("Ctrl+T による effort サイクル", () => {
       expect((textarea as HTMLTextAreaElement).value).toContain("hello");
       view.unmount();
     });
+  });
+});
+
+// ============================================================
+// Task 4.1: Persisted effort survives webview remount and
+// appears in chat/edit payloads only when restored as valid.
+// ============================================================
+
+describe("永続化された effort の復元と送信ペイロード (Task 4.1)", () => {
+  // No describe-level beforeEach — the global setup.ts
+  // clearAllMocks() runs before each test, ensuring clean state.
+
+  // ----------------------------------------------------------
+  // 1. Persisted effort survives webview remount
+  // ----------------------------------------------------------
+  it("永続化された effort が webview 再マウント後に復元され sendMessage に含まれること", async () => {
+    vi.mocked(getPersistedState).mockReturnValue({
+      modelEffortByModel: { "openai/gpt-5.4": "low" },
+    });
+
+    renderApp();
+    await sendExtMessage({
+      type: "providers",
+      providers: [openaiConnectedProvider],
+      allProviders: createAllProvidersData(["openai"], [openaiAllProvider as any]),
+      default: { general: "openai/gpt-5.4" },
+      configModel: "openai/gpt-5.4",
+    });
+    await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+
+    // ModelSelector shows "Low" effort label restored from persistence.
+    expect(document.querySelector(".effort")?.textContent).toBe("Low");
+
+    // Send a message — verify effort is included in the payload.
+    vi.mocked(postMessage).mockClear();
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    const user = userEvent.setup();
+    await user.type(textarea, "Hello{Enter}");
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "sendMessage",
+        sessionId: "s1",
+        text: "Hello",
+        model: { providerID: "openai", modelID: "gpt-5.4" },
+        effort: { id: "low", label: "Low" },
+      }),
+    );
+  });
+
+  // ----------------------------------------------------------
+  // 2. Persisted effort included in editAndResend payload
+  // ----------------------------------------------------------
+  it("永続化された effort が editAndResend ペイロードに含まれること", async () => {
+    vi.mocked(getPersistedState).mockReturnValue({
+      modelEffortByModel: { "openai/gpt-5.4": "low" },
+    });
+
+    renderApp();
+    await sendExtMessage({
+      type: "providers",
+      providers: [openaiConnectedProvider],
+      allProviders: createAllProvidersData(["openai"], [openaiAllProvider as any]),
+      default: { general: "openai/gpt-5.4" },
+      configModel: "openai/gpt-5.4",
+    });
+
+    const session = createSession({ id: "s1" });
+    await sendExtMessage({ type: "activeSession", session });
+
+    // Set up messages: user → assistant → user (edit targets second user msg).
+    const userMsg1 = createMessage({ id: "m1", sessionID: "s1", role: "user" });
+    const userPart1 = createTextPart("First question", { messageID: "m1" });
+    const assistantMsg = createMessage({ id: "m2", sessionID: "s1", role: "assistant" });
+    const assistantPart = createTextPart("First answer", { messageID: "m2" });
+    const userMsg2 = createMessage({ id: "m3", sessionID: "s1", role: "user" });
+    const userPart2 = createTextPart("Second question", { messageID: "m3" });
+
+    await sendExtMessage({
+      type: "messages",
+      sessionId: "s1",
+      messages: [
+        { info: userMsg1, parts: [userPart1] },
+        { info: assistantMsg, parts: [assistantPart] },
+        { info: userMsg2, parts: [userPart2] },
+      ],
+    });
+    vi.mocked(postMessage).mockClear();
+
+    // Edit-and-resend on the last user message.
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Second question"));
+    const editTextarea = screen.getByDisplayValue("Second question");
+    await user.clear(editTextarea);
+    await user.type(editTextarea, "Revised{Enter}");
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "editAndResend",
+        sessionId: "s1",
+        messageId: "m2",
+        text: "Revised",
+        effort: { id: "low", label: "Low" },
+      }),
+    );
+  });
+
+  // ----------------------------------------------------------
+  // 3. Stale persisted effort NOT included in payloads
+  // ----------------------------------------------------------
+  it("無効な永続化 effort は復元されず sendMessage に effort が含まれないこと", async () => {
+    vi.mocked(getPersistedState).mockReturnValue({
+      modelEffortByModel: { "openai/gpt-5.4": "nonexistent" },
+    });
+
+    renderApp();
+    await sendExtMessage({
+      type: "providers",
+      providers: [openaiConnectedProvider],
+      allProviders: createAllProvidersData(["openai"], [openaiAllProvider as any]),
+      default: { general: "openai/gpt-5.4" },
+      configModel: "openai/gpt-5.4",
+    });
+    await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+
+    // Effort remains unset — stale value is ignored.
+    expect(document.querySelector(".effort")).toBeNull();
+    expect(document.querySelector(".separator")).toBeNull();
+
+    // Send message — effort must NOT appear in payload.
+    vi.mocked(postMessage).mockClear();
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    const user = userEvent.setup();
+    await user.type(textarea, "Hello{Enter}");
+
+    const calls = vi.mocked(postMessage).mock.calls;
+    const sendCall = calls.find((c) => (c[0] as { type?: string })?.type === "sendMessage");
+    expect(sendCall, "sendMessage must have been called").toBeDefined();
+    expect("effort" in (sendCall![0] as object)).toBe(false);
+  });
+
+  // ----------------------------------------------------------
+  // 4. No persisted effort means no effort in payload
+  //    (already covered by 03-messaging.test.tsx; added here
+  //     for explicit coverage in persistence context.)
+  // ----------------------------------------------------------
+  it("永続化 effort がない場合 sendMessage に effort が含まれないこと", async () => {
+    // Default: getPersistedState returns undefined (setup.ts mock).
+    renderApp();
+    await sendExtMessage({
+      type: "providers",
+      providers: [openaiConnectedProvider],
+      allProviders: createAllProvidersData(["openai"], [openaiAllProvider as any]),
+      default: { general: "openai/gpt-5.4" },
+      configModel: "openai/gpt-5.4",
+    });
+    await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+    vi.mocked(postMessage).mockClear();
+
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    const user = userEvent.setup();
+    await user.type(textarea, "Hello{Enter}");
+
+    const calls = vi.mocked(postMessage).mock.calls;
+    const sendCall = calls.find((c) => (c[0] as { type?: string })?.type === "sendMessage");
+    expect(sendCall, "sendMessage must have been called").toBeDefined();
+    expect("effort" in (sendCall![0] as object)).toBe(false);
   });
 });

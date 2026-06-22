@@ -386,14 +386,16 @@ export function InputArea({
       ? validVariants.findIndex((v) => v.id === selectedModelEffort.id)
       : -1;
 
-    const nextVariant: ModelVariantRef =
-      currentIndex < 0
-        ? // Unset or stale (not in current valid set) → start from the first.
-          validVariants[0]
-        : // Otherwise cycle to the next, wrapping to the first at the end.
-          validVariants[(currentIndex + 1) % validVariants.length];
-
-    onModelEffortSelect(nextVariant);
+    if (currentIndex < 0) {
+      // Unset or stale (not in current valid set) → start from the first.
+      onModelEffortSelect(validVariants[0]);
+    } else if (currentIndex === validVariants.length - 1) {
+      // Last variant → cycle back to unset/default.
+      onModelEffortSelect(undefined);
+    } else {
+      // Otherwise advance to the next variant.
+      onModelEffortSelect(validVariants[currentIndex + 1]);
+    }
     return true;
   }, [onModelEffortSelect, selectedModel, allProvidersData, providers, selectedModelEffort]);
 
