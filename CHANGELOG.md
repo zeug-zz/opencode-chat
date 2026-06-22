@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Recent models section in model selector — recently-used models appear at the top for quick reselection, persisted across sessions
+- Collapsible provider lists in model selector — provider groups are collapsed by default; the selected model's provider auto-expands and search force-expands all
+
 ## [0.5.3] - 2026-03-08
 
 ### Fixed
