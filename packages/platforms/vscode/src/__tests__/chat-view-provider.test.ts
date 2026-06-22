@@ -903,26 +903,33 @@ describe("ChatViewProvider", () => {
       expect(mockPS.openTerminal).not.toHaveBeenCalled();
     });
 
-    it("should delegate to platformServices.openTerminal with serverUrl", async () => {
+    it("should open terminal without session when no active session", async () => {
       const mockPS = createMockPlatformServices();
 
       const { sendMessage } = setupProvider(mockAgent, mockPS);
       await sendMessage({ type: "openTerminal" });
 
-      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345");
+      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345", undefined);
     });
 
-    it("should not attach to active session (TUI opens independent session)", async () => {
+    it("should fork active session and open TUI on forked session", async () => {
       const mockPS = createMockPlatformServices();
       mockAgent.createSession.mockResolvedValue({ id: "sess-1" });
+      mockAgent.forkSession.mockResolvedValue({ id: "forked-1" });
+      mockAgent.listSessions.mockResolvedValue([{ id: "sess-1" }, { id: "forked-1" }]);
 
-      const { sendMessage } = setupProvider(mockAgent, mockPS);
+      const { postMessage, sendMessage } = setupProvider(mockAgent, mockPS);
 
       await sendMessage({ type: "createSession" });
 
       await sendMessage({ type: "openTerminal" });
 
-      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345");
+      expect(mockAgent.forkSession).toHaveBeenCalledWith("sess-1");
+      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345", "forked-1");
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "sessions",
+        sessions: [{ id: "sess-1" }, { id: "forked-1" }],
+      });
     });
   });
 

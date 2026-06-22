@@ -231,7 +231,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "openTerminal": {
         const serverUrl = this.agent.getServerUrl();
         if (!serverUrl) break;
-        await this.platformServices.openTerminal(serverUrl);
+        let sessionId: string | undefined;
+        if (this.activeSession) {
+          const forked = await this.agent.forkSession(this.activeSession.id);
+          sessionId = forked.id;
+          const sessions = await this.agent.listSessions();
+          this.postMessage({ type: "sessions", sessions });
+        }
+        await this.platformServices.openTerminal(serverUrl, sessionId);
         break;
       }
       case "setModel": {
