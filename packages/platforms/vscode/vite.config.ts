@@ -14,6 +14,7 @@ export default defineConfig({
         // Extension Host 側から固定パスで参照するため、ハッシュを除去する
         entryFileNames: "assets/index.js",
         assetFileNames: "assets/index[extname]",
+        inlineDynamicImports: true,
       },
     },
   },

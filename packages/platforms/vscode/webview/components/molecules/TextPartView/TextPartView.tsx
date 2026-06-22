@@ -3,11 +3,12 @@ import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { Marked, type Renderer, type Tokens } from "marked";
 import markedKatex from "marked-katex-extension";
-import { createElement, useCallback, useMemo } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { getFileIcon } from "../../../utils/file-icons";
 import { preprocessNestedCodeBlocks } from "../../../utils/markdown";
+import { renderMermaidDiagram } from "../../../utils/mermaid";
 import { postMessage } from "../../../vscode-api";
 
 // --- SVG アイコン (VSC アイコン相当) ---
@@ -43,6 +44,21 @@ function getFileIconHtml(filePath: string): string {
  */
 const codeRenderer: Partial<Renderer> = {
   code({ text, lang }: Tokens.Code): string {
+    const normalizedLang = lang?.toLowerCase().trim();
+
+    // Mermaid diagram blocks: emit raw source with a render target for later
+    // SVG rendering.  The raw source is kept in <pre><code> so the existing
+    // delegated copy handler can still read it via textContent.
+    if (normalizedLang === "mermaid") {
+      const escapedSource = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+      const copyBtn = `<button class="code-block-copy" type="button" aria-label="Copy Mermaid source">${COPY_ICON}</button>`;
+      return `<div class="mermaid-block code-block-wrapper" data-mermaid-pending="true"><div class="code-block-header"><span class="code-block-lang">mermaid</span>${copyBtn}</div><pre class="mermaid-source" aria-label="Mermaid diagram source"><code class="language-mermaid">${escapedSource}</code></pre><div class="mermaid-render-target" role="img" aria-label="Mermaid diagram" tabindex="0"></div></div>`;
+    }
+
     let highlighted: string;
     if (lang && hljs.getLanguage(lang)) {
       highlighted = hljs.highlight(text, { language: lang }).value;
@@ -112,7 +128,190 @@ const PURIFY_CONFIG: DOMPurify.Config = {
     "stop-color",
     "gradientUnits",
     "aria-hidden",
+    "role",
+    "tabindex",
   ],
+};
+
+/**
+ * Scoped DOMPurify config for Mermaid SVG output.
+ *
+ * More permissive than the base `PURIFY_CONFIG` because Mermaid renders rich
+ * SVG with gradients, markers, filters, and style blocks.  Kept in a separate
+ * config so the base Markdown sanitizer remains strict.
+ *
+ * First-release constraints:
+ * - URL/link attributes (`href`, `xlink:href`) are explicitly forbidden.
+ * - Clickable Mermaid actions/links are disabled.
+ * - No `<a>` or `<image>` tags — even if Mermaid could emit them, the
+ *   sanitizer strips them.
+ * - Event-handler attributes (`onclick`, `onload`, etc.) are explicitly
+ *   forbidden (redundant with DOMPurify's own `FORBID_ATTR` but explicit
+ *   for auditability).
+ *
+ * Mermaid's own `securityLevel: "strict"` (set in the helper) provides the
+ * first line of defence; this config is the second.
+ */
+const MERMAID_PURIFY_CONFIG: DOMPurify.Config = {
+  ADD_TAGS: [
+    // SVG structural
+    "svg",
+    "g",
+    "defs",
+    "symbol",
+    "use",
+    "mask",
+    "clipPath",
+    // SVG shapes
+    "path",
+    "rect",
+    "circle",
+    "ellipse",
+    "line",
+    "polyline",
+    "polygon",
+    // SVG text / labels
+    "text",
+    "tspan",
+    "title",
+    "desc",
+    // SVG gradients
+    "linearGradient",
+    "radialGradient",
+    "stop",
+    // SVG filters (drop-shadows, blurs)
+    "filter",
+    "feDropShadow",
+    "feGaussianBlur",
+    "feMerge",
+    "feMergeNode",
+    "feOffset",
+    "feFlood",
+    // SVG markers (arrowheads, etc.)
+    "marker",
+    // SVG patterns (hatching, fills)
+    "pattern",
+    // SVG styling (Mermaid uses <style> for scoped CSS)
+    "style",
+    // SVG containers for HTML-like layout (e.g. flowcharts with line breaks)
+    "foreignObject",
+    // HTML wrappers inside foreignObject
+    "div",
+    "span",
+    "br",
+    "p",
+    "b",
+    "i",
+    "em",
+    "strong",
+    "table",
+    "tbody",
+    "tr",
+    "td",
+    "th",
+  ],
+  ADD_ATTR: [
+    // Core SVG
+    "viewBox",
+    "version",
+    "baseProfile",
+    // Dimensions / coordinates
+    "width",
+    "height",
+    "x",
+    "y",
+    "dx",
+    "dy",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "cx",
+    "cy",
+    "r",
+    "rx",
+    "ry",
+    // Path / geometry
+    "d",
+    "points",
+    // Transform
+    "transform",
+    "gradientTransform",
+    "patternTransform",
+    // Stroke
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-dasharray",
+    "stroke-opacity",
+    "stroke-miterlimit",
+    // Fill
+    "fill",
+    "fill-rule",
+    "fill-opacity",
+    // Opacity
+    "opacity",
+    // Colour / presentation
+    "color",
+    "display",
+    "visibility",
+    "overflow",
+    // Gradient
+    "offset",
+    "stop-color",
+    "stop-opacity",
+    "gradientUnits",
+    "spreadMethod",
+    // Font / text
+    "font-size",
+    "font-family",
+    "font-weight",
+    "font-style",
+    "text-anchor",
+    "dominant-baseline",
+    "text-decoration",
+    "letter-spacing",
+    "word-spacing",
+    "line-height",
+    "direction",
+    "unicode-bidi",
+    "textLength",
+    "lengthAdjust",
+    // Marker (arrowheads, dots)
+    "marker-start",
+    "marker-mid",
+    "marker-end",
+    "markerWidth",
+    "markerHeight",
+    "orient",
+    "refX",
+    "refY",
+    // Filter
+    "in",
+    "in2",
+    "result",
+    "stdDeviation",
+    "flood-color",
+    "flood-opacity",
+    // Clip / mask
+    "clip-path",
+    "clip-rule",
+    "mask",
+    // Pattern
+    "patternUnits",
+    "patternContentUnits",
+    // Layout (for tspan)
+    "spacing",
+    "startOffset",
+    "preserveAspectRatio",
+    // Namespace (required for standalone SVG fragments)
+    "xmlns",
+    "xmlns:xlink",
+    "xml:space",
+  ],
+  FORBID_TAGS: ["script", "a", "image"],
+  FORBID_ATTR: ["href", "xlink:href", "onclick", "onload", "onerror", "onmouseover", "onfocus"],
 };
 
 /**
@@ -154,6 +353,72 @@ function linkifyAbsolutePaths(html: string): string {
   });
 }
 
+/**
+ * Format a Mermaid render/parse error into a concise user-facing string.
+ *
+ * Avoids stack traces and caps length to prevent huge error text in the UI.
+ */
+function formatMermaidError(err: unknown): string {
+  const PREFIX = "Unable to render Mermaid diagram.";
+  const MAX_LEN = 200;
+
+  let message: string;
+  if (err instanceof Error) {
+    // Use only the first line of the message; strip stack trace entirely
+    message = err.message.split("\n")[0].trim();
+  } else if (typeof err === "string") {
+    message = err;
+  } else {
+    message = "Unknown error";
+  }
+
+  if (message.length > MAX_LEN) {
+    message = `${message.slice(0, MAX_LEN).trimEnd()}…`;
+  }
+
+  return `${PREFIX}\n${message}`;
+}
+
+type MermaidRenderResult = { type: "svg"; svg: string } | { type: "error"; message: string };
+
+/**
+ * Inject already-sanitised Mermaid results back into the HTML string so React
+ * re-renders keep rendered diagrams (and error states) instead of replacing
+ * them with the pending source wrapper.
+ *
+ * SVG strings in `cache` were already sanitised with
+ * {@link MERMAID_PURIFY_CONFIG} before insertion, so this function does not
+ * re-sanitise them.  It only mutates the parsed HTML in-memory and serialises
+ * it back to a string.
+ */
+function injectRenderedMermaids(html: string, cache: ReadonlyMap<string, MermaidRenderResult>): string {
+  if (cache.size === 0) return html;
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  let modified = false;
+
+  for (const block of doc.querySelectorAll<HTMLElement>(".mermaid-block")) {
+    const source = block.querySelector<HTMLElement>(".mermaid-source code")?.textContent ?? "";
+    const cached = cache.get(source);
+    if (!cached) continue;
+
+    const target = block.querySelector<HTMLElement>(".mermaid-render-target");
+    if (!target) continue;
+
+    if (cached.type === "svg") {
+      target.innerHTML = cached.svg;
+      block.classList.add("mermaid-rendered");
+    } else {
+      target.textContent = cached.message;
+      block.classList.add("mermaid-error");
+    }
+    block.setAttribute("data-mermaid-pending", "false");
+    modified = true;
+  }
+
+  return modified ? doc.body.innerHTML : html;
+}
+
 // marked インスタンス（グローバル状態を汚染しない）
 const markdownParser = new Marked(
   { breaks: true },
@@ -166,12 +431,105 @@ type Props = {
 };
 
 export function TextPartView({ part }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mermaidSvgCacheRef = useRef(new Map<string, MermaidRenderResult>());
+  const [renderedTick, setRenderedTick] = useState(0);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: renderedTick intentionally triggers recompute when the Mermaid cache updates.
   const html = useMemo(() => {
     const preprocessed = preprocessNestedCodeBlocks(part.text);
     const raw = markdownParser.parse(preprocessed, { async: false }) as string;
     const linked = linkifyAbsolutePaths(raw);
-    return DOMPurify.sanitize(linked, PURIFY_CONFIG);
-  }, [part.text]);
+    const sanitized = DOMPurify.sanitize(linked, PURIFY_CONFIG);
+    return injectRenderedMermaids(sanitized, mermaidSvgCacheRef.current);
+  }, [part.text, renderedTick]);
+
+  // Mermaid 描画エフェクト: html が変更されるたびに未描画の .mermaid-block を検出し、
+  // 動的インポート・初期化・レンダリングを実行する。
+  // クリーンアップ時に AbortController を abort することで、
+  // ストリーミング更新による古い SVG の DOM 書き込みを防止する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: effect must rerun whenever the parsed HTML changes.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    const blocks = container.querySelectorAll<HTMLElement>('.mermaid-block[data-mermaid-pending="true"]');
+
+    const renderPendingBlocks = async () => {
+      for (const block of blocks) {
+        if (signal.aborted) break;
+
+        const sourceEl = block.querySelector<HTMLElement>(".mermaid-source code");
+        const targetEl = block.querySelector<HTMLElement>(".mermaid-render-target");
+        if (!sourceEl || !targetEl) continue;
+
+        const source = sourceEl.textContent ?? "";
+
+        // Already-failed sources should not be retried on every re-render.
+        const cached = mermaidSvgCacheRef.current.get(source);
+        if (cached?.type === "error") {
+          targetEl.textContent = cached.message;
+          block.setAttribute("data-mermaid-pending", "false");
+          block.classList.add("mermaid-error");
+          continue;
+        }
+
+        try {
+          if (signal.aborted) break;
+
+          const { svg, bindFunctions } = await renderMermaidDiagram(source, { signal });
+
+          // 最後のチェック: signal が abort されていないこと、かつ target が
+          // まだ DOM に接続されていること（コンポーネントのアンマウント回避）
+          if (signal.aborted || !targetEl.isConnected) {
+            return;
+          }
+
+          const sanitizedSvg = DOMPurify.sanitize(svg, MERMAID_PURIFY_CONFIG);
+          targetEl.innerHTML = sanitizedSvg;
+
+          // Cache the sanitised SVG so React re-renders keep the rendered
+          // diagram instead of replacing it with the pending source wrapper.
+          mermaidSvgCacheRef.current.set(source, { type: "svg", svg: sanitizedSvg });
+          setRenderedTick((t) => t + 1);
+
+          try {
+            bindFunctions?.(targetEl);
+          } catch (bindErr) {
+            console.error("Mermaid bindFunctions failed", bindErr);
+          }
+          block.setAttribute("data-mermaid-pending", "false");
+          block.classList.add("mermaid-rendered");
+        } catch (err) {
+          // AbortError: stale レンダリング → 次の effect に任せる
+          if (err instanceof DOMException && err.name === "AbortError") {
+            break;
+          }
+
+          // レンダリングエラー: ソースを残したままエラー状態を表示する。
+          // target がまだ DOM に接続されている場合のみ書き込む。
+          if (signal.aborted || !targetEl.isConnected) return;
+
+          const errorMessage = formatMermaidError(err);
+          mermaidSvgCacheRef.current.set(source, { type: "error", message: errorMessage });
+          setRenderedTick((t) => t + 1);
+
+          targetEl.textContent = errorMessage;
+          block.setAttribute("data-mermaid-pending", "false");
+          block.classList.add("mermaid-error");
+        }
+      }
+    };
+
+    void renderPendingBlocks();
+
+    return () => {
+      controller.abort("Mermaid render stale");
+    };
+  }, [html]);
 
   // イベント委譲: コンテナ要素に1つのクリックハンドラーを付けて
   // .code-block-copy ボタンと data-file-path リンクのクリックを検出する
@@ -209,7 +567,10 @@ export function TextPartView({ part }: Props) {
     }, 1500);
   }, []);
 
-  // biome-ignore lint/security/noDangerouslySetInnerHtml: DOMPurify でサニタイズ済みの HTML を描画する
-  // biome-ignore lint/a11y/useKeyWithClickEvents: コピーボタンとファイルリンクのイベント委譲
-  return <div className="markdown" onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    // biome-ignore lint/security/noDangerouslySetInnerHtml: DOMPurify でサニタイズ済みの HTML を描画する
+    // biome-ignore lint/a11y/useKeyWithClickEvents: コピーボタンとファイルリンクのイベント委譲
+    // biome-ignore lint/a11y/noStaticElementInteractions: コピーボタンとファイルリンクのイベント委譲
+    <div ref={containerRef} className="markdown" onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />
+  );
 }
