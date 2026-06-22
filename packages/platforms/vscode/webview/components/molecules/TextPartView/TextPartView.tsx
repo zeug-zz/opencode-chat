@@ -571,6 +571,7 @@ export function TextPartView({ part }: Props) {
     // biome-ignore lint/security/noDangerouslySetInnerHtml: DOMPurify でサニタイズ済みの HTML を描画する
     // biome-ignore lint/a11y/useKeyWithClickEvents: コピーボタンとファイルリンクのイベント委譲
     // biome-ignore lint/a11y/noStaticElementInteractions: コピーボタンとファイルリンクのイベント委譲
+    {/* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */}
     <div ref={containerRef} className="markdown" onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
