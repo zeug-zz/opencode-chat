@@ -1,5 +1,5 @@
 /**
- * @opencodegui/core - Platform Interface
+ * @opencode-chat/core - Platform Interface
  *
  * Defines the contract for platform-specific functionality.
  * Each platform (VS Code, Electron, Web, etc.) implements these interfaces.

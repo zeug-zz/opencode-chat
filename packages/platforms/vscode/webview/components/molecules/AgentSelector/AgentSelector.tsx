@@ -1,4 +1,4 @@
-import type { AgentInfo } from "@opencodegui/core";
+import type { AgentInfo } from "@opencode-chat/core";
 import { useMemo } from "react";
 import { useLocale } from "../../../locales";
 import { AgentIcon, ChevronRightIcon } from "../../atoms/icons";

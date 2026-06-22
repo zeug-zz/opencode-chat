@@ -1,4 +1,4 @@
-import type { ModelVariantRef, ProviderInfo as CoreProviderInfo } from "@opencodegui/core";
+import type { ModelVariantRef, ProviderInfo as CoreProviderInfo } from "@opencode-chat/core";
 import { useMemo, useState } from "react";
 import { useLocale } from "../../../locales";
 import type { AllProvidersData, ModelInfo, ProviderInfo } from "../../../vscode-api";

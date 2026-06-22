@@ -8,7 +8,7 @@ import type {
   SoundEventType,
   SoundSettings,
   TodoItem,
-} from "@opencodegui/core";
+} from "@opencode-chat/core";
 import { createContext, useContext } from "react";
 import type { MessageWithParts } from "../hooks/useMessages";
 import type { LocaleSetting } from "../locales";

@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 This file contains the licenses and copyright notices for third-party software
-included in the distributed build artifacts (VSIX package) of OpenCodeGUI.
+included in the distributed build artifacts (VSIX package) of OpenCode Chat.
 
 ---
 
@@ -266,6 +266,6 @@ invoked as external CLI commands when available on the user's system.
 - **License:** MIT
 - **Source:** https://github.com/yoshiko-pg/difit
 
-Used for the session diff review feature. OpenCodeGUI spawns `difit` as a
+Used for the session diff review feature. OpenCode Chat spawns `difit` as a
 child process and opens its web UI in the system browser. Users must install
 difit separately (`npm install -g difit`).

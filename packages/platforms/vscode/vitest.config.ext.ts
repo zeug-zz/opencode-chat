@@ -4,8 +4,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@opencodegui/agent-opencode": path.resolve(__dirname, "../../agents/opencode/src/index.ts"),
-      "@opencodegui/core": path.resolve(__dirname, "../../core/src/index.ts"),
+      "@opencode-chat/agent-opencode": path.resolve(__dirname, "../../agents/opencode/src/index.ts"),
+      "@opencode-chat/core": path.resolve(__dirname, "../../core/src/index.ts"),
     },
   },
   test: {

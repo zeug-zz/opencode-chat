@@ -1,5 +1,5 @@
 /**
- * @opencodegui/core - Agent Interface
+ * @opencode-chat/core - Agent Interface
  *
  * Defines the contract between the UI/platform layer and any coding agent.
  * Each agent implementation (OpenCode, Claude Code, Codex, etc.) implements

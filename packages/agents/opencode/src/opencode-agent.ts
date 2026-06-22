@@ -1,7 +1,7 @@
 /**
- * @opencodegui/agent-opencode - OpenCodeAgent
+ * @opencode-chat/agent-opencode - OpenCodeAgent
  *
- * Implements the IAgent interface from @opencodegui/core, wrapping the
+ * Implements the IAgent interface from @opencode-chat/core, wrapping the
  * @opencode-ai/sdk to communicate with an OpenCode server.
  *
  * This is a direct port of the original `opencode-client.ts` (OpenCodeConnection),
@@ -32,7 +32,7 @@ import type {
   SkillInfo,
   TodoItem,
   ToolListItem,
-} from "@opencodegui/core";
+} from "@opencode-chat/core";
 import {
   mapAgents,
   mapAllProvidersData,

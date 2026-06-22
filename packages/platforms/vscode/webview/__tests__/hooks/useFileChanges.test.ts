@@ -1,4 +1,4 @@
-import type { AgentEvent, FileDiff } from "@opencodegui/core";
+import type { AgentEvent, FileDiff } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { useFileChanges } from "../../hooks/useFileChanges";

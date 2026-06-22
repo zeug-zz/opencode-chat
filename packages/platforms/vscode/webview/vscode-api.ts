@@ -2,8 +2,8 @@
  * VSCode Webview API - backward-compatible re-export layer.
  *
  * This module re-exports the IBridge singleton from VscodeBridge and
- * domain/protocol types from @opencodegui/core for backward compatibility.
- * New code should import directly from @opencodegui/core for types and
+ * domain/protocol types from @opencode-chat/core for backward compatibility.
+ * New code should import directly from @opencode-chat/core for types and
  * use the bridge instance from ./bridges/VscodeBridge.
  */
 
@@ -16,9 +16,9 @@ export type {
   ProviderInfo,
   UIPersistedState,
   UIToHostMessage,
-} from "@opencodegui/core";
+} from "@opencode-chat/core";
 
-import type { HostToUIMessage, UIToHostMessage } from "@opencodegui/core";
+import type { HostToUIMessage, UIToHostMessage } from "@opencode-chat/core";
 
 /** @deprecated Use HostToUIMessage instead */
 export type ExtToWebviewMessage = HostToUIMessage;
@@ -26,8 +26,8 @@ export type ExtToWebviewMessage = HostToUIMessage;
 export type WebviewToExtMessage = UIToHostMessage;
 
 // Re-export UIPersistedState as WebviewPersistedState for backward compatibility
-import type { UIPersistedState } from "@opencodegui/core";
-/** @deprecated Use UIPersistedState from @opencodegui/core instead */
+import type { UIPersistedState } from "@opencode-chat/core";
+/** @deprecated Use UIPersistedState from @opencode-chat/core instead */
 export type WebviewPersistedState = UIPersistedState;
 
 // Re-export bridge functions for backward compatibility

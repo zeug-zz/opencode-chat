@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentInfo, ChatSession, SkillInfo, TodoItem } from "@opencodegui/core";
+import type { AgentEvent, AgentInfo, ChatSession, SkillInfo, TodoItem } from "@opencode-chat/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState } from "./components/molecules/EmptyState";
 import { FileChangesHeader } from "./components/molecules/FileChangesHeader";

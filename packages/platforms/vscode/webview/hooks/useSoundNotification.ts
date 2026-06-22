@@ -1,4 +1,4 @@
-import type { AgentEvent, SoundEventSetting, SoundEventType, SoundSettings } from "@opencodegui/core";
+import type { AgentEvent, SoundEventSetting, SoundEventType, SoundSettings } from "@opencode-chat/core";
 import { useCallback, useRef, useState } from "react";
 import { getPersistedState, setPersistedState } from "../vscode-api";
 

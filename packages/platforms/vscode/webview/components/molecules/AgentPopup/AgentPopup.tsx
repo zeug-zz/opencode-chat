@@ -1,4 +1,4 @@
-import type { AgentInfo } from "@opencodegui/core";
+import type { AgentInfo } from "@opencode-chat/core";
 import { useLocale } from "../../../locales";
 import { ListItem } from "../../atoms/ListItem";
 import styles from "./AgentPopup.module.css";

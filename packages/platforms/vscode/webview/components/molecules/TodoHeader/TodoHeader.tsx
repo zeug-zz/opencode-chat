@@ -1,4 +1,4 @@
-import type { TodoItem } from "@opencodegui/core";
+import type { TodoItem } from "@opencode-chat/core";
 import { useState } from "react";
 import { useLocale } from "../../../locales";
 import { CheckboxIcon, ChevronRightIcon } from "../../atoms/icons";

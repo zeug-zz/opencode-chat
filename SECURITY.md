@@ -12,7 +12,7 @@
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
 Report via GitHub private vulnerability reporting:
-https://github.com/ktmage/opencode-gui/security/advisories/new
+https://github.com/zeug-zz/opencode-chat/security/advisories/new
 
 Expect a response within 72 hours. Please include:
 - Description of the vulnerability

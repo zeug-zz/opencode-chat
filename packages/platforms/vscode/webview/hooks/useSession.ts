@@ -1,4 +1,4 @@
-import type { AgentEvent, ChatSession } from "@opencodegui/core";
+import type { AgentEvent, ChatSession } from "@opencode-chat/core";
 import { useCallback, useState } from "react";
 import { postMessage } from "../vscode-api";
 

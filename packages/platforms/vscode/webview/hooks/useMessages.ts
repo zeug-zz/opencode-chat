@@ -1,4 +1,4 @@
-import type { AgentEvent, ChatMessage, ChatSession, MessagePart } from "@opencodegui/core";
+import type { AgentEvent, ChatMessage, ChatSession, MessagePart } from "@opencode-chat/core";
 import { type RefObject, useCallback, useRef, useState } from "react";
 
 export type MessageWithParts = { info: ChatMessage; parts: MessagePart[] };

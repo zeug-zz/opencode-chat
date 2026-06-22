@@ -6,7 +6,7 @@ import type {
   ProviderInfo,
   TextPart,
   ToolPart,
-} from "@opencodegui/core";
+} from "@opencode-chat/core";
 
 // --- Session ---
 

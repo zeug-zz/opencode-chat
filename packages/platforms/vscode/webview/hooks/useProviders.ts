@@ -1,5 +1,5 @@
-import type { ModelInfo, ModelVariantRef, ProviderInfo } from "@opencodegui/core";
-import { validateModelVariant } from "@opencodegui/core";
+import type { ModelInfo, ModelVariantRef, ProviderInfo } from "@opencode-chat/core";
+import { validateModelVariant } from "@opencode-chat/core";
 import { useCallback, useEffect, useState } from "react";
 import type { AllProvidersData } from "../vscode-api";
 import { postMessage } from "../vscode-api";

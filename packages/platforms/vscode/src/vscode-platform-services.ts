@@ -6,14 +6,14 @@
  */
 
 import * as path from "node:path";
-import type { FileAttachment, IPlatformServices } from "@opencodegui/core";
+import type { FileAttachment, IPlatformServices } from "@opencode-chat/core";
 import * as vscode from "vscode";
 
 export class VscodePlatformServices implements IPlatformServices {
   async openDiffEditor(filePath: string, before: string, after: string): Promise<void> {
     // 仮想ドキュメントを使って VS Code のネイティブ diff エディタを開く
-    const beforeUri = vscode.Uri.parse(`opencode-diff-before:${filePath}?${encodeURIComponent(before)}`);
-    const afterUri = vscode.Uri.parse(`opencode-diff-after:${filePath}?${encodeURIComponent(after)}`);
+    const beforeUri = vscode.Uri.parse(`opencode-chat-diff-before:${filePath}?${encodeURIComponent(before)}`);
+    const afterUri = vscode.Uri.parse(`opencode-chat-diff-after:${filePath}?${encodeURIComponent(after)}`);
     const fileName = path.basename(filePath);
     await vscode.commands.executeCommand("vscode.diff", beforeUri, afterUri, `${fileName} (Changes)`);
   }

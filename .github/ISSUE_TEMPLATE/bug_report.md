@@ -27,5 +27,5 @@ labels: bug
 
 - OS: 
 - VS Code version: 
-- OpenCodeGUI version: 
+- OpenCode Chat version: 
 - OpenCode version: 

@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import type { FileDiff } from "@opencodegui/core";
+import type { FileDiff } from "@opencode-chat/core";
 import { createTwoFilesPatch } from "diff";
 import * as vscode from "vscode";
 

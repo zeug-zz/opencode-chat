@@ -1,4 +1,4 @@
-import type { ToolPart } from "@opencodegui/core";
+import type { ToolPart } from "@opencode-chat/core";
 import { useMemo, useState } from "react";
 import { useLocale } from "../../../locales";
 import { ChevronRightIcon, SpinnerIcon, TerminalIcon } from "../../atoms/icons";

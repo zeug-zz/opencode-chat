@@ -1,17 +1,17 @@
 {
-  "name": "opencodegui",
+  "name": "opencode-chat",
   "displayName": "%displayName%",
   "description": "%description%",
   "version": "0.5.3",
-  "publisher": "ktmage",
+  "publisher": "zeug-zz",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ktmage/opencode-gui"
+    "url": "https://github.com/zeug-zz/opencode-chat"
   },
-  "homepage": "https://github.com/ktmage/opencode-gui#readme",
+  "homepage": "https://github.com/zeug-zz/opencode-chat#readme",
   "bugs": {
-    "url": "https://github.com/ktmage/opencode-gui/issues"
+    "url": "https://github.com/zeug-zz/opencode-chat/issues"
   },
   "keywords": [
     "opencode",
@@ -35,24 +35,24 @@
     "Chat"
   ],
   "activationEvents": [
-    "onView:opencode.chatView"
+    "onView:opencode-chat.chatView"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "opencode",
+          "id": "opencode-chat",
           "title": "OpenCode",
           "icon": "$(comment-discussion)"
         }
       ]
     },
     "views": {
-      "opencode": [
+      "opencode-chat": [
         {
           "type": "webview",
-          "id": "opencode.chatView",
+          "id": "opencode-chat.chatView",
           "name": "Chat"
         }
       ]
@@ -93,8 +93,8 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
-    "@opencodegui/agent-opencode": "workspace:*",
-    "@opencodegui/core": "workspace:*",
+    "@opencode-chat/agent-opencode": "workspace:*",
+    "@opencode-chat/core": "workspace:*",
     "diff": "^8.0.0",
     "dompurify": "^3.4.0",
     "highlight.js": "^11.11.1",

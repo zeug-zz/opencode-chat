@@ -1,4 +1,4 @@
-import type { QuestionAnswer, QuestionRequest } from "@opencodegui/core";
+import type { QuestionAnswer, QuestionRequest } from "@opencode-chat/core";
 import { useCallback, useState } from "react";
 import { useLocale } from "../../../locales";
 import { postMessage } from "../../../vscode-api";

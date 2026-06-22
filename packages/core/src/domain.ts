@@ -1,5 +1,5 @@
 /**
- * @opencodegui/core - Domain types
+ * @opencode-chat/core - Domain types
  *
  * Agent/platform-independent types representing the application's domain.
  * These types are shaped to match the actual data flowing through the system

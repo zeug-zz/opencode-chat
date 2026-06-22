@@ -1,4 +1,4 @@
-import type { SoundEventSetting, SoundEventType, SoundSettings } from "@opencodegui/core";
+import type { SoundEventSetting, SoundEventType, SoundSettings } from "@opencode-chat/core";
 import type { LocaleSetting } from "../../../locales";
 import { useLocale } from "../../../locales";
 import { IconButton } from "../../atoms/IconButton";

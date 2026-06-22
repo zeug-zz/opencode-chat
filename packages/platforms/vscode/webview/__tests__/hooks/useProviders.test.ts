@@ -1,4 +1,4 @@
-import type { AllProvidersData, ModelInfo, ProviderInfo } from "@opencodegui/core";
+import type { AllProvidersData, ModelInfo, ProviderInfo } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { useProviders } from "../../hooks/useProviders";

@@ -1,7 +1,7 @@
 /**
- * @opencodegui/agent-opencode - SDK→Domain Type Mappers
+ * @opencode-chat/agent-opencode - SDK→Domain Type Mappers
  *
- * Converts types from @opencode-ai/sdk to @opencodegui/core domain types.
+ * Converts types from @opencode-ai/sdk to @opencode-chat/core domain types.
  * Each mapper is a pure function with no side effects.
  */
 
@@ -35,7 +35,7 @@ import type {
   SkillInfo,
   TodoItem,
   ToolListItem,
-} from "@opencodegui/core";
+} from "@opencode-chat/core";
 
 // ============================================================
 // Session

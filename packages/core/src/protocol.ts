@@ -1,5 +1,5 @@
 /**
- * @opencodegui/core - Protocol Types
+ * @opencode-chat/core - Protocol Types
  *
  * Message types for UI <-> Host communication.
  * These define the protocol used between the webview (React UI) and the

@@ -1,0 +1,47 @@
+schema: spec-driven
+
+context: |
+  This project uses a two-layer OpenSpec contract for builder execution.
+  MUST statements are normative, testable, and enforce compatibility and failure semantics.
+  SHOULD statements are implementation guidance and may be optimized by stronger builders when they do not conflict with MUST requirements.
+  If SHOULD guidance conflicts with a MUST constraint, the MUST constraint wins.
+
+rules:
+  proposal:
+    - MUST include scope, non-goals, risks, fallback, and compatibility impact.
+    - SHOULD keep rollout and sequencing guidance concise.
+
+  design:
+    - MUST preserve existing architecture boundaries unless explicitly scoped otherwise.
+    - MUST document key trade-offs, migration concerns, and rollback path.
+    - SHOULD prefer additive integration over broad rewrites.
+
+  specs:
+    - MUST define requirements and scenarios with explicit acceptance outcomes.
+    - SHOULD keep non-normative implementation guidance separate from requirements.
+
+  tasks:
+    - MUST be dependency-ordered and verifiable.
+    - MUST include verification steps per task.
+    - MUST NOT include destructive git actions.
+    - MUST NOT include auto-commit or auto-push steps.
+    - SHOULD split risky changes into smaller builder-safe steps.
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

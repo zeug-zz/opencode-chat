@@ -2,7 +2,7 @@
 
 ### Requirement: Prefer plan for initial primary-agent selection
 
-When the VS Code webview receives the opencode agent list and no primary agent has already been selected in the current webview session, OpenCodeGUI SHALL initialize the selected primary agent to an eligible agent named `plan` when one exists.
+When the VS Code webview receives the opencode agent list and no primary agent has already been selected in the current webview session, OpenCode Chat SHALL initialize the selected primary agent to an eligible agent named `plan` when one exists.
 
 #### Scenario: Plan agent is available after build
 
@@ -21,7 +21,7 @@ When the VS Code webview receives the opencode agent list and no primary agent h
 
 ### Requirement: Preserve explicit primary-agent selection
 
-OpenCodeGUI SHALL NOT overwrite a non-empty selected primary agent when a subsequent agent-list message is received.
+OpenCode Chat SHALL NOT overwrite a non-empty selected primary agent when a subsequent agent-list message is received.
 
 #### Scenario: User selection survives agent refresh
 

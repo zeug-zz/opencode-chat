@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@opencodegui/core";
+import type { AgentEvent } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { useQuestions } from "../../hooks/useQuestions";

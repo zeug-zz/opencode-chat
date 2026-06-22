@@ -5,7 +5,7 @@
  * platform-independent communication between UI and extension host.
  */
 
-import type { Disposable, HostToUIMessage, IBridge, UIPersistedState, UIToHostMessage } from "@opencodegui/core";
+import type { Disposable, HostToUIMessage, IBridge, UIPersistedState, UIToHostMessage } from "@opencode-chat/core";
 
 interface VsCodeApi {
   postMessage(message: UIToHostMessage): void;

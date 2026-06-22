@@ -1,4 +1,4 @@
-import type { Permission } from "@opencodegui/core";
+import type { Permission } from "@opencode-chat/core";
 import { useState } from "react";
 import { useLocale } from "../../../locales";
 import { postMessage } from "../../../vscode-api";

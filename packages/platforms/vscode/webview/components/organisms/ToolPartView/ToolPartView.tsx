@@ -1,4 +1,4 @@
-import type { ToolPart } from "@opencodegui/core";
+import type { ToolPart } from "@opencode-chat/core";
 import { useCallback, useMemo, useState } from "react";
 import { useAppContext } from "../../../contexts/AppContext";
 import { useLocale } from "../../../locales";

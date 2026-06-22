@@ -1,4 +1,4 @@
-import type { QuestionRequest } from "@opencodegui/core";
+import type { QuestionRequest } from "@opencode-chat/core";
 import type { MessageWithParts } from "../../../App";
 import { useAutoScroll } from "../../../hooks/useAutoScroll";
 import { useLocale } from "../../../locales";

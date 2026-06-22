@@ -21,7 +21,7 @@ function createMockAgentClass() {
 
 // ChatViewProvider のモック — コンストラクタとして使われる
 function createMockChatViewProviderClass() {
-  return Object.assign(class MockChatViewProvider {}, { viewType: "opencode.chatView" });
+  return Object.assign(class MockChatViewProvider {}, { viewType: "opencode-chat.chatView" });
 }
 
 import * as vscode from "vscode";
@@ -54,7 +54,7 @@ describe("extension", () => {
   async function importExtension() {
     vi.resetModules();
 
-    vi.doMock("@opencodegui/agent-opencode", () => ({
+    vi.doMock("@opencode-chat/agent-opencode", () => ({
       OpenCodeAgent: createMockAgentClass(),
     }));
     vi.doMock("../chat-view-provider", () => ({
@@ -83,16 +83,16 @@ describe("extension", () => {
       expect(mockConnect).toHaveBeenCalled();
 
       // webview provider 登録
-      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalledWith("opencode.chatView", expect.anything());
+      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalledWith("opencode-chat.chatView", expect.anything());
 
       // diff content provider 登録（2つ: before と after）
       expect(vscode.workspace.registerTextDocumentContentProvider).toHaveBeenCalledTimes(2);
       expect(vscode.workspace.registerTextDocumentContentProvider).toHaveBeenCalledWith(
-        "opencode-diff-before",
+        "opencode-chat-diff-before",
         expect.anything(),
       );
       expect(vscode.workspace.registerTextDocumentContentProvider).toHaveBeenCalledWith(
-        "opencode-diff-after",
+        "opencode-chat-diff-after",
         expect.anything(),
       );
 
@@ -206,14 +206,14 @@ describe("extension", () => {
 
       // registerTextDocumentContentProvider に渡されたプロバイダーを取得
       const registerCalls = vi.mocked(vscode.workspace.registerTextDocumentContentProvider).mock.calls;
-      const beforeProvider = registerCalls.find((c) => c[0] === "opencode-diff-before")?.[1];
+      const beforeProvider = registerCalls.find((c) => c[0] === "opencode-chat-diff-before")?.[1];
 
       expect(beforeProvider).toBeDefined();
 
       // URI query にエンコードされたコンテンツを渡す
       const content = "const a = 1;\nconst b = 2;";
       const uri = {
-        scheme: "opencode-diff-before",
+        scheme: "opencode-chat-diff-before",
         path: "src/index.ts",
         query: encodeURIComponent(content),
       };

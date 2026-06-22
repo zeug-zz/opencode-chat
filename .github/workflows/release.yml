@@ -35,11 +35,11 @@ jobs:
         run: cp LICENSE CHANGELOG.md THIRD_PARTY_NOTICES.md packages/platforms/vscode/
 
       - name: Package extension
-        run: pnpm --filter opencodegui run package
+        run: pnpm --filter opencode-chat run package
         working-directory: .
 
       - name: Publish to Marketplace
-        run: pnpm --filter opencodegui run publish
+        run: pnpm --filter opencode-chat run publish
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 

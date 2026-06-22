@@ -1,4 +1,4 @@
-import type { FileDiff } from "@opencodegui/core";
+import type { FileDiff } from "@opencode-chat/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { FileChangesHeader } from "../../../components/molecules/FileChangesHeader";

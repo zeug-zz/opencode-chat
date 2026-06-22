@@ -1,4 +1,4 @@
-import type { TextPart } from "@opencodegui/core";
+import type { TextPart } from "@opencode-chat/core";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { Marked, type Renderer, type Tokens } from "marked";

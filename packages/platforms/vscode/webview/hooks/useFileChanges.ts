@@ -1,4 +1,4 @@
-import type { AgentEvent, FileDiff } from "@opencodegui/core";
+import type { AgentEvent, FileDiff } from "@opencode-chat/core";
 import { useCallback, useState } from "react";
 
 /**

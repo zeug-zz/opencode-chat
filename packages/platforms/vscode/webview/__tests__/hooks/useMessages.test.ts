@@ -1,4 +1,4 @@
-import type { AgentEvent, ChatSession } from "@opencodegui/core";
+import type { AgentEvent, ChatSession } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
 import { createRef, type RefObject } from "react";
 import { describe, expect, it } from "vitest";

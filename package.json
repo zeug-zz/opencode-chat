@@ -1,19 +1,19 @@
 {
-  "name": "opencodegui-monorepo",
+  "name": "opencode-chat-monorepo",
   "private": true,
   "version": "0.5.3",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ktmage/opencode-gui"
+    "url": "https://github.com/zeug-zz/opencode-chat"
   },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm --filter opencode-chat build",
     "check": "biome check .",
     "check:fix": "biome check --fix .",
     "format": "biome format --write .",
-    "test": "pnpm -r test",
-    "test:all": "pnpm -r run test:all"
+    "test": "pnpm --filter opencode-chat test",
+    "test:all": "pnpm --filter opencode-chat test:all"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.4"

@@ -1,4 +1,4 @@
-import type { ChatSession } from "@opencodegui/core";
+import type { ChatSession } from "@opencode-chat/core";
 import { useLocale } from "../../../locales";
 import type { en } from "../../../locales/en";
 import { IconButton } from "../../atoms/IconButton";

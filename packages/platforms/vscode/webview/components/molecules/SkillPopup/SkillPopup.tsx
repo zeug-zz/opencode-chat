@@ -1,4 +1,4 @@
-import type { SkillInfo } from "@opencodegui/core";
+import type { SkillInfo } from "@opencode-chat/core";
 import { useLocale } from "../../../locales";
 import { GearIcon } from "../../atoms/icons";
 import { ListItem } from "../../atoms/ListItem";

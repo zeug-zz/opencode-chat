@@ -6,8 +6,8 @@ import type {
   SoundEventSetting,
   SoundEventType,
   SoundSettings,
-} from "@opencodegui/core";
-import { getModelVariants } from "@opencodegui/core";
+} from "@opencode-chat/core";
+import { getModelVariants } from "@opencode-chat/core";
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useClickOutside } from "../../../hooks/useClickOutside";
 import { useInputHistory } from "../../../hooks/useInputHistory";

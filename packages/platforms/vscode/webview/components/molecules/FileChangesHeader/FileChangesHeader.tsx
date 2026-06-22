@@ -1,4 +1,4 @@
-import type { FileDiff } from "@opencodegui/core";
+import type { FileDiff } from "@opencode-chat/core";
 import { useState } from "react";
 import { useLocale } from "../../../locales";
 import { getFileIcon } from "../../../utils/file-icons";

@@ -1,5 +1,5 @@
 {
-  "name": "@opencodegui/agent-opencode",
+  "name": "@opencode-chat/agent-opencode",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.2.10",
-    "@opencodegui/core": "workspace:*"
+    "@opencode-chat/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

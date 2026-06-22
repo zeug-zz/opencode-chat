@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { OpenCodeAgent } from "@opencodegui/agent-opencode";
+import { OpenCodeAgent } from "@opencode-chat/agent-opencode";
 import * as vscode from "vscode";
 import { ChatViewProvider } from "./chat-view-provider";
 import { DiffReviewManager } from "./diff-review-manager";
@@ -13,7 +13,7 @@ process.on("exit", () => agent.disconnect());
 export async function activate(context: vscode.ExtensionContext) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspaceFolder) {
-    vscode.window.showWarningMessage(vscode.l10n.t("OpenCodeGUI requires an open workspace folder."));
+    vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Chat requires an open workspace folder."));
     return;
   }
 
@@ -31,7 +31,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (isNotFound) {
       vscode.window.showWarningMessage(
         vscode.l10n.t(
-          'OpenCodeGUI: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
+          'OpenCode Chat: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
         ),
       );
       return;
@@ -66,8 +66,8 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   };
   context.subscriptions.push(
-    vscode.workspace.registerTextDocumentContentProvider("opencode-diff-before", diffContentProvider),
-    vscode.workspace.registerTextDocumentContentProvider("opencode-diff-after", diffContentProvider),
+    vscode.workspace.registerTextDocumentContentProvider("opencode-chat-diff-before", diffContentProvider),
+    vscode.workspace.registerTextDocumentContentProvider("opencode-chat-diff-after", diffContentProvider),
   );
 
   context.subscriptions.push(new vscode.Disposable(() => agent.disconnect()));

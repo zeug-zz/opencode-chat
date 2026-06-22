@@ -1,4 +1,4 @@
-import type { ChatSession, ToolPart } from "@opencodegui/core";
+import type { ChatSession, ToolPart } from "@opencode-chat/core";
 import { useLocale } from "../../../locales";
 import { AgentIcon, ChevronRightIcon, SpinnerIcon } from "../../atoms/icons";
 import styles from "./SubtaskPartView.module.css";

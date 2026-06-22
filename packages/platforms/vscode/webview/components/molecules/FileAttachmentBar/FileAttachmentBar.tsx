@@ -1,4 +1,4 @@
-import type { AgentInfo, SkillInfo } from "@opencodegui/core";
+import type { AgentInfo, SkillInfo } from "@opencode-chat/core";
 import { useLocale } from "../../../locales";
 import { getFileIcon } from "../../../utils/file-icons";
 import type { FileAttachment } from "../../../vscode-api";

@@ -1,11 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ChatSession, HostToUIMessage, IAgent, IPlatformServices, UIToHostMessage } from "@opencodegui/core";
+import type { ChatSession, HostToUIMessage, IAgent, IPlatformServices, UIToHostMessage } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { DiffReviewManager } from "./diff-review-manager";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = "opencode.chatView";
+  public static readonly viewType = "opencode-chat.chatView";
 
   private view: vscode.WebviewView | undefined;
   // OpenCode サーバーには「現在アクティブなセッション」を保持する API がないため、
@@ -351,7 +351,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** アクティブなテキストエディタから FileAttachment を生成する。エディタがない場合は null を返す。 */
   private getActiveEditorFile(
     editor: vscode.TextEditor | undefined,
-  ): import("@opencodegui/core").FileAttachment | null {
+  ): import("@opencode-chat/core").FileAttachment | null {
     if (!editor) return null;
     const uri = editor.document.uri;
     // 出力パネルや設定画面など、file スキーム以外は対象外

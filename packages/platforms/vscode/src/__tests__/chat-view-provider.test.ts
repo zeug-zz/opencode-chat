@@ -12,7 +12,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import * as fs from "node:fs/promises";
-import type { IAgent, IPlatformServices } from "@opencodegui/core";
+import type { IAgent, IPlatformServices } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import { ChatViewProvider } from "../chat-view-provider";
 import type { DiffReviewManager } from "../diff-review-manager";
@@ -124,7 +124,7 @@ function createMockWebviewView() {
   const webviewView = {
     webview,
     // 以下は WebviewViewResolveContext 相当
-    viewType: "opencode.chatView",
+    viewType: "opencode-chat.chatView",
     title: undefined,
     description: undefined,
     badge: undefined,

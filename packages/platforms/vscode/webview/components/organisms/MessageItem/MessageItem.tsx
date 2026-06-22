@@ -4,7 +4,7 @@ import type {
   ReasoningPart as ReasoningPartType,
   TextPart,
   ToolPart,
-} from "@opencodegui/core";
+} from "@opencode-chat/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MessageWithParts } from "../../../App";
 import { useAppContext } from "../../../contexts/AppContext";

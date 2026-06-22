@@ -1,4 +1,4 @@
-import type { AgentEvent, Permission } from "@opencodegui/core";
+import type { AgentEvent, Permission } from "@opencode-chat/core";
 import { useCallback, useState } from "react";
 
 /**

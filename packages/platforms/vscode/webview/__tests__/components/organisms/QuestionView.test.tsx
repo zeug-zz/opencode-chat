@@ -1,4 +1,4 @@
-import type { QuestionRequest } from "@opencodegui/core";
+import type { QuestionRequest } from "@opencode-chat/core";
 import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { QuestionView } from "../../../components/organisms/QuestionView";
