@@ -11,18 +11,32 @@ type Props = {
   onSelect: (agentName: string) => void;
 };
 
+const ALLOWED_AGENTS = ["plan", "build"];
+const AGENT_DISPLAY_NAMES: Record<string, string> = { plan: "chat" };
+const getDisplayName = (name: string) => AGENT_DISPLAY_NAMES[name] ?? name;
+
+const AGENT_DESCRIPTIONS: Record<string, string> = {
+  plan: "Default mode for chatting and planning. Read-only, no code execution.",
+  build: "Full agent mode. Can run commands and edit files.",
+};
+const getDescription = (agent: AgentInfo) => AGENT_DESCRIPTIONS[agent.name] ?? agent.description;
+
 export function AgentSelector({ agents, selectedAgent, onSelect }: Props) {
   const t = useLocale();
 
-  // プライマリエージェントのみ表示（mode: "primary" | "all"）
-  const primaryAgents = useMemo(() => agents.filter((a) => a.mode === "primary" || a.mode === "all"), [agents]);
+  // plan / build のみ表示（plan は "chat" として表示）
+  const primaryAgents = useMemo(() => agents.filter((a) => ALLOWED_AGENTS.includes(a.name)), [agents]);
 
   const selectedAgentInfo = useMemo(
     () => primaryAgents.find((a) => a.name === selectedAgent),
     [primaryAgents, selectedAgent],
   );
 
-  const displayName = selectedAgentInfo?.name ?? selectedAgent ?? t["agent.selectAgent"];
+  const displayName = selectedAgentInfo
+    ? getDisplayName(selectedAgentInfo.name)
+    : selectedAgent
+      ? getDisplayName(selectedAgent)
+      : t["agent.selectAgent"];
 
   if (primaryAgents.length === 0) return null;
 
@@ -59,9 +73,9 @@ export function AgentSelector({ agents, selectedAgent, onSelect }: Props) {
                   <span className={styles.itemCheck}>{isSelected ? "✓" : ""}</span>
                   <span className={styles.itemName}>
                     {agent.color && <span className={styles.colorDot} style={{ backgroundColor: agent.color }} />}
-                    {agent.name}
+                    {getDisplayName(agent.name)}
                   </span>
-                  {agent.description && <span className={styles.itemDescription}>{agent.description}</span>}
+                  {getDescription(agent) && <span className={styles.itemDescription}>{getDescription(agent)}</span>}
                 </div>
               );
             })}

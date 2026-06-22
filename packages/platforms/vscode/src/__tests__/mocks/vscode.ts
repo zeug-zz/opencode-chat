@@ -103,4 +103,5 @@ export const ViewColumn = {
   One: 1,
   Two: 2,
   Three: 3,
+  Beside: -2,
 };

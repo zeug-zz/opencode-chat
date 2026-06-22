@@ -243,9 +243,9 @@ describe("初期化", () => {
       await sendExtMessage({ type: "agents", agents: buildPrimaryPlanPrimaryAgents });
     });
 
-    // Selector shows plan
-    it("AgentSelector が plan を表示すること", () => {
-      expect(screen.getByTitle("Select agent")).toHaveTextContent("plan");
+    // Selector shows plan as "chat"
+    it('AgentSelector が plan を "chat" として表示すること', () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
       expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("build");
     });
 
@@ -272,9 +272,9 @@ describe("初期化", () => {
       await sendExtMessage({ type: "agents", agents: buildPrimaryPlanAllAgents });
     });
 
-    // Selector shows plan
-    it("AgentSelector が plan を表示すること", () => {
-      expect(screen.getByTitle("Select agent")).toHaveTextContent("plan");
+    // Selector shows plan as "chat"
+    it('AgentSelector が plan を "chat" として表示すること', () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
     });
   });
 
@@ -286,9 +286,9 @@ describe("初期化", () => {
       await sendExtMessage({ type: "agents", agents: planAllBuildPrimaryAgents });
     });
 
-    // Selector still shows plan (no ordering regression)
-    it("AgentSelector が plan を表示すること", () => {
-      expect(screen.getByTitle("Select agent")).toHaveTextContent("plan");
+    // Selector still shows plan as "chat" (no ordering regression)
+    it('AgentSelector が plan を "chat" として表示すること', () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
     });
   });
 

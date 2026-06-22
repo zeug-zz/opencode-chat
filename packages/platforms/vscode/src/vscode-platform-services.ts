@@ -31,6 +31,7 @@ export class VscodePlatformServices implements IPlatformServices {
     const terminal = vscode.window.createTerminal({
       name: "OpenCode",
       cwd: wsFolder,
+      location: { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
     });
     terminal.show();
     terminal.sendText(`opencode ${args.map((a) => JSON.stringify(a)).join(" ")}`);
