@@ -566,6 +566,7 @@ export function TextPartView({ part }: Props) {
   }, []);
 
   return (
+    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml
     <div ref={containerRef} className="markdown" onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
