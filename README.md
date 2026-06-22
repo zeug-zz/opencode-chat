@@ -50,7 +50,7 @@ A focused chat window using your OpenCode models, memory, skills, and MCP server
 - Session management (create, switch, fork, delete)
 - Message editing & checkpoint restore
 - Model search and selection
-- Model effort toggles
+- Model effort toggles with per-model persistence across sessions
 - Recent models section in the model selector for quick re-selection (persisted across sessions)
 - Collapsible provider lists in the model selector (collapsed by default, selected provider auto-expanded)
 - Agent selector for primary agent selection

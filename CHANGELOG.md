@@ -5,12 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-06-22
 
 ### Added
 
 - Recent models section in model selector — recently-used models appear at the top for quick reselection, persisted across sessions
+- Model effort persistence — user-selected effort (low/medium/high) is remembered per model and restored across sessions
 - Collapsible provider lists in model selector — provider groups are collapsed by default; the selected model's provider auto-expands and search force-expands all
+
+### Fixed
+
+- Fork-to-TUI event bleed — forked terminal sessions no longer leak permission prompts, sound notifications, or diff updates into the GUI session
 
 ## [0.5.3] - 2026-03-08
 
