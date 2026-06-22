@@ -249,6 +249,13 @@
   font-family: var(--vscode-editor-font-family, monospace);
 }
 
+.itemProvider {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
 .footer {
   display: flex;
   gap: 4px;

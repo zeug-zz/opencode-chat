@@ -39,6 +39,7 @@ export function useProviders() {
   const [selectedModel, setSelectedModel] = useState<SelectedModel | null>(null);
   const [selectedModelEffort, setSelectedModelEffortRaw] = useState<ModelVariantRef | undefined>(undefined);
   const prevModelKeyRef = useRef<string | null>(null);
+  const [recentModels, setRecentModels] = useState<SelectedModel[]>(() => getPersistedState()?.recentModels ?? []);
 
   // Centralized revalidation: when the selected model or provider
   // metadata changes, validate the existing effort against the new
@@ -122,6 +123,12 @@ export function useProviders() {
   }, [selectedModel, allProvidersData, providers]);
 
   const handleModelSelect = useCallback((model: SelectedModel) => {
+    setRecentModels((prev) => {
+      const deduped = prev.filter((m) => !(m.providerID === model.providerID && m.modelID === model.modelID));
+      const next = [model, ...deduped].slice(0, 5);
+      setPersistedState({ ...getPersistedState(), recentModels: next });
+      return next;
+    });
     setSelectedModel(model);
     postMessage({ type: "setModel", model: `${model.providerID}/${model.modelID}` });
   }, []);
@@ -175,6 +182,7 @@ export function useProviders() {
     setProviders,
     allProvidersData,
     setAllProvidersData,
+    recentModels,
     selectedModel,
     setSelectedModel,
     selectedModelEffort,

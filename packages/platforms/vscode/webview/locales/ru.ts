@@ -89,6 +89,7 @@ export const ru: LocaleSchema = {
   "model.hideDisconnected": "Скрыть отключённых провайдеров",
   "model.searchPlaceholder": "Поиск моделей...",
   "model.noSearchResults": "Нет подходящих моделей",
+  "model.recent": "Недавние",
 
   // AgentSelector
   "agent.selectAgent": "Выбрать агента",

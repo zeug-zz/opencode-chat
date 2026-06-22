@@ -87,6 +87,7 @@ export const en = {
   "model.hideDisconnected": "Hide disconnected providers",
   "model.searchPlaceholder": "Search models...",
   "model.noSearchResults": "No matching models",
+  "model.recent": "Recent",
 
   // AgentSelector
   "agent.selectAgent": "Select agent",

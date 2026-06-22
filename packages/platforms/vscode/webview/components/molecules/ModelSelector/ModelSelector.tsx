@@ -20,6 +20,11 @@ type Props = {
    * middle-dot separator. Display-only; click handling lives elsewhere.
    */
   selectedModelEffort?: ModelVariantRef;
+  /**
+   * Most-recent-first list of recently selected models (capped at five).
+   * Not yet rendered — consumed in Task 3.2.
+   */
+  recentModels?: Array<{ providerID: string; modelID: string }>;
 };
 
 function formatContextK(context: number): string {
@@ -38,7 +43,14 @@ const badgeClass: Record<string, string> = {
   deprecated: styles.deprecated,
 };
 
-export function ModelSelector({ providers, allProvidersData, selectedModel, onSelect, selectedModelEffort }: Props) {
+export function ModelSelector({
+  providers,
+  allProvidersData,
+  selectedModel,
+  onSelect,
+  selectedModelEffort,
+  recentModels,
+}: Props) {
   const t = useLocale();
   const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
@@ -113,6 +125,24 @@ export function ModelSelector({ providers, allProvidersData, selectedModel, onSe
 
   const hasSearchResults = visibleProviders.length > 0;
 
+  const visibleRecent = useMemo(() => {
+    if (!recentModels || recentModels.length === 0) return [];
+    return recentModels
+      .map((entry) => {
+        const provider = allDisplayProviders.find((p) => p.id === entry.providerID);
+        if (!provider) return null;
+        const model = provider.models.find((m) => m.id === entry.modelID);
+        if (!model) return null;
+        return {
+          providerID: entry.providerID,
+          modelID: entry.modelID,
+          modelName: model.name || entry.modelID,
+          providerName: provider.name,
+        };
+      })
+      .filter(Boolean) as Array<{ providerID: string; modelID: string; modelName: string; providerName: string }>;
+  }, [recentModels, allDisplayProviders]);
+
   const selectedModelName = useMemo(() => {
     if (!selectedModel) return t["model.selectModel"];
     for (const p of allDisplayProviders) {
@@ -168,6 +198,40 @@ export function ModelSelector({ providers, allProvidersData, selectedModel, onSe
       panel={({ close }) => (
         <div className={styles.panel}>
           <div className={styles.panelBody}>
+            {!isSearching && visibleRecent.length > 0 && (
+              <div className={styles.section}>
+                <div className={styles.sectionTitle}>
+                  <span className={styles.sectionName}>{t["model.recent"]}</span>
+                </div>
+                {visibleRecent.map((entry) => (
+                  <div
+                    key={`${entry.providerID}/${entry.modelID}`}
+                    className={[
+                      styles.item,
+                      selectedModel?.providerID === entry.providerID &&
+                        selectedModel?.modelID === entry.modelID &&
+                        styles.active,
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    onClick={() => {
+                      onSelect({ providerID: entry.providerID, modelID: entry.modelID });
+                      close();
+                    }}
+                  >
+                    <span className={styles.itemCheck}>
+                      {selectedModel?.providerID === entry.providerID && selectedModel?.modelID === entry.modelID
+                        ? "✓"
+                        : ""}
+                    </span>
+                    <span className={styles.itemName}>
+                      {entry.modelName}
+                      <span className={styles.itemProvider}>{entry.providerName}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             {visibleProviders.map((provider) => {
               if (provider.models.length === 0) return null;
               const isCollapsed = !isSearching && collapsedProviders.has(provider.id);

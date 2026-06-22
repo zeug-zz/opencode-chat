@@ -89,6 +89,7 @@ export const ko: LocaleSchema = {
   "model.hideDisconnected": "연결 안 된 제공자 숨기기",
   "model.searchPlaceholder": "모델 검색...",
   "model.noSearchResults": "일치하는 모델이 없습니다",
+  "model.recent": "최근",
 
   // AgentSelector
   "agent.selectAgent": "에이전트 선택",

@@ -551,6 +551,7 @@ export function App() {
                   onModelSelect={prov.handleModelSelect}
                   selectedModelEffort={prov.selectedModelEffort}
                   onModelEffortSelect={prov.setSelectedModelEffort}
+                  recentModels={prov.recentModels}
                   selectedPrimaryAgent={selectedPrimaryAgent}
                   onPrimaryAgentSelect={setSelectedPrimaryAgent}
                   openEditors={openEditors}

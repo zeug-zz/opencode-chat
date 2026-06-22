@@ -54,6 +54,11 @@ type Props = {
    * disabled) and the existing text/send behavior is preserved.
    */
   onModelEffortSelect?: (effort: ModelVariantRef | null | undefined) => void;
+  /**
+   * Most-recent-first list of recently selected models (capped at five).
+   * Passed through to ModelSelector for the Recent section.
+   */
+  recentModels?: Array<{ providerID: string; modelID: string }>;
   selectedPrimaryAgent: string | null;
   onPrimaryAgentSelect: (agentName: string) => void;
   openEditors: FileAttachment[];
@@ -99,6 +104,7 @@ export function InputArea({
   onSoundSettingChange,
   agents,
   skills,
+  recentModels,
 }: Props) {
   const t = useLocale();
   const [text, setText] = useState("");
@@ -797,6 +803,7 @@ export function InputArea({
               selectedModel={selectedModel}
               onSelect={onModelSelect}
               selectedModelEffort={selectedModelEffort}
+              recentModels={recentModels}
             />
             <AgentSelector agents={agents} selectedAgent={selectedPrimaryAgent} onSelect={onPrimaryAgentSelect} />
             <Popover

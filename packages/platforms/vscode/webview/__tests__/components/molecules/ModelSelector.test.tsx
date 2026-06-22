@@ -116,4 +116,61 @@ describe("ModelSelector", () => {
       expect(container.querySelector(".modelName")?.textContent?.trim()).toBeTruthy();
     });
   });
+
+  describe("recentModels", () => {
+    it("recentModels が渡された場合、Recent セクションがレンダリングされること", () => {
+      const { container } = render(
+        <ModelSelector {...defaultProps} recentModels={[{ providerID: "openai", modelID: "gpt-4" }]} />,
+      );
+      fireEvent.click(container.querySelector(".button")!);
+      expect(container.querySelector(".sectionName")?.textContent).toBe("Recent");
+      const providerSpan = container.querySelector(".itemProvider");
+      expect(providerSpan?.textContent).toBe("Openai");
+    });
+
+    it("検索中は Recent セクションが非表示になること", () => {
+      const { container } = render(
+        <ModelSelector {...defaultProps} recentModels={[{ providerID: "openai", modelID: "gpt-4" }]} />,
+      );
+      fireEvent.click(container.querySelector(".button")!);
+      // Initially visible — "Recent" text appears in the panel
+      expect(container.textContent).toContain("Recent");
+      // Type to search
+      const searchInput = container.querySelector(".searchInput")!;
+      fireEvent.change(searchInput, { target: { value: "searching" } });
+      expect(container.textContent).not.toContain("Recent");
+      // Clear search
+      fireEvent.change(searchInput, { target: { value: "" } });
+      expect(container.textContent).toContain("Recent");
+    });
+
+    it("存在しないプロバイダーやモデルのエントリは表示されないこと (stale filtering)", () => {
+      const { container } = render(
+        <ModelSelector {...defaultProps} recentModels={[{ providerID: "nonexistent", modelID: "none" }]} />,
+      );
+      fireEvent.click(container.querySelector(".button")!);
+      // Entire section block is hidden when all entries filtered out
+      expect(container.textContent).not.toContain("Recent");
+    });
+
+    it("Recent のモデルをクリックすると onSelect が呼ばれること", () => {
+      const onSelect = vi.fn();
+      const { container } = render(
+        <ModelSelector
+          {...defaultProps}
+          onSelect={onSelect}
+          recentModels={[{ providerID: "openai", modelID: "gpt-4" }]}
+        />,
+      );
+      fireEvent.click(container.querySelector(".button")!);
+      fireEvent.click(container.querySelector(".item")!);
+      expect(onSelect).toHaveBeenCalledWith({ providerID: "openai", modelID: "gpt-4" });
+    });
+
+    it("recentModels が空の場合は Recent セクションが表示されないこと", () => {
+      const { container } = render(<ModelSelector {...defaultProps} recentModels={[]} />);
+      fireEvent.click(container.querySelector(".button")!);
+      expect(container.textContent).not.toContain("Recent");
+    });
+  });
 });

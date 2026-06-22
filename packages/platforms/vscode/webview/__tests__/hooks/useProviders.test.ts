@@ -590,4 +590,60 @@ describe("useProviders", () => {
       expect(result.current.selectedModelEffort).toEqual({ id: "medium", label: "Medium" });
     });
   });
+
+  describe("recentModels", () => {
+    it("モデルを選択すると recentModels の先頭に追加されること", () => {
+      const { result } = renderHook(() => useProviders());
+      const model = { providerID: "openai", modelID: "gpt-4" };
+      act(() => result.current.handleModelSelect(model));
+      expect(result.current.recentModels[0]).toEqual(model);
+      expect(result.current.recentModels).toHaveLength(1);
+    });
+
+    it("同じモデルを再選択すると先頭に移動し重複しないこと", () => {
+      const { result } = renderHook(() => useProviders());
+      const modelA = { providerID: "openai", modelID: "gpt-4" };
+      const modelB = { providerID: "anthropic", modelID: "claude-opus" };
+      act(() => result.current.handleModelSelect(modelA));
+      act(() => result.current.handleModelSelect(modelB));
+      act(() => result.current.handleModelSelect(modelA));
+      expect(result.current.recentModels).toEqual([modelA, modelB]);
+    });
+
+    it("6個目を選択すると最も古いものが削除されること", () => {
+      const { result } = renderHook(() => useProviders());
+      const models = Array.from({ length: 6 }, (_, i) => ({
+        providerID: `provider${i}`,
+        modelID: `model${i}`,
+      }));
+      for (const m of models) {
+        act(() => result.current.handleModelSelect(m));
+      }
+      expect(result.current.recentModels).toHaveLength(5);
+      // The 6th (oldest, index 0) should be absent; the last selected should be first.
+      expect(result.current.recentModels[0]).toEqual(models[5]);
+      expect(
+        result.current.recentModels.find(
+          (m) => m.providerID === models[0].providerID && m.modelID === models[0].modelID,
+        ),
+      ).toBeUndefined();
+    });
+
+    it("永続化時に他のフィールド (localeSetting, inputHistory, soundSettings, modelEffortByModel) が保護されること", () => {
+      const baseState = {
+        localeSetting: "ja",
+        inputHistory: ["hello"],
+        soundSettings: { responseComplete: { enabled: true } },
+        modelEffortByModel: { "openai/gpt": "low" },
+      };
+      vi.mocked(getPersistedState).mockReturnValue(baseState);
+      const { result } = renderHook(() => useProviders());
+      const model = { providerID: "openai", modelID: "gpt-4" };
+      act(() => result.current.handleModelSelect(model));
+      expect(setPersistedState).toHaveBeenCalledWith({
+        ...baseState,
+        recentModels: [model],
+      });
+    });
+  });
 });

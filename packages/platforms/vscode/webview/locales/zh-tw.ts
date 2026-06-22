@@ -89,6 +89,7 @@ export const zhTw: LocaleSchema = {
   "model.hideDisconnected": "隱藏未連線的提供者",
   "model.searchPlaceholder": "搜尋模型...",
   "model.noSearchResults": "找不到相符的模型",
+  "model.recent": "最近使用",
 
   // AgentSelector
   "agent.selectAgent": "選擇代理",

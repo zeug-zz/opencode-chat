@@ -33,6 +33,8 @@ export type UIPersistedState = {
   soundSettings?: SoundSettings;
   /** Per-model effort variant selection, keyed by `${providerID}/${modelID}` */
   modelEffortByModel?: Record<string, string>;
+  /** Most-recent-first list of recently selected models, capped at five. */
+  recentModels?: Array<{ providerID: string; modelID: string }>;
 };
 
 /** Platform-specific services */
