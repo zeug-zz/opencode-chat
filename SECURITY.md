@@ -38,5 +38,5 @@ This policy covers:
 ## Audit Trail
 
 Security audits are recorded in `scripts/security/last-audit.json`.
-Latest audit: **2026-06-12** (workspace + changed files, mode: all) — 0 findings, 0 CVEs.
+Latest audit: **2026-06-22** (workspace, mode: all) — 0 findings, 0 CVEs.
 Threat-monitor risk assessments: `plans/security/risk_assessment-*.md`.
