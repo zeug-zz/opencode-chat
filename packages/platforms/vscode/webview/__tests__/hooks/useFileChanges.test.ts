@@ -1,7 +1,16 @@
-import type { AgentEvent, FileDiff } from "@opencode-chat/core";
+import type { AgentEvent, ChatSession, FileDiff } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
+import { createRef, type RefObject } from "react";
 import { describe, expect, it } from "vitest";
 import { useFileChanges } from "../../hooks/useFileChanges";
+
+function createSessionRef(session: ChatSession | null = null): RefObject<ChatSession | null> {
+  const ref = createRef<ChatSession | null>() as { current: ChatSession | null };
+  ref.current = session;
+  return ref;
+}
+
+const nullRef = createSessionRef();
 
 function createFileDiff(overrides: Partial<FileDiff> = {}): FileDiff {
   return {
@@ -19,7 +28,7 @@ describe("useFileChanges", () => {
   context("初期状態の場合", () => {
     // diffs is empty
     it("diffs が空配列であること", () => {
-      const { result } = renderHook(() => useFileChanges());
+      const { result } = renderHook(() => useFileChanges(nullRef));
       expect(result.current.diffs).toEqual([]);
     });
   });
@@ -28,7 +37,7 @@ describe("useFileChanges", () => {
   context("setDiffs を呼んだ場合", () => {
     // updates diffs state
     it("diffs が更新されること", () => {
-      const { result } = renderHook(() => useFileChanges());
+      const { result } = renderHook(() => useFileChanges(nullRef));
       const diff = createFileDiff();
       act(() => result.current.setDiffs([diff]));
       expect(result.current.diffs).toEqual([diff]);
@@ -39,7 +48,7 @@ describe("useFileChanges", () => {
   context("clearDiffs を呼んだ場合", () => {
     // clears diffs
     it("diffs が空になること", () => {
-      const { result } = renderHook(() => useFileChanges());
+      const { result } = renderHook(() => useFileChanges(nullRef));
       act(() => result.current.setDiffs([createFileDiff()]));
       act(() => result.current.clearDiffs());
       expect(result.current.diffs).toEqual([]);
@@ -50,7 +59,7 @@ describe("useFileChanges", () => {
   context("session.diff イベントを受け取った場合", () => {
     // updates diffs from event
     it("イベントの diff データで diffs を更新すること", () => {
-      const { result } = renderHook(() => useFileChanges());
+      const { result } = renderHook(() => useFileChanges(nullRef));
       const diff = createFileDiff({ file: "updated.ts", additions: 10, deletions: 3 });
       const event = {
         type: "session.diff",
@@ -65,7 +74,7 @@ describe("useFileChanges", () => {
   context("関係ないイベントを受け取った場合", () => {
     // does not change diffs
     it("diffs が変更されないこと", () => {
-      const { result } = renderHook(() => useFileChanges());
+      const { result } = renderHook(() => useFileChanges(nullRef));
       const event = {
         type: "message.updated",
         properties: {},

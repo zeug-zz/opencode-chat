@@ -112,7 +112,7 @@ describe("メッセージング", () => {
 
       await sendExtMessage({
         type: "event",
-        event: { type: "session.status", properties: { status: { type: "busy" } } } as any,
+        event: { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } } as any,
       });
     });
 
@@ -135,12 +135,12 @@ describe("メッセージング", () => {
 
       await sendExtMessage({
         type: "event",
-        event: { type: "session.status", properties: { status: { type: "busy" } } } as any,
+        event: { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } } as any,
       });
 
       await sendExtMessage({
         type: "event",
-        event: { type: "session.status", properties: { status: { type: "idle" } } } as any,
+        event: { type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } } as any,
       });
     });
 
@@ -161,7 +161,7 @@ describe("メッセージング", () => {
 
     await sendExtMessage({
       type: "event",
-      event: { type: "session.status", properties: { status: { type: "busy" } } } as any,
+      event: { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } } as any,
     });
 
     const user = userEvent.setup();

@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!**/dist", "!!scripts/security/**"]
+    "includes": ["**", "!!**/dist", "!!scripts/security"]
   },
   "formatter": {
     "enabled": true,

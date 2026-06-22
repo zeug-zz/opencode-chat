@@ -1,8 +1,17 @@
-import type { AgentEvent } from "@opencode-chat/core";
+import type { AgentEvent, ChatSession } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
+import { createRef, type RefObject } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useSoundNotification } from "../../hooks/useSoundNotification";
 import { getPersistedState, setPersistedState } from "../../vscode-api";
+
+function createSessionRef(session: ChatSession | null = null): RefObject<ChatSession | null> {
+  const ref = createRef<ChatSession | null>() as { current: ChatSession | null };
+  ref.current = session;
+  return ref;
+}
+
+const nullRef = createSessionRef();
 
 describe("useSoundNotification", () => {
   beforeEach(() => {
@@ -14,7 +23,7 @@ describe("useSoundNotification", () => {
   context("初期状態の場合", () => {
     // sound settings is empty object
     it("soundSettings が空オブジェクトであること", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
       expect(result.current.soundSettings).toEqual({});
     });
   });
@@ -26,7 +35,7 @@ describe("useSoundNotification", () => {
       vi.mocked(getPersistedState).mockReturnValue({
         soundSettings: { error: { enabled: false, volume: 0.3 } },
       });
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
       expect(result.current.soundSettings).toEqual({ error: { enabled: false, volume: 0.3 } });
     });
   });
@@ -35,14 +44,14 @@ describe("useSoundNotification", () => {
   context("handleSoundSettingChange を呼んだ場合", () => {
     // updates settings
     it("設定が更新されること", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
       act(() => result.current.handleSoundSettingChange("error", { enabled: false }));
       expect(result.current.soundSettings.error?.enabled).toBe(false);
     });
 
     // persists to state
     it("永続化されること", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
       act(() => result.current.handleSoundSettingChange("responseComplete", { volume: 0.8 }));
       expect(setPersistedState).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -56,7 +65,7 @@ describe("useSoundNotification", () => {
   context("session.status が busy → idle に遷移した場合", () => {
     // plays sound
     it("AudioContext が生成されること（サウンド再生）", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
 
       // busy にする
       act(() => {
@@ -82,7 +91,7 @@ describe("useSoundNotification", () => {
   context("session.status が idle → idle の場合", () => {
     // does not play sound
     it("サウンドが再生されないこと", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
 
       act(() => {
         result.current.handleSoundEvent({
@@ -99,7 +108,7 @@ describe("useSoundNotification", () => {
   context("permission.updated イベントを受信した場合", () => {
     // plays sound
     it("サウンドが再生されること", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
 
       act(() => {
         result.current.handleSoundEvent({
@@ -116,7 +125,7 @@ describe("useSoundNotification", () => {
   context("session.error イベントを受信した場合", () => {
     // plays sound
     it("サウンドが再生されること", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
 
       act(() => {
         result.current.handleSoundEvent({
@@ -136,7 +145,7 @@ describe("useSoundNotification", () => {
       vi.mocked(getPersistedState).mockReturnValue({
         soundSettings: { permissionRequest: { enabled: false } },
       });
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
 
       act(() => {
         result.current.handleSoundEvent({
@@ -153,7 +162,7 @@ describe("useSoundNotification", () => {
   context("無関係なイベントを受信した場合", () => {
     // does not play sound
     it("サウンドが再生されないこと", () => {
-      const { result } = renderHook(() => useSoundNotification());
+      const { result } = renderHook(() => useSoundNotification(nullRef));
 
       act(() => {
         result.current.handleSoundEvent({

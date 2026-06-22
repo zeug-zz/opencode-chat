@@ -174,13 +174,12 @@ describe("パーミッション", () => {
     expect(screen.queryByText("Edit")).not.toBeInTheDocument();
   });
 
-  // 子セッションのパーミッションは permission.sessionID で応答される
-  context("子セッションのパーミッションの場合", () => {
-    it("permission.sessionID（子セッション ID）で応答すること", async () => {
+  // 別セッションのパーミッションは表示されない（アクティブセッション以外はフィルタリングされる）
+  context("別セッションのパーミッションの場合", () => {
+    it("PermissionView が表示されないこと", async () => {
       await setupWithPermission();
-      const user = userEvent.setup();
 
-      // 子セッション ID を持つパーミッション
+      // 子セッション ID を持つパーミッション（アクティブセッション "s1" とは異なる）
       await sendExtMessage({
         type: "event",
         event: {
@@ -192,14 +191,7 @@ describe("パーミッション", () => {
         } as any,
       });
 
-      await user.click(screen.getByText("Allow"));
-
-      expect(postMessage).toHaveBeenCalledWith({
-        type: "replyPermission",
-        sessionId: "child-session-42",
-        permissionId: "perm-child",
-        response: "always",
-      });
+      expect(screen.queryByText("Edit")).not.toBeInTheDocument();
     });
   });
 

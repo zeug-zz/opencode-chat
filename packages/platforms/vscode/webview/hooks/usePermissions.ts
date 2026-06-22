@@ -1,5 +1,5 @@
-import type { AgentEvent, Permission } from "@opencode-chat/core";
-import { useCallback, useState } from "react";
+import type { AgentEvent, ChatSession, Permission } from "@opencode-chat/core";
+import { type RefObject, useCallback, useState } from "react";
 
 /**
  * ツール実行時の許可リクエスト（Allow / Once / Deny）の状態管理フック。
@@ -8,7 +8,7 @@ import { useCallback, useState } from "react";
  * ユーザーが回答すると permission.replied で解消される。
  * Map が空でなければ未回答のリクエストがあり、PermissionView が表示される。
  */
-export function usePermissions() {
+export function usePermissions(activeSessionRef: RefObject<ChatSession | null>) {
   const [permissions, setPermissions] = useState<Map<string, Permission>>(new Map());
 
   const addPermission = useCallback((permission: Permission) => {
@@ -29,16 +29,19 @@ export function usePermissions() {
 
   const handlePermissionEvent = useCallback(
     (event: AgentEvent) => {
+      const activeId = activeSessionRef.current?.id;
       switch (event.type) {
-        case "permission.asked":
+        case "permission.asked": {
+          if (activeId && event.properties.sessionID !== activeId) break;
           addPermission(event.properties);
           break;
+        }
         case "permission.replied":
           removePermission(event.properties.requestID);
           break;
       }
     },
-    [addPermission, removePermission],
+    [activeSessionRef, addPermission, removePermission],
   );
 
   return {

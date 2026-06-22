@@ -1,5 +1,5 @@
-import type { AgentEvent, SoundEventSetting, SoundEventType, SoundSettings } from "@opencode-chat/core";
-import { useCallback, useRef, useState } from "react";
+import type { AgentEvent, ChatSession, SoundEventSetting, SoundEventType, SoundSettings } from "@opencode-chat/core";
+import { type RefObject, useCallback, useRef, useState } from "react";
 import { getPersistedState, setPersistedState } from "../vscode-api";
 
 const DEFAULT_SETTING: Required<SoundEventSetting> = { enabled: true, volume: 0.2 };
@@ -61,7 +61,7 @@ function playTone(eventType: SoundEventType, volume: number): void {
   }
 }
 
-export function useSoundNotification() {
+export function useSoundNotification(activeSessionRef: RefObject<ChatSession | null>) {
   const [soundSettings, setSoundSettings] = useState<SoundSettings>(() => getPersistedState()?.soundSettings ?? {});
 
   // session.status の busy → idle 遷移を検出するために前回のステータスを追跡する
@@ -80,14 +80,15 @@ export function useSoundNotification() {
 
   const handleSoundEvent = useCallback(
     (event: AgentEvent) => {
+      const activeId = activeSessionRef.current?.id;
       let eventType: SoundEventType | null = null;
 
       switch (event.type) {
         case "session.status": {
+          if (activeId && event.properties.sessionID !== activeId) break;
           const wasBusy = prevBusyRef.current;
           const isNowIdle = event.properties.status.type === "idle";
           prevBusyRef.current = event.properties.status.type === "busy";
-          // busy → idle の遷移のみで応答完了とみなす
           if (wasBusy && isNowIdle) {
             eventType = "responseComplete";
           }
@@ -96,12 +97,16 @@ export function useSoundNotification() {
         case "permission.updated":
           eventType = "permissionRequest";
           break;
-        case "question.asked":
+        case "question.asked": {
+          if (activeId && event.properties.sessionID !== activeId) break;
           eventType = "questionAsked";
           break;
-        case "session.error":
+        }
+        case "session.error": {
+          if (activeId && event.properties.sessionID !== activeId) break;
           eventType = "error";
           break;
+        }
       }
 
       if (!eventType) return;
@@ -111,7 +116,7 @@ export function useSoundNotification() {
         playTone(eventType, setting.volume);
       }
     },
-    [soundSettings],
+    [activeSessionRef, soundSettings],
   );
 
   return {

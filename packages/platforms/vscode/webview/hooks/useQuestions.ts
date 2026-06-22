@@ -1,5 +1,5 @@
-import type { AgentEvent, QuestionRequest } from "@opencode-chat/core";
-import { useCallback, useState } from "react";
+import type { AgentEvent, ChatSession, QuestionRequest } from "@opencode-chat/core";
+import { type RefObject, useCallback, useState } from "react";
 
 /**
  * AI からの質問リクエスト（選択式 UI）の状態管理フック。
@@ -8,7 +8,7 @@ import { useCallback, useState } from "react";
  * ユーザーが回答すると question.replied で、拒否すると question.rejected で解消される。
  * Map が空でなければ未回答の質問があり、QuestionView が表示される。
  */
-export function useQuestions() {
+export function useQuestions(activeSessionRef: RefObject<ChatSession | null>) {
   const [questions, setQuestions] = useState<Map<string, QuestionRequest>>(new Map());
 
   const addQuestion = useCallback((question: QuestionRequest) => {
@@ -29,10 +29,13 @@ export function useQuestions() {
 
   const handleQuestionEvent = useCallback(
     (event: AgentEvent) => {
+      const activeId = activeSessionRef.current?.id;
       switch (event.type) {
-        case "question.asked":
+        case "question.asked": {
+          if (activeId && event.properties.sessionID !== activeId) break;
           addQuestion(event.properties);
           break;
+        }
         case "question.replied":
           removeQuestion(event.properties.requestID);
           break;
@@ -41,7 +44,7 @@ export function useQuestions() {
           break;
       }
     },
-    [addQuestion, removeQuestion],
+    [activeSessionRef, addQuestion, removeQuestion],
   );
 
   return {

@@ -218,7 +218,7 @@ describe("Undo/Redo", () => {
       // ビジー状態にする: session.status イベントで busy を通知
       await sendExtMessage({
         type: "event",
-        event: { type: "session.status", properties: { status: { type: "busy" } } } as any,
+        event: { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } } as any,
       });
 
       const undoBtn = screen.getByTitle("Undo") as HTMLButtonElement;

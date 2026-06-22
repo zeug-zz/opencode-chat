@@ -25,20 +25,17 @@ import { postMessage } from "./vscode-api";
 export type { MessageWithParts } from "./hooks/useMessages";
 
 export function App() {
-  const session = useSession();
-  // handleEvent / useMessages 内で activeSession を参照するために ref で追跡する。
-  // これにより handleEvent の依存配列から session.activeSession（オブジェクト参照）を除外でき、
-  // session.updated イベントのたびに useEffect が再登録される問題を防ぐ。
-  const activeSessionRef = useRef(session.activeSession);
+  const activeSessionRef = useRef<ChatSession | null>(null);
+  const session = useSession(activeSessionRef);
   activeSessionRef.current = session.activeSession;
 
   const msg = useMessages(activeSessionRef);
   const prov = useProviders();
-  const perm = usePermissions();
-  const quest = useQuestions();
+  const perm = usePermissions(activeSessionRef);
+  const quest = useQuestions(activeSessionRef);
   const locale = useLocale();
-  const fileChanges = useFileChanges();
-  const sound = useSoundNotification();
+  const fileChanges = useFileChanges(activeSessionRef);
+  const sound = useSoundNotification(activeSessionRef);
 
   // Extension Host → Webview メッセージでのみ更新される単純なステート
   const [openEditors, setOpenEditors] = useState<FileAttachment[]>([]);
@@ -80,7 +77,7 @@ export function App() {
       const currentSession = activeSessionRef.current;
 
       // file.edited イベント時にセッション差分を再取得する
-      if (event.type === "file.edited" && currentSession) {
+      if (event.type === "file.edited" && currentSession && event.properties.sessionID === currentSession.id) {
         postMessage({ type: "getSessionDiff", sessionId: currentSession.id });
       }
 

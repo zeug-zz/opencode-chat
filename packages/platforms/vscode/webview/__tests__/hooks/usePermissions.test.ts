@@ -1,14 +1,21 @@
-import type { AgentEvent } from "@opencode-chat/core";
+import type { AgentEvent, ChatSession } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
+import { createRef, type RefObject } from "react";
 import { describe, expect, it } from "vitest";
 import { usePermissions } from "../../hooks/usePermissions";
+
+function createSessionRef(session: ChatSession | null = null): RefObject<ChatSession | null> {
+  const ref = createRef<ChatSession | null>() as { current: ChatSession | null };
+  ref.current = session;
+  return ref;
+}
 
 describe("usePermissions", () => {
   // initial state
   context("初期状態の場合", () => {
     // permissions is empty
     it("permissions が空の Map であること", () => {
-      const { result } = renderHook(() => usePermissions());
+      const { result } = renderHook(() => usePermissions(createSessionRef()));
       expect(result.current.permissions.size).toBe(0);
     });
   });
@@ -17,10 +24,11 @@ describe("usePermissions", () => {
   context("permission.asked イベントを受信した場合", () => {
     // adds permission to the map
     it("permissions に追加されること", () => {
-      const { result } = renderHook(() => usePermissions());
+      const ref = createSessionRef({ id: "active" } as ChatSession);
+      const { result } = renderHook(() => usePermissions(ref));
       const event = {
         type: "permission.asked",
-        properties: { id: "perm1", permission: "bash", patterns: ["*"] },
+        properties: { id: "perm1", sessionID: "active", permission: "bash", patterns: ["*"] },
       } as unknown as AgentEvent;
       act(() => result.current.handlePermissionEvent(event));
       expect(result.current.permissions.has("perm1")).toBe(true);
@@ -28,11 +36,24 @@ describe("usePermissions", () => {
 
     // stores the permission data
     it("permission のデータが保持されること", () => {
-      const { result } = renderHook(() => usePermissions());
-      const permission = { id: "perm1", permission: "bash", patterns: ["*"] };
+      const ref = createSessionRef({ id: "active" } as ChatSession);
+      const { result } = renderHook(() => usePermissions(ref));
+      const permission = { id: "perm1", sessionID: "active", permission: "bash", patterns: ["*"] };
       const event = { type: "permission.asked", properties: permission } as unknown as AgentEvent;
       act(() => result.current.handlePermissionEvent(event));
       expect(result.current.permissions.get("perm1")).toEqual(permission);
+    });
+
+    // foreign session permission is ignored
+    it("別セッションの permission.asked は無視されること", () => {
+      const ref = createSessionRef({ id: "active" } as ChatSession);
+      const { result } = renderHook(() => usePermissions(ref));
+      const event = {
+        type: "permission.asked",
+        properties: { id: "perm1", sessionID: "other", permission: "bash", patterns: ["*"] },
+      } as unknown as AgentEvent;
+      act(() => result.current.handlePermissionEvent(event));
+      expect(result.current.permissions.has("perm1")).toBe(false);
     });
   });
 
@@ -40,11 +61,12 @@ describe("usePermissions", () => {
   context("permission.replied イベントを受信した場合", () => {
     // removes permission from the map
     it("permissions から削除されること", () => {
-      const { result } = renderHook(() => usePermissions());
+      const ref = createSessionRef({ id: "active" } as ChatSession);
+      const { result } = renderHook(() => usePermissions(ref));
       // first add
       const addEvent = {
         type: "permission.asked",
-        properties: { id: "perm1", permission: "bash", patterns: ["*"] },
+        properties: { id: "perm1", sessionID: "active", permission: "bash", patterns: ["*"] },
       } as unknown as AgentEvent;
       act(() => result.current.handlePermissionEvent(addEvent));
       // then reply
@@ -61,7 +83,7 @@ describe("usePermissions", () => {
   context("無関係なイベントを受信した場合", () => {
     // does not change permissions
     it("permissions が変わらないこと", () => {
-      const { result } = renderHook(() => usePermissions());
+      const { result } = renderHook(() => usePermissions(createSessionRef()));
       const event = {
         type: "session.updated",
         properties: { id: "session1" },
