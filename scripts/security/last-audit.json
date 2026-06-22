@@ -1,0 +1,20 @@
+{
+  "repo": "opencode-chat",
+  "type": "node",
+  "timestamp": "2026-06-22T03:56:40.592Z",
+  "scope": "workspace",
+  "mode": "all",
+  "findings": [],
+  "summary": {
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "by_mode": {
+      "secrets": 0,
+      "code": 0,
+      "deps": 0
+    }
+  },
+  "triaged": null
+}
