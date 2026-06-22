@@ -909,20 +909,20 @@ describe("ChatViewProvider", () => {
       const { sendMessage } = setupProvider(mockAgent, mockPS);
       await sendMessage({ type: "openTerminal" });
 
-      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345", undefined);
+      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345");
     });
 
-    it("should include sessionId when activeSession exists", async () => {
+    it("should not attach to active session (TUI opens independent session)", async () => {
       const mockPS = createMockPlatformServices();
       mockAgent.createSession.mockResolvedValue({ id: "sess-1" });
 
       const { sendMessage } = setupProvider(mockAgent, mockPS);
-      // まずアクティブセッションを設定
+
       await sendMessage({ type: "createSession" });
 
       await sendMessage({ type: "openTerminal" });
 
-      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345", "sess-1");
+      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345");
     });
   });
 

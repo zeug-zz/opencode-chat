@@ -231,7 +231,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "openTerminal": {
         const serverUrl = this.agent.getServerUrl();
         if (!serverUrl) break;
-        await this.platformServices.openTerminal(serverUrl, this.activeSession?.id);
+        await this.platformServices.openTerminal(serverUrl);
         break;
       }
       case "setModel": {
