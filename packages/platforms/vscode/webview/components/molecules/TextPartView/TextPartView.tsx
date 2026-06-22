@@ -325,32 +325,68 @@ const ABSOLUTE_PATH_RE = /(?<!["\w/])(\/([\w.-]+\/)*[\w.-]+\.\w+)(?::(\d+))?/g;
  * HTML 文字列中のコードブロック外にある絶対ファイルパスをリンク化する。
  * <pre>, <code>, <a> タグの内部は変換しない。
  */
-function linkifyAbsolutePaths(html: string): string {
-  // タグとテキストを分離して処理する
-  // HTML タグ内部のパスや、既にリンク内・コード内のパスは変換しない
-  let depth = 0;
-  const SKIP_OPEN = /<(pre|code|a)[\s>]/gi;
-  const SKIP_CLOSE = /<\/(pre|code|a)>/gi;
+const LINKIFY_SKIP_TAGS = new Set(["PRE", "CODE", "A"]);
 
-  return html.replace(/(<[^>]+>)|([^<]+)/g, (_match, tag: string | undefined, text: string | undefined) => {
-    if (tag) {
-      // スキップ対象タグの深さ管理
-      SKIP_OPEN.lastIndex = 0;
-      SKIP_CLOSE.lastIndex = 0;
-      if (SKIP_OPEN.test(tag)) depth++;
-      else if (SKIP_CLOSE.test(tag)) depth = Math.max(0, depth - 1);
-      return tag;
+/** 絶対パスのファイルチップ <a> 要素を DOM API で生成する（属性値は自動的にエスケープされる）。 */
+function createFileChip(filePath: string, lineNum: string | undefined): HTMLAnchorElement {
+  const anchor = document.createElement("a");
+  anchor.setAttribute("href", "#");
+  anchor.className = "file-chip";
+  anchor.setAttribute("data-file-path", filePath);
+  if (lineNum) anchor.setAttribute("data-file-line", lineNum);
+  // 信頼済みの自前 SVG アイコン文字列のみを挿入する
+  anchor.innerHTML = getFileIconHtml(filePath);
+  const label = document.createElement("span");
+  label.className = "file-chip-label";
+  label.textContent = lineNum ? `${filePath}:${lineNum}` : filePath;
+  anchor.appendChild(label);
+  return anchor;
+}
+
+/** テキストノード内の絶対パスをファイルチップ <a> に置換する。 */
+function linkifyTextNode(textNode: Text): void {
+  const text = textNode.data;
+  const matches = [...text.matchAll(ABSOLUTE_PATH_RE)];
+  if (matches.length === 0) return;
+
+  const fragment = document.createDocumentFragment();
+  let lastIndex = 0;
+  for (const match of matches) {
+    const start = match.index ?? 0;
+    if (start > lastIndex) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex, start)));
     }
-    if (!text || depth > 0) return text ?? "";
-    // テキストノード内の絶対パスをリンク化
-    return text.replace(ABSOLUTE_PATH_RE, (_m, filePath: string, _dir: string, lineNum: string | undefined) => {
-      const escapedPath = filePath.replace(/"/g, "&quot;");
-      const lineAttr = lineNum ? ` data-file-line="${lineNum}"` : "";
-      const display = lineNum ? `${filePath}:${lineNum}` : filePath;
-      const iconHtml = getFileIconHtml(filePath);
-      return `<a href="#" class="file-chip" data-file-path="${escapedPath}"${lineAttr}>${iconHtml}<span class="file-chip-label">${display}</span></a>`;
-    });
-  });
+    fragment.appendChild(createFileChip(match[1], match[3]));
+    lastIndex = start + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+  textNode.parentNode?.replaceChild(fragment, textNode);
+}
+
+function linkifyAbsolutePaths(html: string): string {
+  // 正規表現で HTML を解析せず、DOM ツリーを走査してテキストノードのみを変換する。
+  // <pre>, <code>, <a> のサブツリーは丸ごとスキップする。
+  const template = document.createElement("template");
+  template.innerHTML = html;
+
+  const textNodes: Text[] = [];
+  const collect = (node: Node): void => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        if (LINKIFY_SKIP_TAGS.has((child as Element).tagName)) continue;
+        collect(child);
+      } else if (child.nodeType === Node.TEXT_NODE) {
+        textNodes.push(child as Text);
+      }
+    }
+  };
+  collect(template.content);
+
+  for (const node of textNodes) linkifyTextNode(node);
+
+  return template.innerHTML;
 }
 
 /**
