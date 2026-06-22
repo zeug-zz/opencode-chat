@@ -9,9 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Model selector search — filter providers and models by name as you type
+- Model effort toggle — select per-model effort level (low/medium/high) with per-model persistence across sessions
+- Copy Markdown button on assistant replies — copy message content as raw Markdown
+- KaTeX math rendering in markdown messages
+- Mermaid diagram rendering in markdown messages
 - Recent models section in model selector — recently-used models appear at the top for quick reselection, persisted across sessions
-- Model effort persistence — user-selected effort (low/medium/high) is remembered per model and restored across sessions
 - Collapsible provider lists in model selector — provider groups are collapsed by default; the selected model's provider auto-expands and search force-expands all
+- Terminal opens in editor-area split column (beside active editor) instead of bottom panel
+- Fork button opens terminal as an editor tab
+
+### Changed
+
+- Prefer plan primary agent by default for new sessions
+- Agent selector display names — internal "plan" agent surfaced as "chat" with human-readable descriptions
+- VS Code engine requirement bumped from ^1.100.0 to ^1.125.0
 
 ### Fixed
 
