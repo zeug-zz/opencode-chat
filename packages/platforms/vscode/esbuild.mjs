@@ -1,6 +1,9 @@
+import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
+
+const resolveFromHere = (relativePath) => fileURLToPath(new URL(relativePath, import.meta.url));
 
 /** @type {esbuild.BuildOptions} */
 const buildOptions = {
@@ -14,6 +17,12 @@ const buildOptions = {
   sourcemap: true,
   // @opencode-ai/sdk は ESM のみ提供のため、バンドルに含める
   mainFields: ["module", "main"],
+  // ワークスペースパッケージはビルド済み dist ではなくソースから直接バンドルする
+  // （vitest.config.ext.ts のエイリアスと同じ解決方法に揃える）
+  alias: {
+    "@opencode-chat/core": resolveFromHere("../../core/src/index.ts"),
+    "@opencode-chat/agent-opencode": resolveFromHere("../../agents/opencode/src/index.ts"),
+  },
 };
 
 if (watch) {
