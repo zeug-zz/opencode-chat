@@ -1,5 +1,5 @@
 import type { ProviderInfo as CoreProviderInfo, ModelVariantRef } from "@opencode-chat/core";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "../../../locales";
 import type { AllProvidersData, ModelInfo, ProviderInfo } from "../../../vscode-api";
 import { ChevronRightIcon, EyeIcon, EyeOffIcon } from "../../atoms/icons";
@@ -52,9 +52,20 @@ export function ModelSelector({
   recentModels,
 }: Props) {
   const t = useLocale();
-  const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
+  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  const selectedProviderID = selectedModel?.providerID;
+  useEffect(() => {
+    if (!selectedProviderID) return;
+    setExpandedProviders((prev) => {
+      if (prev.has(selectedProviderID)) return prev;
+      const next = new Set(prev);
+      next.add(selectedProviderID);
+      return next;
+    });
+  }, [selectedProviderID]);
 
   // 表示用プロバイダーリスト: allProvidersData があればそちらを使い、なければ従来の providers を使う
   const allDisplayProviders = useMemo(() => {
@@ -164,7 +175,7 @@ export function ModelSelector({
   }, [selectedModel, selectedModelEffort]);
 
   const toggleProvider = (id: string) => {
-    setCollapsedProviders((prev) => {
+    setExpandedProviders((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -234,7 +245,7 @@ export function ModelSelector({
             )}
             {visibleProviders.map((provider) => {
               if (provider.models.length === 0) return null;
-              const isCollapsed = !isSearching && collapsedProviders.has(provider.id);
+              const isCollapsed = !isSearching && !expandedProviders.has(provider.id);
               return (
                 <div key={provider.id} className={styles.section}>
                   <div
