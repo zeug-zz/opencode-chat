@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Context memory display chip in InputArea — shows contextual token usage (e.g. `22.1K (2%)`) next to the terminal button using multi-source fallback from session tokens, message tokens, and state-based effects
+
 ## [0.6.0] - 2026-06-22
 
 ### Added
