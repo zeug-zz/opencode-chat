@@ -6,9 +6,11 @@
 [![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
 [![Security Audit](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
 
-An unofficial VS Code chat companion for [OpenCode](https://github.com/anomalyco/opencode), designed to sit alongside the OpenCode TUI rather than replace it.
+An unofficial VS Code opencode chat companion designed to sit alongside the [VS Code opencode TUI](https://marketplace.visualstudio.com/items?itemName=sst-dev.opencode) extension rather than replace it. It provides a focused sidebar chat window using your opencode models, memory, skills, and MCP servers. The chat adds KaTeX and Mermaid rendering along with Markdown copying and other writing-friendly enhancements that are not otherwise available in the code-oriented TUI.
 
-**Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui)**.
+**This is an unofficial, community-developed extension unaffiliated with or endorsed by the OpenCode project.**
+
+Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui)
 
 ---
 
@@ -24,21 +26,15 @@ An unofficial VS Code chat companion for [OpenCode](https://github.com/anomalyco
 
 ---
 
-### OpenCode Chat
-
-A focused chat window using your OpenCode models, memory, skills, and MCP servers alongside the excellent OpenCode TUI. The chat adds KaTeX and Mermaid rendering, Markdown copying, model search, effort toggles, and other writing-oriented enhancements that are not otherwise available in the code-oriented TUI.
-
-**This is an unofficial, community-developed extension unaffiliated with or endorsed by the OpenCode project.**
-
 ### Documents
 
-| File | Description |
-| --- | --- |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contributing guide |
-| [CHANGELOG.md](./CHANGELOG.md) | Release history |
+| File                                            | Description          |
+| ----------------------------------------------- | -------------------- |
+| [CONTRIBUTING.md](./CONTRIBUTING.md)               | Contributing guide   |
+| [CHANGELOG.md](./CHANGELOG.md)                     | Release history      |
 | [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) | Third-party licenses |
-| [LICENSE](./LICENSE) | MIT License |
-| [SECURITY.md](./SECURITY.md) | Security policy |
+| [LICENSE](./LICENSE)                               | MIT License          |
+| [SECURITY.md](./SECURITY.md)                       | Security policy      |
 
 ### Features
 
