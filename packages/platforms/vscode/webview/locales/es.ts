@@ -19,6 +19,7 @@ export const es: LocaleSchema = {
   "input.placeholder": "Pregunta a OpenCode... (escribe # para adjuntar archivos)",
   "input.addFile": (name: string) => `Añadir ${name}`,
   "input.openTerminal": "Abrir sesión en terminal",
+  "input.contextMemory": "Memoria contextual",
   "input.shellMode": "Modo Shell",
   "input.placeholder.shell": "Ingresa un comando de shell...",
   "input.settings": "Configuración",

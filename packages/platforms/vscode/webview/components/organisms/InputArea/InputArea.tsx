@@ -75,6 +75,7 @@ type Props = {
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
   agents: AgentInfo[];
   skills: SkillInfo[];
+  contextMemoryText?: string;
 };
 
 export function InputArea({
@@ -105,6 +106,7 @@ export function InputArea({
   agents,
   skills,
   recentModels,
+  contextMemoryText,
 }: Props) {
   const t = useLocale();
   const [text, setText] = useState("");
@@ -830,6 +832,11 @@ export function InputArea({
             <IconButton variant="muted" onClick={onOpenTerminal} title={t["input.openTerminal"]}>
               <TerminalIcon />
             </IconButton>
+            {contextMemoryText && (
+              <span className={styles.contextMemory} title={t["input.contextMemory"]}>
+                {contextMemoryText}
+              </span>
+            )}
           </div>
           {isBusy ? (
             <IconButton className={styles.sendButton} onClick={onAbort} title={t["input.stop"]}>

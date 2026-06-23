@@ -23,6 +23,13 @@ export type ChatSession = {
     files: number;
     diffs?: FileDiff[];
   };
+  tokens?: {
+    total?: number;
+    input: number;
+    output: number;
+    reasoning: number;
+    cache: { read: number; write: number };
+  };
   time: {
     created: number;
     updated: number;
@@ -231,7 +238,7 @@ export type ChatMessageWithParts = {
 export type AgentEvent =
   | {
       type: "session.updated";
-      properties: { info: ChatSession };
+      properties: { sessionID: string; info: ChatSession };
     }
   | {
       type: "session.created";
@@ -255,7 +262,7 @@ export type AgentEvent =
     }
   | {
       type: "message.updated";
-      properties: { info: ChatMessage; parts: MessagePart[] };
+      properties: { sessionID: string; info: ChatMessage; parts?: MessagePart[] };
     }
   | {
       type: "message.removed";
@@ -296,6 +303,22 @@ export type AgentEvent =
   | {
       type: "file.edited";
       properties: { sessionID: string; file: string };
+    }
+  | {
+      type: "session.next.context.updated";
+      properties: { sessionID: string; text: string };
+    }
+  | {
+      type: "session.next.step.ended";
+      properties: {
+        sessionID: string;
+        tokens: {
+          input: number;
+          output: number;
+          reasoning: number;
+          cache: { read: number; write: number };
+        };
+      };
     };
 
 // ============================================================

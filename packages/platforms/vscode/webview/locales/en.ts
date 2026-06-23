@@ -17,6 +17,7 @@ export const en = {
   "input.placeholder": "Ask OpenCode... (type # to attach files)",
   "input.addFile": (name: string) => `Add ${name}`,
   "input.openTerminal": "Open session in terminal",
+  "input.contextMemory": "Contextual memory",
   "input.shellMode": "Shell mode",
   "input.placeholder.shell": "Enter shell command...",
   "input.settings": "Settings",

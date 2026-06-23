@@ -19,6 +19,7 @@ export const ru: LocaleSchema = {
   "input.placeholder": "Спросите OpenCode... (введите # для прикрепления файлов)",
   "input.addFile": (name: string) => `Добавить ${name}`,
   "input.openTerminal": "Открыть сессию в терминале",
+  "input.contextMemory": "Контекстная память",
   "input.shellMode": "Режим Shell",
   "input.placeholder.shell": "Введите команду оболочки...",
   "input.settings": "Настройки",

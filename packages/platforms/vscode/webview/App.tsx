@@ -24,6 +24,36 @@ import { postMessage } from "./vscode-api";
 // re-export for consumers that import from App.tsx
 export type { MessageWithParts } from "./hooks/useMessages";
 
+function formatK(n: number): string {
+  if (n >= 1000) {
+    const k = n / 1000;
+    return k % 1 === 0 ? `${k}K` : `${k.toFixed(1)}K`;
+  }
+  return String(n);
+}
+
+type TokenUsage = {
+  total?: number;
+  input: number;
+  output?: number;
+  reasoning?: number;
+  cache?: { read?: number; write?: number };
+};
+
+function getContextTokenCount(tokens: TokenUsage): number {
+  const fallback = tokens.input + (tokens.cache?.read ?? 0);
+  return tokens.total && tokens.total > 0 ? tokens.total : fallback;
+}
+
+function formatContextMemory(tokens: number, limit?: number): string {
+  if (!limit || limit <= 0) return formatK(tokens);
+  return `${formatK(tokens)} (${Math.round((tokens / limit) * 100)}%)`;
+}
+
+function isZeroContextText(text: string): boolean {
+  return /^0(?:\.0+)?K?\s*(?:\(0%\))?$/.test(text.trim());
+}
+
 export function App() {
   const activeSessionRef = useRef<ChatSession | null>(null);
   const session = useSession(activeSessionRef);
@@ -36,6 +66,11 @@ export function App() {
   const locale = useLocale();
   const fileChanges = useFileChanges(activeSessionRef);
   const sound = useSoundNotification(activeSessionRef);
+
+  // アクティブセッションが変わったらコンテキストメモリ表示をクリア
+  useEffect(() => {
+    setContextMemory("");
+  }, [session.activeSession?.id]);
 
   // Extension Host → Webview メッセージでのみ更新される単純なステート
   const [openEditors, setOpenEditors] = useState<FileAttachment[]>([]);
@@ -53,6 +88,26 @@ export function App() {
     state: string;
     directory: string;
   } | null>(null);
+
+  const [contextMemory, setContextMemory] = useState<string>("");
+
+  // ステートベースのコンテキストメモリフォールバック:
+  // セッションまたは最新のアシスタントメッセージからトークンを取り出し、
+  // イベントハンドラが発火しなかった場合でも UI にチップを表示する。
+  useEffect(() => {
+    const latestAssistantWithTokens = [...msg.messages]
+      .reverse()
+      .find((message) => message.info.role === "assistant" && message.info.tokens);
+    const tokens = session.activeSession?.tokens ?? latestAssistantWithTokens?.info.tokens;
+    if (!tokens) return;
+
+    const provider = prov.providers.find((p) => p.id === prov.selectedModel?.providerID);
+    const model = provider?.models[prov.selectedModel?.modelID ?? ""];
+    const contextLimit = model?.limit?.context;
+    const contextTokens = getContextTokenCount(tokens);
+    if (contextTokens <= 0) return;
+    setContextMemory(formatContextMemory(contextTokens, contextLimit));
+  }, [session.activeSession?.tokens, msg.messages, prov.providers, prov.selectedModel]);
 
   const handleOpenConfigFile = useCallback((filePath: string) => {
     postMessage({ type: "openConfigFile", filePath });
@@ -91,6 +146,51 @@ export function App() {
       if (event.type === "session.created" && currentSession) {
         postMessage({ type: "getChildSessions", sessionId: currentSession.id });
       }
+
+      // --- コンテキストメモリ表示 — 複数のイベントソースから更新 ---
+      const provider = prov.providers.find((p) => p.id === prov.selectedModel?.providerID);
+      const model = provider?.models[prov.selectedModel?.modelID ?? ""];
+      const contextLimit = model?.limit?.context;
+
+      // プライマリ: サーバー提供のフォーマット済みテキスト
+      if (event.type === "session.next.context.updated" && event.properties.sessionID === currentSession?.id) {
+        if (!isZeroContextText(event.properties.text)) {
+          setContextMemory(event.properties.text);
+        }
+      }
+
+      // フォールバック A: アシスタントメッセージ完了時のトークン
+      if (
+        event.type === "message.updated" &&
+        event.properties.sessionID === currentSession?.id &&
+        event.properties.info.role === "assistant" &&
+        event.properties.info.tokens
+      ) {
+        const contextTokens = getContextTokenCount(event.properties.info.tokens);
+        if (contextTokens > 0) {
+          setContextMemory(formatContextMemory(contextTokens, contextLimit));
+        }
+      }
+
+      // フォールバック B: セッション更新時の集計トークン
+      if (
+        event.type === "session.updated" &&
+        event.properties.sessionID === currentSession?.id &&
+        event.properties.info.tokens
+      ) {
+        const contextTokens = getContextTokenCount(event.properties.info.tokens);
+        if (contextTokens > 0) {
+          setContextMemory(formatContextMemory(contextTokens, contextLimit));
+        }
+      }
+
+      // フォールバック C: ステップ終了時のトークン
+      if (event.type === "session.next.step.ended" && event.properties.sessionID === currentSession?.id) {
+        const contextTokens = getContextTokenCount(event.properties.tokens);
+        if (contextTokens > 0) {
+          setContextMemory(formatContextMemory(contextTokens, contextLimit));
+        }
+      }
     },
     [
       session.handleSessionEvent,
@@ -99,6 +199,8 @@ export function App() {
       quest.handleQuestionEvent,
       fileChanges.handleFileChangeEvent,
       sound.handleSoundEvent,
+      prov.selectedModel,
+      prov.providers,
     ],
   );
 
@@ -562,6 +664,7 @@ export function App() {
                   openCodePaths={openCodePaths}
                   onOpenConfigFile={handleOpenConfigFile}
                   onOpenTerminal={handleOpenTerminal}
+                  contextMemoryText={contextMemory}
                   localeSetting={locale.localeSetting}
                   onLocaleSettingChange={locale.handleLocaleSettingChange}
                   soundSettings={sound.soundSettings}

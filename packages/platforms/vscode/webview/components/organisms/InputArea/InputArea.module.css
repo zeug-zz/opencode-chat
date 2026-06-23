@@ -89,3 +89,11 @@
 .expanded {
   transform: rotate(90deg);
 }
+
+.contextMemory {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  user-select: none;
+}
