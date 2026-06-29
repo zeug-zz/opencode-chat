@@ -14,7 +14,7 @@
     "test:all": "vitest run"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.17.9",
+    "@opencode-ai/sdk": "^1.17.11",
     "@opencode-chat/core": "workspace:*"
   },
   "devDependencies": {
