@@ -44,6 +44,6 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Upload .vsix to GitHub Release
-        uses: softprops/action-gh-release@a6c7483a42ee9d5daced968f6c217562cd680f7f  # v2.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v3.0.1
         with:
           files: packages/platforms/vscode/*.vsix
