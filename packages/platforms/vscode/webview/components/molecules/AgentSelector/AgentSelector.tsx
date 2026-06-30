@@ -24,8 +24,15 @@ const getDescription = (agent: AgentInfo) => AGENT_DESCRIPTIONS[agent.name] ?? a
 export function AgentSelector({ agents, selectedAgent, onSelect }: Props) {
   const t = useLocale();
 
-  // plan / build のみ表示（plan は "chat" として表示）
-  const primaryAgents = useMemo(() => agents.filter((a) => ALLOWED_AGENTS.includes(a.name)), [agents]);
+  const primaryAgents = useMemo(() => {
+    const agentMap = new Map(agents.map((a) => [a.name, a]));
+    const ordered: AgentInfo[] = [];
+    for (const name of ALLOWED_AGENTS) {
+      const agent = agentMap.get(name);
+      if (agent) ordered.push(agent);
+    }
+    return ordered;
+  }, [agents]);
 
   const selectedAgentInfo = useMemo(
     () => primaryAgents.find((a) => a.name === selectedAgent),

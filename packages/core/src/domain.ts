@@ -319,6 +319,18 @@ export type AgentEvent =
           cache: { read: number; write: number };
         };
       };
+    }
+  | {
+      type: "session.next.compaction.started";
+      properties: { sessionID: string; messageID: string; timestamp: number };
+    }
+  | {
+      type: "session.next.compaction.ended";
+      properties: { sessionID: string; text: string; recent: string };
+    }
+  | {
+      type: "session.compacted";
+      properties: { sessionID: string };
     };
 
 // ============================================================

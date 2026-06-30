@@ -399,4 +399,102 @@ describe("初期化", () => {
       );
     });
   });
+
+  const compactionFirstAgents = [
+    {
+      name: "compaction",
+      description: "Compaction agent",
+      mode: "primary",
+      builtIn: true,
+      permission: { edit: "ask", bash: {} },
+      tools: {},
+      options: {},
+    },
+    {
+      name: "build",
+      description: "Primary build agent",
+      mode: "primary",
+      builtIn: true,
+      permission: { edit: "ask", bash: {} },
+      tools: {},
+      options: {},
+    },
+    {
+      name: "plan",
+      description: "Primary plan agent",
+      mode: "primary",
+      builtIn: true,
+      permission: { edit: "deny", bash: {} },
+      tools: {},
+      options: {},
+    },
+  ] as any;
+
+  // When agents message includes compaction, build, plan (non-menu order)
+  context("agents メッセージに compaction を含む場合", () => {
+    beforeEach(async () => {
+      renderApp();
+      const provider = createProvider("anthropic", {
+        "claude-4-opus": { id: "claude-4-opus", name: "Claude 4 Opus", limit: { context: 200000, output: 4096 } },
+      });
+      await sendExtMessage({
+        type: "providers",
+        providers: [provider],
+        allProviders: createAllProvidersData(
+          ["anthropic"],
+          [
+            {
+              id: "anthropic",
+              name: "Anthropic",
+              models: {
+                "claude-4-opus": {
+                  id: "claude-4-opus",
+                  name: "Claude 4 Opus",
+                  limit: { context: 200000, output: 4096 },
+                },
+              },
+            },
+          ],
+        ),
+        default: { general: "anthropic/claude-4-opus" },
+        configModel: "anthropic/claude-4-opus",
+      });
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      await sendExtMessage({ type: "agents", agents: compactionFirstAgents });
+    });
+
+    it("AgentSelector がデフォルトで chat を表示すること", () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
+    });
+
+    it("AgentSelector が chat, build のみを表示すること (compact は表示されない)", async () => {
+      const user = userEvent.setup();
+      const trigger = screen.getByTitle("Select agent");
+      await user.click(trigger);
+
+      const items = document.querySelectorAll('[class*="itemName"]');
+      const labels = Array.from(items).map((el) => el.textContent);
+      expect(labels).toEqual(["chat", "build"]);
+    });
+
+    it("build 選択後に送信すると build が維持されること", async () => {
+      const user = userEvent.setup();
+      const trigger = screen.getByTitle("Select agent");
+
+      await user.click(trigger);
+      await user.click(screen.getByText("build"));
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("build");
+
+      vi.mocked(postMessage).mockClear();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Build{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Build",
+          primaryAgent: "build",
+        }),
+      );
+    });
+  });
 });

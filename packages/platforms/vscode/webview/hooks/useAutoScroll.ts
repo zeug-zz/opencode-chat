@@ -37,6 +37,8 @@ export function useAutoScroll(messages: unknown[]) {
   // messages 更新時、最下部付近にいれば追従スクロールする
   useEffect(() => {
     if (isNearBottomRef.current) {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
       scrollToBottom();
     }
   }, [messages, scrollToBottom]);

@@ -710,13 +710,25 @@ describe("ChatViewProvider", () => {
   // ============================================================
 
   describe("compressSession", () => {
-    it("should call summarizeSession", async () => {
-      const { sendMessage } = setupProvider(mockAgent);
-      const model = { providerID: "openai", modelID: "gpt-4" };
+    it("should call summarizeSession with model, then re-fetch session and messages, and post activeSession + messages", async () => {
+      const session = { id: "sess-1", tokens: { input: 5000, total: 10000 } };
+      const messages = [{ info: { id: "m-compact", role: "assistant" }, parts: [] }];
+      const model = { providerID: "anthropic", modelID: "claude-4-opus" };
+      mockAgent.summarizeSession.mockResolvedValue(undefined);
+      mockAgent.getSession.mockResolvedValue(session);
+      mockAgent.getMessages.mockResolvedValue(messages);
+
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
 
       await sendMessage({ type: "compressSession", sessionId: "sess-1", model });
 
       expect(mockAgent.summarizeSession).toHaveBeenCalledWith("sess-1", model);
+      expect(postMessage).toHaveBeenCalledWith({ type: "activeSession", session });
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "messages",
+        sessionId: "sess-1",
+        messages,
+      });
     });
   });
 

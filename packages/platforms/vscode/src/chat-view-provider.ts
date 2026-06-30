@@ -39,6 +39,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // SSE イベントを Webview に転送する
     this.agent.onEvent((event) => {
       this.postMessage({ type: "event", event });
+
+      // コンパクション完了時にセッション + メッセージを再取得して Webview に送信する
+      // (compact API は非同期でバックグラウンド実行されるため、完了イベントでリフレッシュする)
+      if (
+        (event.type === "session.compacted" || event.type === "session.next.compaction.ended") &&
+        event.properties.sessionID === this.activeSession?.id
+      ) {
+        this.agent
+          .getSession(event.properties.sessionID)
+          .then((session) => {
+            this.activeSession = session;
+            this.postMessage({ type: "activeSession", session });
+            return this.agent.getMessages(event.properties.sessionID);
+          })
+          .then((messages) => {
+            this.postMessage({
+              type: "messages",
+              sessionId: event.properties.sessionID,
+              messages,
+            });
+          })
+          .catch((err) => console.error("[OpenCode] Failed to refresh after compaction:", err));
+      }
     });
 
     // アクティブエディタが変わるたびに Webview に通知する
@@ -195,6 +218,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "compressSession": {
         await this.agent.summarizeSession(message.sessionId, message.model);
+        const session = await this.agent.getSession(message.sessionId);
+        if (session) {
+          this.activeSession = session;
+          this.postMessage({ type: "activeSession", session });
+        }
+        const msgs = await this.agent.getMessages(message.sessionId);
+        this.postMessage({ type: "messages", sessionId: message.sessionId, messages: msgs });
         break;
       }
       case "revertToMessage": {

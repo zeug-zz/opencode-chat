@@ -41,8 +41,7 @@ type TokenUsage = {
 };
 
 function getContextTokenCount(tokens: TokenUsage): number {
-  const fallback = tokens.input + (tokens.cache?.read ?? 0);
-  return tokens.total && tokens.total > 0 ? tokens.total : fallback;
+  return tokens.input + (tokens.cache?.read ?? 0);
 }
 
 function formatContextMemory(tokens: number, limit?: number): string {
@@ -90,11 +89,13 @@ export function App() {
   } | null>(null);
 
   const [contextMemory, setContextMemory] = useState<string>("");
+  const awaitingCompactionContextRef = useRef<string | null>(null);
 
   // ステートベースのコンテキストメモリフォールバック:
   // セッションまたは最新のアシスタントメッセージからトークンを取り出し、
   // イベントハンドラが発火しなかった場合でも UI にチップを表示する。
   useEffect(() => {
+    if (awaitingCompactionContextRef.current === session.activeSession?.id) return;
     const latestAssistantWithTokens = [...msg.messages]
       .reverse()
       .find((message) => message.info.role === "assistant" && message.info.tokens);
@@ -152,15 +153,25 @@ export function App() {
       const model = provider?.models[prov.selectedModel?.modelID ?? ""];
       const contextLimit = model?.limit?.context;
 
+      if (event.type === "session.next.compaction.started" && event.properties.sessionID === currentSession?.id) {
+        awaitingCompactionContextRef.current = event.properties.sessionID;
+        setContextMemory("");
+      }
+
       // プライマリ: サーバー提供のフォーマット済みテキスト
       if (event.type === "session.next.context.updated" && event.properties.sessionID === currentSession?.id) {
+        awaitingCompactionContextRef.current = null;
         if (!isZeroContextText(event.properties.text)) {
           setContextMemory(event.properties.text);
         }
       }
 
+      const awaitingCompactionContext =
+        awaitingCompactionContextRef.current !== null && awaitingCompactionContextRef.current === currentSession?.id;
+
       // フォールバック A: アシスタントメッセージ完了時のトークン
       if (
+        !awaitingCompactionContext &&
         event.type === "message.updated" &&
         event.properties.sessionID === currentSession?.id &&
         event.properties.info.role === "assistant" &&
@@ -174,6 +185,7 @@ export function App() {
 
       // フォールバック B: セッション更新時の集計トークン
       if (
+        !awaitingCompactionContext &&
         event.type === "session.updated" &&
         event.properties.sessionID === currentSession?.id &&
         event.properties.info.tokens
@@ -185,11 +197,23 @@ export function App() {
       }
 
       // フォールバック C: ステップ終了時のトークン
-      if (event.type === "session.next.step.ended" && event.properties.sessionID === currentSession?.id) {
+      if (
+        !awaitingCompactionContext &&
+        event.type === "session.next.step.ended" &&
+        event.properties.sessionID === currentSession?.id
+      ) {
         const contextTokens = getContextTokenCount(event.properties.tokens);
         if (contextTokens > 0) {
           setContextMemory(formatContextMemory(contextTokens, contextLimit));
         }
+      }
+
+      if (event.type === "session.next.compaction.ended" && event.properties.sessionID === currentSession?.id) {
+        postMessage({ type: "getMessages", sessionId: currentSession.id });
+      }
+
+      if (event.type === "session.compacted" && event.properties.sessionID === currentSession?.id) {
+        postMessage({ type: "getMessages", sessionId: currentSession.id });
       }
     },
     [

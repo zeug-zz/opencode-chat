@@ -3,7 +3,7 @@ import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { Marked, type Renderer, type Tokens } from "marked";
 import markedKatex from "marked-katex-extension";
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { getFileIcon } from "../../../utils/file-icons";
@@ -466,143 +466,150 @@ type Props = {
   part: TextPart;
 };
 
-export function TextPartView({ part }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mermaidSvgCacheRef = useRef(new Map<string, MermaidRenderResult>());
-  const [renderedTick, setRenderedTick] = useState(0);
+export const TextPartView = memo(
+  function TextPartView({ part }: Props) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const mermaidSvgCacheRef = useRef(new Map<string, MermaidRenderResult>());
+    const [renderedTick, setRenderedTick] = useState(0);
 
-  const html = useMemo(() => {
-    const preprocessed = preprocessNestedCodeBlocks(part.text);
-    const raw = markdownParser.parse(preprocessed, { async: false }) as string;
-    const sanitized = DOMPurify.sanitize(raw, PURIFY_CONFIG);
-    const linked = linkifyAbsolutePaths(sanitized);
-    return injectRenderedMermaids(linked, mermaidSvgCacheRef.current);
-  }, [part.text, renderedTick]);
+    const html = useMemo(() => {
+      const preprocessed = preprocessNestedCodeBlocks(part.text);
+      const raw = markdownParser.parse(preprocessed, { async: false }) as string;
+      const sanitized = DOMPurify.sanitize(raw, PURIFY_CONFIG);
+      const linked = linkifyAbsolutePaths(sanitized);
+      return injectRenderedMermaids(linked, mermaidSvgCacheRef.current);
+    }, [part.text, renderedTick]);
 
-  // Mermaid 描画エフェクト: html が変更されるたびに未描画の .mermaid-block を検出し、
-  // 動的インポート・初期化・レンダリングを実行する。
-  // クリーンアップ時に AbortController を abort することで、
-  // ストリーミング更新による古い SVG の DOM 書き込みを防止する。
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    // Mermaid 描画エフェクト: html が変更されるたびに未描画の .mermaid-block を検出し、
+    // 動的インポート・初期化・レンダリングを実行する。
+    // クリーンアップ時に AbortController を abort することで、
+    // ストリーミング更新による古い SVG の DOM 書き込みを防止する。
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
 
-    const controller = new AbortController();
-    const { signal } = controller;
+      const controller = new AbortController();
+      const { signal } = controller;
 
-    const blocks = container.querySelectorAll<HTMLElement>('.mermaid-block[data-mermaid-pending="true"]');
+      const blocks = container.querySelectorAll<HTMLElement>('.mermaid-block[data-mermaid-pending="true"]');
 
-    const renderPendingBlocks = async () => {
-      for (const block of blocks) {
-        if (signal.aborted) break;
-
-        const sourceEl = block.querySelector<HTMLElement>(".mermaid-source code");
-        const targetEl = block.querySelector<HTMLElement>(".mermaid-render-target");
-        if (!sourceEl || !targetEl) continue;
-
-        const source = sourceEl.textContent ?? "";
-
-        // Already-failed sources should not be retried on every re-render.
-        const cached = mermaidSvgCacheRef.current.get(source);
-        if (cached?.type === "error") {
-          targetEl.textContent = cached.message;
-          block.setAttribute("data-mermaid-pending", "false");
-          block.classList.add("mermaid-error");
-          continue;
-        }
-
-        try {
+      const renderPendingBlocks = async () => {
+        for (const block of blocks) {
           if (signal.aborted) break;
 
-          const { svg, bindFunctions } = await renderMermaidDiagram(source, { signal });
+          const sourceEl = block.querySelector<HTMLElement>(".mermaid-source code");
+          const targetEl = block.querySelector<HTMLElement>(".mermaid-render-target");
+          if (!sourceEl || !targetEl) continue;
 
-          // 最後のチェック: signal が abort されていないこと、かつ target が
-          // まだ DOM に接続されていること（コンポーネントのアンマウント回避）
-          if (signal.aborted || !targetEl.isConnected) {
-            return;
+          const source = sourceEl.textContent ?? "";
+
+          // Already-failed sources should not be retried on every re-render.
+          const cached = mermaidSvgCacheRef.current.get(source);
+          if (cached?.type === "error") {
+            targetEl.textContent = cached.message;
+            block.setAttribute("data-mermaid-pending", "false");
+            block.classList.add("mermaid-error");
+            continue;
           }
-
-          const sanitizedSvg = DOMPurify.sanitize(svg, MERMAID_PURIFY_CONFIG);
-          targetEl.innerHTML = sanitizedSvg;
-
-          // Cache the sanitised SVG so React re-renders keep the rendered
-          // diagram instead of replacing it with the pending source wrapper.
-          mermaidSvgCacheRef.current.set(source, { type: "svg", svg: sanitizedSvg });
-          setRenderedTick((t) => t + 1);
 
           try {
-            bindFunctions?.(targetEl);
-          } catch (bindErr) {
-            console.error("Mermaid bindFunctions failed", bindErr);
+            if (signal.aborted) break;
+
+            const { svg, bindFunctions } = await renderMermaidDiagram(source, { signal });
+
+            // 最後のチェック: signal が abort されていないこと、かつ target が
+            // まだ DOM に接続されていること（コンポーネントのアンマウント回避）
+            if (signal.aborted || !targetEl.isConnected) {
+              return;
+            }
+
+            const sanitizedSvg = DOMPurify.sanitize(svg, MERMAID_PURIFY_CONFIG);
+            targetEl.innerHTML = sanitizedSvg;
+
+            // Cache the sanitised SVG so React re-renders keep the rendered
+            // diagram instead of replacing it with the pending source wrapper.
+            mermaidSvgCacheRef.current.set(source, { type: "svg", svg: sanitizedSvg });
+            setRenderedTick((t) => t + 1);
+
+            try {
+              bindFunctions?.(targetEl);
+            } catch (bindErr) {
+              console.error("Mermaid bindFunctions failed", bindErr);
+            }
+            block.setAttribute("data-mermaid-pending", "false");
+            block.classList.add("mermaid-rendered");
+          } catch (err) {
+            // AbortError: stale レンダリング → 次の effect に任せる
+            if (err instanceof DOMException && err.name === "AbortError") {
+              break;
+            }
+
+            // レンダリングエラー: ソースを残したままエラー状態を表示する。
+            // target がまだ DOM に接続されている場合のみ書き込む。
+            if (signal.aborted || !targetEl.isConnected) return;
+
+            const errorMessage = formatMermaidError(err);
+            mermaidSvgCacheRef.current.set(source, { type: "error", message: errorMessage });
+            setRenderedTick((t) => t + 1);
+
+            targetEl.textContent = errorMessage;
+            block.setAttribute("data-mermaid-pending", "false");
+            block.classList.add("mermaid-error");
           }
-          block.setAttribute("data-mermaid-pending", "false");
-          block.classList.add("mermaid-rendered");
-        } catch (err) {
-          // AbortError: stale レンダリング → 次の effect に任せる
-          if (err instanceof DOMException && err.name === "AbortError") {
-            break;
-          }
-
-          // レンダリングエラー: ソースを残したままエラー状態を表示する。
-          // target がまだ DOM に接続されている場合のみ書き込む。
-          if (signal.aborted || !targetEl.isConnected) return;
-
-          const errorMessage = formatMermaidError(err);
-          mermaidSvgCacheRef.current.set(source, { type: "error", message: errorMessage });
-          setRenderedTick((t) => t + 1);
-
-          targetEl.textContent = errorMessage;
-          block.setAttribute("data-mermaid-pending", "false");
-          block.classList.add("mermaid-error");
         }
+      };
+
+      void renderPendingBlocks();
+
+      return () => {
+        controller.abort("Mermaid render stale");
+      };
+    }, [html]);
+
+    useLayoutEffect(() => {
+      const el = containerRef.current;
+      if (el && el.innerHTML !== html) {
+        el.innerHTML = html;
       }
-    };
+    }, [html]);
 
-    void renderPendingBlocks();
+    // イベント委譲: コンテナ要素に1つのクリックハンドラーを付けて
+    // .code-block-copy ボタンと data-file-path リンクのクリックを検出する
+    const handleClick = useCallback((e: React.MouseEvent<HTMLSpanElement>) => {
+      const target = e.target as HTMLElement;
 
-    return () => {
-      controller.abort("Mermaid render stale");
-    };
-  }, [html]);
-
-  // イベント委譲: コンテナ要素に1つのクリックハンドラーを付けて
-  // .code-block-copy ボタンと data-file-path リンクのクリックを検出する
-  const handleClick = useCallback((e: React.MouseEvent<HTMLSpanElement>) => {
-    const target = e.target as HTMLElement;
-
-    // ファイルパスリンクのクリック処理
-    const fileLink = target.closest<HTMLAnchorElement>("a[data-file-path]");
-    if (fileLink) {
-      e.preventDefault();
-      const filePath = fileLink.dataset.filePath;
-      if (filePath) {
-        const line = fileLink.dataset.fileLine ? Number(fileLink.dataset.fileLine) : undefined;
-        postMessage({ type: "openFile", filePath, line });
+      // ファイルパスリンクのクリック処理
+      const fileLink = target.closest<HTMLAnchorElement>("a[data-file-path]");
+      if (fileLink) {
+        e.preventDefault();
+        const filePath = fileLink.dataset.filePath;
+        if (filePath) {
+          const line = fileLink.dataset.fileLine ? Number(fileLink.dataset.fileLine) : undefined;
+          postMessage({ type: "openFile", filePath, line });
+        }
+        return;
       }
-      return;
-    }
 
-    // コピーボタンのクリック処理
-    const btn = target.closest<HTMLButtonElement>(".code-block-copy");
-    if (!btn) return;
+      // コピーボタンのクリック処理
+      const btn = target.closest<HTMLButtonElement>(".code-block-copy");
+      if (!btn) return;
 
-    const wrapper = btn.closest(".code-block-wrapper");
-    const codeEl = wrapper?.querySelector<HTMLElement>("pre code");
-    if (!codeEl) return;
+      const wrapper = btn.closest(".code-block-wrapper");
+      const codeEl = wrapper?.querySelector<HTMLElement>("pre code");
+      if (!codeEl) return;
 
-    const code = codeEl.textContent ?? "";
-    postMessage({ type: "copyToClipboard", text: code });
+      const code = codeEl.textContent ?? "";
+      postMessage({ type: "copyToClipboard", text: code });
 
-    btn.innerHTML = CHECK_ICON;
-    btn.classList.add("copied");
-    setTimeout(() => {
-      btn.innerHTML = COPY_ICON;
-      btn.classList.remove("copied");
-    }, 1500);
-  }, []);
+      btn.innerHTML = CHECK_ICON;
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.innerHTML = COPY_ICON;
+        btn.classList.remove("copied");
+      }, 1500);
+    }, []);
 
-  return (
-    // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml
-    <div ref={containerRef} className="markdown" onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />
-  );
-}
+    return <div ref={containerRef} className="markdown" onClick={handleClick} />;
+  },
+  (prev, next) => prev.part.text === next.part.text,
+);
