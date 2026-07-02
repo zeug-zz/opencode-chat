@@ -282,6 +282,7 @@ export class OpenCodeAgent implements IAgent {
       parts,
       model: options?.model,
       agent: options?.primaryAgent,
+      system: options?.system,
       ...(effortId ? { variant: effortId } : {}),
     });
   }

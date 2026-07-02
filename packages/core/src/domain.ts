@@ -531,6 +531,14 @@ export type SendMessageOptions = {
   agent?: string;
   primaryAgent?: string;
   skill?: string;
+  /**
+   * Optional system prompt override. When provided, this is appended to the
+   * assembled system prompt sent to the LLM (after agent prompt, environment
+   * context, skills, MCP instructions, and AGENTS.md). The opencode chat
+   * companion uses this to inject chat-specific behaviour context when the
+   * primary agent is "plan".
+   */
+  system?: string;
 };
 
 // ============================================================

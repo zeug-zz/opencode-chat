@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ChatSession, HostToUIMessage, IAgent, IPlatformServices, UIToHostMessage } from "@opencode-chat/core";
@@ -11,6 +12,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // OpenCode サーバーには「現在アクティブなセッション」を保持する API がないため、
   // UI クライアント側で管理する（TUI も同様の設計）。
   private activeSession: ChatSession | null = null;
+  private readonly chatSystemPrompt: string | null;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -18,7 +20,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly platformServices: IPlatformServices,
     private readonly diffReviewManager: DiffReviewManager,
     private readonly difitAvailable: boolean,
-  ) {}
+  ) {
+    let prompt: string | null = null;
+    try {
+      const content = readFileSync(path.join(this.extensionUri.fsPath, "CHAT_SYSTEM.md"), "utf-8").trim();
+      if (content) prompt = content;
+    } catch {
+      // CHAT_SYSTEM.md missing or unreadable — no custom system prompt injected
+    }
+    this.chatSystemPrompt = prompt;
+  }
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -121,12 +132,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "sendMessage": {
+        const system =
+          message.system ?? (message.primaryAgent === "plan" ? this.chatSystemPrompt : undefined) ?? undefined;
         await this.agent.sendMessage(message.sessionId, message.text, {
           model: message.model,
           files: message.files,
           agent: message.agent,
           primaryAgent: message.primaryAgent,
           skill: message.skill,
+          system,
           ...(message.effort !== undefined && { effort: message.effort }),
         });
         break;

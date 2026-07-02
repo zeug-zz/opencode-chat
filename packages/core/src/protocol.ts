@@ -68,6 +68,13 @@ export type UIToHostMessage =
       agent?: string;
       primaryAgent?: string;
       skill?: string;
+      /**
+       * Optional system prompt override. When sent from the webview, the
+       * extension host merges this into the promptAsync call. If omitted,
+       * the extension host auto-injects a chat companion prompt when the
+       * primary agent is "plan".
+       */
+      system?: string;
     }
   | {
       type: "editAndResend";

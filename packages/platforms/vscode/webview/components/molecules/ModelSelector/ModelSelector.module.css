@@ -1,7 +1,3 @@
-/* position:relative は Popover コンポーネントが提供 */
-.root {
-}
-
 .button {
   display: inline-flex;
   align-items: center;
