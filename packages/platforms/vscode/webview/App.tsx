@@ -32,21 +32,9 @@ function formatK(n: number): string {
   return String(n);
 }
 
-type TokenUsage = {
-  total?: number;
-  input: number;
-  output?: number;
-  reasoning?: number;
-  cache?: { read?: number; write?: number };
-};
-
-function getContextTokenCount(tokens: TokenUsage): number {
-  return tokens.input + (tokens.cache?.read ?? 0);
-}
-
 function formatContextMemory(tokens: number, limit?: number): string {
   if (!limit || limit <= 0) return formatK(tokens);
-  return `${formatK(tokens)} (${Math.round((tokens / limit) * 100)}%)`;
+  return `${formatK(tokens)} (${Math.min(100, Math.round((tokens / limit) * 100))}%)`;
 }
 
 function isZeroContextText(text: string): boolean {
@@ -66,9 +54,9 @@ export function App() {
   const fileChanges = useFileChanges(activeSessionRef);
   const sound = useSoundNotification(activeSessionRef);
 
-  // アクティブセッションが変わったらコンテキストメモリ表示をクリア
   useEffect(() => {
     setContextMemory("");
+    contextTokensRef.current.delete(session.activeSession?.id ?? "");
   }, [session.activeSession?.id]);
 
   // Extension Host → Webview メッセージでのみ更新される単純なステート
@@ -90,25 +78,36 @@ export function App() {
 
   const [contextMemory, setContextMemory] = useState<string>("");
   const awaitingCompactionContextRef = useRef<string | null>(null);
+  const contextTokensRef = useRef<Map<string, number>>(new Map());
 
-  // ステートベースのコンテキストメモリフォールバック:
-  // セッションまたは最新のアシスタントメッセージからトークンを取り出し、
-  // イベントハンドラが発火しなかった場合でも UI にチップを表示する。
+  const updateContextDisplay = useCallback(
+    (tokens: number) => {
+      if (tokens <= 0) return;
+      const provider = prov.providers.find((p) => p.id === prov.selectedModel?.providerID);
+      const model = provider?.models[prov.selectedModel?.modelID ?? ""];
+      setContextMemory(formatContextMemory(tokens, model?.limit?.context));
+    },
+    [prov.providers, prov.selectedModel],
+  );
+
   useEffect(() => {
-    if (awaitingCompactionContextRef.current === session.activeSession?.id) return;
-    const latestAssistantWithTokens = [...msg.messages]
-      .reverse()
-      .find((message) => message.info.role === "assistant" && message.info.tokens);
-    const tokens = session.activeSession?.tokens ?? latestAssistantWithTokens?.info.tokens;
-    if (!tokens) return;
+    const sessionId = session.activeSession?.id;
+    if (!sessionId) return;
+    if (awaitingCompactionContextRef.current === sessionId) return;
 
-    const provider = prov.providers.find((p) => p.id === prov.selectedModel?.providerID);
-    const model = provider?.models[prov.selectedModel?.modelID ?? ""];
-    const contextLimit = model?.limit?.context;
-    const contextTokens = getContextTokenCount(tokens);
-    if (contextTokens <= 0) return;
-    setContextMemory(formatContextMemory(contextTokens, contextLimit));
-  }, [session.activeSession?.tokens, msg.messages, prov.providers, prov.selectedModel]);
+    let total = 0;
+    for (const message of msg.messages) {
+      for (const part of message.parts) {
+        if (part.type === "step-finish") {
+          total += part.tokens?.input ?? 0;
+        }
+      }
+    }
+
+    if (total <= 0) return;
+    contextTokensRef.current.set(sessionId, total);
+    updateContextDisplay(total);
+  }, [session.activeSession?.id, msg.messages, updateContextDisplay]);
 
   const handleOpenConfigFile = useCallback((filePath: string) => {
     postMessage({ type: "openConfigFile", filePath });
@@ -148,7 +147,7 @@ export function App() {
         postMessage({ type: "getChildSessions", sessionId: currentSession.id });
       }
 
-      // --- コンテキストメモリ表示 — 複数のイベントソースから更新 ---
+      // --- コンテキストメモリ表示 ---
       const provider = prov.providers.find((p) => p.id === prov.selectedModel?.providerID);
       const model = provider?.models[prov.selectedModel?.modelID ?? ""];
       const contextLimit = model?.limit?.context;
@@ -158,7 +157,6 @@ export function App() {
         setContextMemory("");
       }
 
-      // プライマリ: サーバー提供のフォーマット済みテキスト
       if (event.type === "session.next.context.updated" && event.properties.sessionID === currentSession?.id) {
         awaitingCompactionContextRef.current = null;
         if (!isZeroContextText(event.properties.text)) {
@@ -169,42 +167,19 @@ export function App() {
       const awaitingCompactionContext =
         awaitingCompactionContextRef.current !== null && awaitingCompactionContextRef.current === currentSession?.id;
 
-      // フォールバック A: アシスタントメッセージ完了時のトークン
       if (
         !awaitingCompactionContext &&
-        event.type === "message.updated" &&
+        event.type === "message.part.updated" &&
         event.properties.sessionID === currentSession?.id &&
-        event.properties.info.role === "assistant" &&
-        event.properties.info.tokens
+        event.properties.part.type === "step-finish"
       ) {
-        const contextTokens = getContextTokenCount(event.properties.info.tokens);
-        if (contextTokens > 0) {
-          setContextMemory(formatContextMemory(contextTokens, contextLimit));
-        }
-      }
-
-      // フォールバック B: セッション更新時の集計トークン
-      if (
-        !awaitingCompactionContext &&
-        event.type === "session.updated" &&
-        event.properties.sessionID === currentSession?.id &&
-        event.properties.info.tokens
-      ) {
-        const contextTokens = getContextTokenCount(event.properties.info.tokens);
-        if (contextTokens > 0) {
-          setContextMemory(formatContextMemory(contextTokens, contextLimit));
-        }
-      }
-
-      // フォールバック C: ステップ終了時のトークン
-      if (
-        !awaitingCompactionContext &&
-        event.type === "session.next.step.ended" &&
-        event.properties.sessionID === currentSession?.id
-      ) {
-        const contextTokens = getContextTokenCount(event.properties.tokens);
-        if (contextTokens > 0) {
-          setContextMemory(formatContextMemory(contextTokens, contextLimit));
+        const partTokens = event.properties.part.tokens;
+        const partInput = partTokens?.input ?? 0;
+        if (partInput > 0) {
+          const prev = contextTokensRef.current.get(currentSession!.id) ?? 0;
+          const total = prev + partInput;
+          contextTokensRef.current.set(currentSession!.id, total);
+          setContextMemory(formatContextMemory(total, contextLimit));
         }
       }
 
@@ -418,6 +393,11 @@ export function App() {
   }, [session.activeSession]);
 
   // ユーザーメッセージを編集して再送信する
+  // Use a ref for msg.messages so handleEditAndResend stays stable during
+  // streaming — without this, every rAF delta creates a new callback reference,
+  // defeating React.memo on MessageItem.
+  const messagesRef = useRef(msg.messages);
+  messagesRef.current = msg.messages;
   const handleEditAndResend = useCallback(
     (messageId: string, text: string) => {
       if (!session.activeSession) return;
@@ -442,7 +422,8 @@ export function App() {
         }
         return payload;
       };
-      const msgIndex = msg.messages.findIndex((m) => m.info.id === messageId);
+      const currentMessages = messagesRef.current;
+      const msgIndex = currentMessages.findIndex((m) => m.info.id === messageId);
       if (msgIndex < 0) return;
       if (msgIndex === 0) {
         // 最初のメッセージの場合: 新規セッションを作成して送信する方がクリーン
@@ -450,11 +431,11 @@ export function App() {
         postMessage(buildPayload(messageId));
       } else {
         // 直前のメッセージまで巻き戻して再送信
-        const prevMessageId = msg.messages[msgIndex - 1].info.id;
+        const prevMessageId = currentMessages[msgIndex - 1].info.id;
         postMessage(buildPayload(prevMessageId));
       }
     },
-    [session.activeSession, msg.messages, prov.selectedModel, prov.selectedModelEffort],
+    [session.activeSession, prov.selectedModel, prov.selectedModelEffort],
   );
 
   // チェックポイントまで巻き戻す + ユーザーメッセージのテキストを入力欄に復元

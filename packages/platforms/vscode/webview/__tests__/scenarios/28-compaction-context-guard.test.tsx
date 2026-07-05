@@ -181,7 +181,7 @@ describe("コンパクション中のコンテキストメモリガード", () =
     expect(await getContextMemoryText()).toBe("5.2K (3%)");
   });
 
-  it("コンパクション後にフォールバックトークンが再び機能すること", async () => {
+  it("コンパクション後に context.updated が届いたらチップが更新されること（再確認）", async () => {
     await sendEvent({
       type: "session.next.compaction.started",
       properties: { sessionID: "s1", messageID: "m1", timestamp: Date.now() },
@@ -191,16 +191,37 @@ describe("コンパクション中のコンテキストメモリガード", () =
       type: "session.next.context.updated",
       properties: { sessionID: "s1", text: "5.2K (3%)" },
     });
+    expect(await getContextMemoryText()).toBe("5.2K (3%)");
 
     await sendEvent({
-      type: "session.next.step.ended",
+      type: "session.next.context.updated",
+      properties: { sessionID: "s1", text: "8.0K (4%)" },
+    });
+    expect(await getContextMemoryText()).toBe("8.0K (4%)");
+  });
+
+  it("コンパクション後に step-finish パートでトークンが累積されること", async () => {
+    await sendEvent({
+      type: "session.next.compaction.started",
+      properties: { sessionID: "s1", messageID: "m1", timestamp: Date.now() },
+    });
+
+    await sendEvent({
+      type: "session.next.context.updated",
+      properties: { sessionID: "s1", text: "5.2K (3%)" },
+    });
+    expect(await getContextMemoryText()).toBe("5.2K (3%)");
+
+    await sendEvent({
+      type: "message.part.updated",
       properties: {
         sessionID: "s1",
-        tokens: {
-          input: 10000,
-          output: 2000,
-          reasoning: 500,
-          cache: { read: 8000, write: 1000 },
+        part: {
+          id: "part-1",
+          messageID: "m2",
+          sessionID: "s1",
+          type: "step-finish",
+          tokens: { input: 10000, output: 2000 },
         },
       },
     });
