@@ -24,7 +24,7 @@ describe("ストリーミング中の自動スクロール", () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  // scrollIntoView is called when messages update (user is near bottom by default)
+  // scrollIntoView is called when messages change after message receipt
   it("メッセージ受信時に scrollIntoView が呼ばれること", async () => {
     await setupActiveSession();
     vi.mocked(Element.prototype.scrollIntoView).mockClear();
@@ -43,10 +43,11 @@ describe("ストリーミング中の自動スクロール", () => {
       ],
     });
 
+    // messages 変更により useAutoScroll の effect が発火してスクロールする
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  // scrollIntoView is called on streaming message updates
+  // scrollIntoView is called on streaming message updates (messages change-based)
   it("ストリーミング中のメッセージ更新で scrollIntoView が呼ばれること", async () => {
     await setupActiveSession();
 
@@ -73,6 +74,7 @@ describe("ストリーミング中の自動スクロール", () => {
       ],
     });
 
+    // messages 変更により useAutoScroll の effect が発火してスクロールする
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });

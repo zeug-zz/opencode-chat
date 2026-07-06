@@ -329,6 +329,22 @@ export type AgentEvent =
       properties: { sessionID: string; text: string; recent: string };
     }
   | {
+      type: "session.next.reasoning.started";
+      properties: { sessionID: string; assistantMessageID: string; reasoningID: string };
+    }
+  | {
+      type: "session.next.reasoning.delta";
+      properties: { sessionID: string; assistantMessageID: string; reasoningID: string; delta: string };
+    }
+  | {
+      type: "session.next.reasoning.ended";
+      properties: { sessionID: string; assistantMessageID: string; reasoningID: string; text: string };
+    }
+  | {
+      type: "message.part.delta";
+      properties: { sessionID: string; messageID: string; partID: string; field: string; delta: string };
+    }
+  | {
       type: "session.compacted";
       properties: { sessionID: string };
     };

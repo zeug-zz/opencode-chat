@@ -5,7 +5,7 @@ import type {
   TextPart,
   ToolPart,
 } from "@opencode-chat/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MessageWithParts } from "../../../App";
 import { useAppContext } from "../../../contexts/AppContext";
 import { useLocale } from "../../../locales";
@@ -63,7 +63,7 @@ export function getCopyableAssistantMarkdownSource(
   return getAssistantMarkdownSource(parts);
 }
 
-export function MessageItem({ message, activeSessionId, questions, onEditAndResend }: Props) {
+function MessageItemInner({ message, activeSessionId, questions, onEditAndResend }: Props) {
   const t = useLocale();
   const { isShellMessage, childSessions, onNavigateToChild } = useAppContext();
   const { info, parts } = message;
@@ -265,24 +265,72 @@ export function MessageItem({ message, activeSessionId, questions, onEditAndRese
   );
 }
 
-/** Thinking/Reasoning パートの折りたたみ表示 */
-function ReasoningPartView({ part }: { part: ReasoningPartType }) {
-  const t = useLocale();
-  const [expanded, setExpanded] = useState(false);
-  const isComplete = !!part.time?.end;
-
+export const MessageItem = memo(MessageItemInner, (prev, next) => {
   return (
-    <div className={`${styles.reasoningPart} ${isComplete ? "" : styles.reasoningActive}`}>
-      <div className={styles.reasoningHeader} onClick={() => setExpanded((s) => !s)} title={t["message.toggleThought"]}>
-        <span className={styles.reasoningIcon}>
-          {isComplete ? <InfoCircleIcon /> : <SpinnerIcon className={styles.spinner} width={14} height={14} />}
-        </span>
-        <span className={styles.reasoningLabel}>{isComplete ? t["message.thought"] : t["message.thinking"]}</span>
-        <span className={`${styles.chevron} ${expanded ? styles.expanded : ""}`}>
-          <ChevronRightIcon />
-        </span>
-      </div>
-      {expanded && <div className={styles.reasoningBody}>{part.text}</div>}
-    </div>
+    prev.message === next.message &&
+    prev.activeSessionId === next.activeSessionId &&
+    // onEditAndResend is stable during streaming (uses a ref for msg.messages
+    // in App.tsx), so it only changes on effort/model/session changes.
+    prev.onEditAndResend === next.onEditAndResend
   );
-}
+});
+
+/** Thinking/Reasoning パートの折りたたみ表示 */
+const ReasoningPartView = memo(
+  function ReasoningPartView({ part }: { part: ReasoningPartType }) {
+    const t = useLocale();
+    const [expanded, setExpanded] = useState(false);
+    const isComplete = !!part.time?.end;
+    const previousTextLengthRef = useRef(part.text.length);
+    const bodyRef = useRef<HTMLDivElement>(null);
+
+    useLayoutEffect(() => {
+      const el = bodyRef.current;
+      if (el && el.textContent !== part.text) {
+        el.textContent = part.text;
+      }
+    }, [part.text, expanded]);
+
+    useEffect(() => {
+      const previousLength = previousTextLengthRef.current;
+      const nextLength = part.text.length;
+
+      if (previousLength > 0 && nextLength < previousLength) {
+        console.warn("[opencode-chat cot-glitch]", {
+          source: "ReasoningPartView-render",
+          partID: part.id,
+          messageID: part.messageID,
+          sessionID: part.sessionID,
+          previousLength,
+          nextLength,
+          nextTextPreview: nextLength === 0 ? "" : part.text.slice(0, 80),
+          expanded,
+          complete: !!part.time?.end,
+          reason: nextLength === 0 ? "rendered reasoning part became empty" : "rendered reasoning part shrank",
+        });
+      }
+
+      previousTextLengthRef.current = Math.max(previousLength, nextLength);
+    }, [part.id, part.messageID, part.sessionID, part.text, part.time?.end, expanded]);
+
+    return (
+      <div className={`${styles.reasoningPart} ${isComplete ? "" : styles.reasoningActive}`}>
+        <div
+          className={styles.reasoningHeader}
+          onClick={() => setExpanded((s) => !s)}
+          title={t["message.toggleThought"]}
+        >
+          <span className={styles.reasoningIcon}>
+            {isComplete ? <InfoCircleIcon /> : <SpinnerIcon className={styles.spinner} width={14} height={14} />}
+          </span>
+          <span className={styles.reasoningLabel}>{isComplete ? t["message.thought"] : t["message.thinking"]}</span>
+          <span className={`${styles.chevron} ${expanded ? styles.expanded : ""}`}>
+            <ChevronRightIcon />
+          </span>
+        </div>
+        {expanded && <div ref={bodyRef} className={styles.reasoningBody} />}
+      </div>
+    );
+  },
+  (prev, next) => prev.part.text === next.part.text && prev.part.time?.end === next.part.time?.end,
+);

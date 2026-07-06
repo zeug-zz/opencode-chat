@@ -527,6 +527,8 @@
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
+  contain: content;
+  overflow-anchor: none;
 }
 
 /* --- Shared spinner & chevron (used by ReasoningPartView) --- */

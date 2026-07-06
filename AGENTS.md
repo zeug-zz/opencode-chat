@@ -69,3 +69,40 @@ code --install-extension opencode-chat-<version>.vsix --force
 - **VS Code API:** Use `vscode` namespace directly (no abstraction layer between extension host and VS Code APIs).
 - **React:** Functional components, hooks, no class components. State management via React context + hooks.
 - **No comments:** Do not add comments to code unless explicitly requested.
+
+## Documentation Source Hierarchy (Doc Contract)
+
+1. `AGENTS.md` — stable repo standards and workflow
+2. `openspec/changes/*` — active change truth
+3. `adrs/` — durable architecture decisions (status-tracked, AGENTS-aligned)
+4. `memory-bank/` — deprecated optional legacy context (non-authoritative)
+
+## Recent Changes
+
+### 2026-07-06: Streaming Reasoning CoT Fix (archived: `2026-07-06-stream-reasoning-cot`)
+
+Streaming reasoning/chain-of-thought display for thinking models (DeepSeek V4 Pro, Kimi, GLM).
+
+**Events handled**: `session.next.reasoning.started`, `session.next.reasoning.delta`, `session.next.reasoning.ended`, `message.part.delta` (server-assigned `prt_*` part IDs).
+
+**Key implementation** (`packages/platforms/vscode/webview/hooks/useMessages.ts`):
+- Dual-stream reasoning: `reasoningBuffers` (transient `session.next.reasoning.*` IDs) and `deltaBuffers` (server `prt_*` IDs from `message.part.delta`)
+- Canonical reasoning part ID per `sessionID:assistantMessageID` — first `reasoningID` becomes display anchor
+- Monotonic text via `getLongestText()` — no event can shrink reasoning text
+- `reasoningMessageKeys` Set skips `message.part.updated` snapshots for managed messages
+- `mergeSnapshotPreservingReasoning` wrapper on public `setMessages` — preserves managed reasoning text and active `deltaBuffers` entries across full host `messages` snapshot replacement
+- `activeReasoningMessageKeys` + 5s post-ended grace window for snapshot omission
+- rAF throttling for both reasoning and text delta flushes (coalesce into one render per frame)
+
+**Streaming-safe DOM** (`packages/platforms/vscode/webview/components/organisms/MessageItem/MessageItem.tsx`):
+- `ReasoningPartView` uses stable `<div ref>` + `useLayoutEffect` / `textContent` for streaming updates (mirrors `TextPartView` pattern)
+- Collapsed by default; spinner + "Thinking…" while active, info icon + "Thought" when complete
+
+**Scroll fix** (`packages/platforms/vscode/webview/hooks/useAutoScroll.ts`):
+- Switched scroll effect from `useEffect` to `useLayoutEffect` (pre-paint scroll)
+
+**Agent fix** (`packages/agents/opencode/src/`):
+- Switched event subscription from `/event` to `/global/event` (matches TUI)
+- V2Event format normalization: copy `data` → `properties` in `mapEvent()`
+
+**Results**: 1715 tests pass, Biome clean, builds green. Live verified with thinking models — no flicker/blanking.

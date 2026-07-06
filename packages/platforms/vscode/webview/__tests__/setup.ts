@@ -17,6 +17,26 @@ globalThis.context = describe;
 
 Element.prototype.scrollIntoView = vi.fn();
 
+// --- ResizeObserver モック ---
+// jsdom には ResizeObserver が存在しないため、テスト用のスタブを提供する。
+
+class ResizeObserverMock {
+  observe(_target: Element) {}
+  unobserve(_target: Element) {}
+  disconnect() {}
+}
+
+globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
+
+// --- requestAnimationFrame モック ---
+// jsdom は rAF を fake timers と統合しないので、setTimeout(cb, 0) にマップする。
+window.requestAnimationFrame = (cb: FrameRequestCallback): number => {
+  return window.setTimeout(() => cb(0), 0) as unknown as number;
+};
+window.cancelAnimationFrame = (id: number): void => {
+  window.clearTimeout(id);
+};
+
 // --- AudioContext モック ---
 // jsdom には Web Audio API が存在しないため、テスト用のモックを提供する。
 

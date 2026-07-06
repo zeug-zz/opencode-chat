@@ -122,14 +122,16 @@ export class OpenCodeAgent implements IAgent {
     // Abort existing stream before resubscribing
     this.sseAbortController?.abort();
     this.sseAbortController = new AbortController();
-    const result = await client.event.subscribe(undefined, {
+    const result = await client.global.event({
       signal: this.sseAbortController.signal,
     });
     // Read SSE stream and dispatch to listeners
     (async () => {
       try {
-        for await (const event of result.stream) {
-          const mapped = mapEvent(event as Event);
+        for await (const globalEvent of result.stream) {
+          const event = (globalEvent as { payload: Event }).payload;
+          if (!event) continue;
+          const mapped = mapEvent(event);
           for (const listener of this.listeners) {
             listener(mapped);
           }

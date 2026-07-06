@@ -78,8 +78,13 @@ export function mapMessagesWithParts(data: Array<{ info: Message; parts: Part[] 
 // ============================================================
 
 export function mapEvent(event: Event): AgentEvent {
-  // SDK Event is a discriminated union structurally compatible with AgentEvent
-  return event as unknown as AgentEvent;
+  const e = event as Record<string, unknown>;
+  // V2Event format uses `data`, v1 Event format uses `properties`.
+  // Normalize to v1 format so all downstream code can use `event.properties`.
+  if (e.data && !e.properties) {
+    return { ...e, properties: e.data } as unknown as AgentEvent;
+  }
+  return e as unknown as AgentEvent;
 }
 
 // ============================================================

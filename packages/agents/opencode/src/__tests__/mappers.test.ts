@@ -137,6 +137,35 @@ describe("mapEvent", () => {
     const result = mapEvent(event as never);
     expect(result).toEqual(event);
   });
+
+  it("should pass through v1 event with properties unchanged", () => {
+    const event = {
+      type: "session.next.reasoning.delta",
+      properties: { sessionID: "s1", reasoningID: "r1", delta: "hello" },
+    };
+    const result = mapEvent(event as never);
+    expect(result).toEqual(event);
+  });
+
+  it("should copy data to properties for V2Event format", () => {
+    const event = {
+      type: "session.next.reasoning.delta",
+      data: { sessionID: "s1", reasoningID: "r1", delta: "hello" },
+    };
+    const result = mapEvent(event as never) as Record<string, unknown>;
+    expect(result.properties).toEqual({ sessionID: "s1", reasoningID: "r1", delta: "hello" });
+    expect(result.type).toBe("session.next.reasoning.delta");
+  });
+
+  it("should keep properties as-is when both data and properties exist", () => {
+    const event = {
+      type: "session.next.reasoning.delta",
+      properties: { sessionID: "s1", reasoningID: "r1", delta: "from-properties" },
+      data: { sessionID: "s1", reasoningID: "r1", delta: "from-data" },
+    };
+    const result = mapEvent(event as never) as Record<string, unknown>;
+    expect(result.properties).toEqual({ sessionID: "s1", reasoningID: "r1", delta: "from-properties" });
+  });
 });
 
 // ============================================================

@@ -5,14 +5,12 @@ import { useAutoScroll } from "../../hooks/useAutoScroll";
 describe("useAutoScroll", () => {
   // initial state
   context("初期状態の場合", () => {
-    // isNearBottom defaults to true
     it("containerRef と bottomRef を返すこと", () => {
       const { result } = renderHook(() => useAutoScroll([]));
       expect(result.current.containerRef).toBeDefined();
       expect(result.current.bottomRef).toBeDefined();
     });
 
-    // returns handleScroll callback
     it("handleScroll コールバックを返すこと", () => {
       const { result } = renderHook(() => useAutoScroll([]));
       expect(typeof result.current.handleScroll).toBe("function");
@@ -29,127 +27,96 @@ describe("useAutoScroll", () => {
     });
   });
 
-  // on mount
-  context("マウント時の場合", () => {
-    // bottomRef is null on mount in renderHook (no DOM attachment)
-    // scrollIntoView is only called when bottomRef.current exists;
-    // real DOM integration is verified in MessagesArea component tests
-    // isNearBottom defaults to true
-    it("isNearBottom がデフォルトで true であること（メッセージ更新で scrollIntoView が呼ばれること）", () => {
+  // messages 変更による自動スクロール
+  context("messages 配列が変更された場合", () => {
+    it("最下部付近にいれば scrollIntoView が呼ばれること", () => {
       const scrollIntoViewMock = vi.fn();
-      const { result, rerender } = renderHook(({ messages }) => useAutoScroll(messages), {
-        initialProps: { messages: [] as unknown[] },
+      const { result, rerender } = renderHook((props: { messages: unknown[] }) => useAutoScroll(props.messages), {
+        initialProps: { messages: [] },
       });
 
-      // bottomRef にモック要素を手動設定
       const bottomEl = document.createElement("div");
       bottomEl.scrollIntoView = scrollIntoViewMock;
       (result.current.bottomRef as React.MutableRefObject<HTMLDivElement | null>).current = bottomEl;
 
-      // messages 更新で isNearBottom(デフォルト true) により scrollIntoView が呼ばれる
-      rerender({ messages: ["msg1"] });
+      // scrollToBottom from initial mount clears the mock
+      scrollIntoViewMock.mockClear();
 
-      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth" });
-    });
-  });
-
-  // when messages update and user is near bottom
-  context("ユーザーが最下部付近にいてメッセージが更新された場合", () => {
-    // scrolls to bottom
-    it("scrollIntoView が呼ばれること", () => {
-      const scrollIntoViewMock = vi.fn();
-      const { result, rerender } = renderHook(({ messages }) => useAutoScroll(messages), {
-        initialProps: { messages: ["msg1"] as unknown[] },
+      // Rerender with new messages — effect should fire and scroll
+      act(() => {
+        rerender({ messages: ["new"] });
       });
 
-      // bottomRef にモック要素を設定
-      const bottomEl = document.createElement("div");
-      bottomEl.scrollIntoView = scrollIntoViewMock;
-      (result.current.bottomRef as React.MutableRefObject<HTMLDivElement | null>).current = bottomEl;
-
-      // isNearBottom はデフォルト true なので、メッセージ更新でスクロールされるはず
-      rerender({ messages: ["msg1", "msg2"] });
-
-      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth" });
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "auto" });
     });
-  });
 
-  // when messages update and user is NOT near bottom
-  context("ユーザーが上部にスクロールしていてメッセージが更新された場合", () => {
-    // does not scroll to bottom
-    it("scrollIntoView が呼ばれないこと", () => {
+    it("scrollIntoView が呼ばれないこと（上部にスクロール済み）", () => {
       const scrollIntoViewMock = vi.fn();
-      const { result, rerender } = renderHook(({ messages }) => useAutoScroll(messages), {
-        initialProps: { messages: ["msg1"] as unknown[] },
+      const { result, rerender } = renderHook((props: { messages: unknown[] }) => useAutoScroll(props.messages), {
+        initialProps: { messages: [] },
       });
 
-      // containerRef にモック要素を設定し、上部にスクロールしている状態をシミュレート
       const containerEl = document.createElement("div");
       Object.defineProperty(containerEl, "scrollHeight", { value: 1000 });
       Object.defineProperty(containerEl, "scrollTop", { value: 0 });
       Object.defineProperty(containerEl, "clientHeight", { value: 400 });
       (result.current.containerRef as React.MutableRefObject<HTMLDivElement | null>).current = containerEl;
 
-      // bottomRef にモック要素を設定
       const bottomEl = document.createElement("div");
       bottomEl.scrollIntoView = scrollIntoViewMock;
       (result.current.bottomRef as React.MutableRefObject<HTMLDivElement | null>).current = bottomEl;
 
-      // onScroll を呼んで isNearBottom を false にする
       act(() => {
         result.current.handleScroll();
       });
+      expect(result.current.isNearBottom).toBe(false);
 
-      // scrollIntoViewMock をリセット
       scrollIntoViewMock.mockClear();
 
-      // メッセージ更新
-      rerender({ messages: ["msg1", "msg2"] });
-
-      expect(scrollIntoViewMock).not.toHaveBeenCalled();
-      expect(result.current.isNearBottom).toBe(false);
-    });
-  });
-
-  // when user scrolls back to bottom
-  context("ユーザーが最下部に戻った後にメッセージが更新された場合", () => {
-    // resumes auto-scrolling
-    it("scrollIntoView が再び呼ばれること", () => {
-      const scrollIntoViewMock = vi.fn();
-      const { result, rerender } = renderHook(({ messages }) => useAutoScroll(messages), {
-        initialProps: { messages: ["msg1"] as unknown[] },
+      act(() => {
+        rerender({ messages: ["new"] });
       });
 
-      // containerRef を設定（上部にスクロール中）
+      expect(scrollIntoViewMock).not.toHaveBeenCalled();
+    });
+
+    it("最下部に戻った後に scrollIntoView が再び呼ばれること", () => {
+      const scrollIntoViewMock = vi.fn();
+      const { result, rerender } = renderHook((props: { messages: unknown[] }) => useAutoScroll(props.messages), {
+        initialProps: { messages: [] },
+      });
+
       const containerEl = document.createElement("div");
       Object.defineProperty(containerEl, "scrollHeight", { value: 1000, configurable: true });
       Object.defineProperty(containerEl, "scrollTop", { value: 0, configurable: true });
       Object.defineProperty(containerEl, "clientHeight", { value: 400, configurable: true });
       (result.current.containerRef as React.MutableRefObject<HTMLDivElement | null>).current = containerEl;
 
-      // bottomRef にモック要素を設定
       const bottomEl = document.createElement("div");
       bottomEl.scrollIntoView = scrollIntoViewMock;
       (result.current.bottomRef as React.MutableRefObject<HTMLDivElement | null>).current = bottomEl;
 
-      // 上にスクロールして isNearBottom = false にする
+      // Scroll away from bottom
       act(() => {
         result.current.handleScroll();
       });
+      expect(result.current.isNearBottom).toBe(false);
+      scrollIntoViewMock.mockClear();
 
-      // 下に戻して isNearBottom = true にする
+      // Scroll back to near bottom
       Object.defineProperty(containerEl, "scrollTop", { value: 950, configurable: true });
       act(() => {
         result.current.handleScroll();
       });
-
+      expect(result.current.isNearBottom).toBe(true);
       scrollIntoViewMock.mockClear();
 
-      // メッセージ更新
-      rerender({ messages: ["msg1", "msg2", "msg3"] });
+      // Rerender with new messages — effect should fire and scroll
+      act(() => {
+        rerender({ messages: ["new"] });
+      });
 
-      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth" });
-      expect(result.current.isNearBottom).toBe(true);
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "auto" });
     });
   });
 

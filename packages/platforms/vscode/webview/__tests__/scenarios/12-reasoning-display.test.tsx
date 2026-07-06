@@ -100,8 +100,8 @@ describe("思考表示（ReasoningPartView）", () => {
       });
 
       // Shows content
-      it("本文が表示されること", () => {
-        expect(screen.getByText("Step 1: analyze the problem")).toBeInTheDocument();
+      it("本文が表示されること", async () => {
+        expect(await screen.findByText("Step 1: analyze the problem")).toBeInTheDocument();
       });
 
       // Collapses on second click

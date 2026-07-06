@@ -2,6 +2,7 @@
   flex: 1;
   overflow-x: hidden;
   overflow-y: auto;
+  overflow-anchor: auto;
   overscroll-behavior-x: none;
   padding: 12px;
   position: relative;
