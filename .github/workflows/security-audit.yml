@@ -53,7 +53,7 @@ jobs:
             --sarif --output semgrep-results.sarif
       - name: Upload SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357  # v3.28.3
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v3.28.3
         with:
           sarif_file: semgrep-results.sarif
         continue-on-error: true
