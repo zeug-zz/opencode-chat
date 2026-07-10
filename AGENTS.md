@@ -79,7 +79,7 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
-### 2026-07-10: Model Effort Menu + Toolbar Density (`add-model-effort-menu`)
+### 2026-07-10: Model Effort Menu + Toolbar Density (archived: `2026-07-10-add-model-effort-menu`)
 
 Dedicated effort control for models that advertise variants; keeps sticky per-model selection and `Ctrl+T`.
 
@@ -93,9 +93,21 @@ Dedicated effort control for models that advertise variants; keeps sticky per-mo
 - Exposes shared `selectedModelVariants` from authoritative provider metadata (+ connected fallback)
 - Existing `modelEffortByModel` persistence / validation / cycle-to-default semantics unchanged
 
-**OpenSpec**: active change `openspec/changes/add-model-effort-menu/` (proposal, design, delta specs, tasks complete). Validate with `openspec validate add-model-effort-menu --strict`.
+**OpenSpec**: archived to `openspec/changes/archive/2026-07-10-add-model-effort-menu/`; main spec synced at `openspec/specs/model-effort-control/spec.md`.
 
 **Verified**: webview tests green, Biome clean, build + VSIX package install.
+
+### 2026-07-10: Switch Chat Agent to Scout (archived: `2026-07-10-switch-chat-agent-to-scout`)
+
+Chat companion primary agent moved from OpenCode `plan` to `scout`.
+
+**UI / host**:
+- Agent selector allowlist `scout` + `build`; `scout` displays as `chat`
+- Default primary-agent init prefers eligible `scout`, else first primary/all
+- Extension host injects `CHAT_SYSTEM.md` only when `primaryAgent === "scout"`
+- Chat system prompt wording no longer frames as plan mode
+
+**OpenSpec**: archived to `openspec/changes/archive/2026-07-10-switch-chat-agent-to-scout/`; main spec synced at `openspec/specs/primary-agent-selection/spec.md`.
 
 ### 2026-07-06: Streaming Reasoning CoT Fix (archived: `2026-07-06-stream-reasoning-cot`)
 

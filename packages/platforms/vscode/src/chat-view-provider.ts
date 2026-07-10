@@ -133,7 +133,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "sendMessage": {
         const system =
-          message.system ?? (message.primaryAgent === "plan" ? this.chatSystemPrompt : undefined) ?? undefined;
+          message.system ?? (message.primaryAgent === "scout" ? this.chatSystemPrompt : undefined) ?? undefined;
         await this.agent.sendMessage(message.sessionId, message.text, {
           model: message.model,
           files: message.files,

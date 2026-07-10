@@ -11,12 +11,12 @@ type Props = {
   onSelect: (agentName: string) => void;
 };
 
-const ALLOWED_AGENTS = ["plan", "build"];
-const AGENT_DISPLAY_NAMES: Record<string, string> = { plan: "chat" };
+const ALLOWED_AGENTS = ["scout", "build"];
+const AGENT_DISPLAY_NAMES: Record<string, string> = { scout: "chat" };
 const getDisplayName = (name: string) => AGENT_DISPLAY_NAMES[name] ?? name;
 
 const AGENT_DESCRIPTIONS: Record<string, string> = {
-  plan: "Default mode for chatting and planning. Read-only, no code execution.",
+  scout: "Default mode for chatting and research. Read-only, no code execution.",
   build: "Full agent mode. Can run commands and edit files.",
 };
 const getDescription = (agent: AgentInfo) => AGENT_DESCRIPTIONS[agent.name] ?? agent.description;

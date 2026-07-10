@@ -1,11 +1,6 @@
-# primary-agent-selection Specification
+## MODIFIED Requirements
 
-## Purpose
-Selects and displays the primary chat agent in the VS Code companion, defaulting the lightweight chat canvas and preserving build mode as an escape hatch.
-
-## Requirements
-
-### Requirement: Prefer scout for initial primary-agent selection
+### Requirement: Prefer plan for initial primary-agent selection
 
 When the VS Code webview receives the opencode agent list and no primary agent has already been selected in the current webview session, OpenCode Chat SHALL initialize the selected primary agent to an eligible agent named `scout` when one exists.
 
@@ -46,6 +41,8 @@ The default primary-agent selection change SHALL preserve existing message send 
 - **AND** the user sends a chat prompt
 - **THEN** the webview SHALL include `primaryAgent: "scout"` in the existing send message payload
 - **AND** no new protocol field SHALL be required
+
+## ADDED Requirements
 
 ### Requirement: Append chat companion prompt for Scout
 

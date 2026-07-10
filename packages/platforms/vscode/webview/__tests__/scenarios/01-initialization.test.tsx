@@ -8,15 +8,15 @@ import { renderApp, sendExtMessage } from "../helpers";
 /**
  * Primary-agent initialization fixture set.
  *
- * The exact `plan`-first selection is verified for three orderings:
- *   - `build` (`primary`) then `plan` (`primary`)
- *   - `build` (`primary`) then `plan` (`all`)
- *   - `plan` (`all`) then `build` (`primary`)
+ * The exact `scout`-first selection is verified for three orderings:
+ *   - `build` (`primary`) then `scout` (`primary`)
+ *   - `build` (`primary`) then `scout` (`all`)
+ *   - `scout` (`all`) then `build` (`primary`)
  *
- * The fallback (no `plan` agent) is verified for `build` (`primary`)
+ * The fallback (no `scout` agent) is verified for `build` (`primary`)
  * only and a subagent-only list.
  */
-const buildPrimaryPlanPrimaryAgents = [
+const buildPrimaryScoutPrimaryAgents = [
   {
     name: "build",
     description: "Primary build agent",
@@ -27,8 +27,8 @@ const buildPrimaryPlanPrimaryAgents = [
     options: {},
   },
   {
-    name: "plan",
-    description: "Primary plan agent",
+    name: "scout",
+    description: "Primary scout agent",
     mode: "primary",
     builtIn: true,
     permission: { edit: "deny", bash: {} },
@@ -37,7 +37,7 @@ const buildPrimaryPlanPrimaryAgents = [
   },
 ] as any;
 
-const buildPrimaryPlanAllAgents = [
+const buildPrimaryScoutAllAgents = [
   {
     name: "build",
     description: "Primary build agent",
@@ -48,8 +48,8 @@ const buildPrimaryPlanAllAgents = [
     options: {},
   },
   {
-    name: "plan",
-    description: "All-mode plan agent",
+    name: "scout",
+    description: "All-mode scout agent",
     mode: "all",
     builtIn: true,
     permission: { edit: "deny", bash: {} },
@@ -58,10 +58,10 @@ const buildPrimaryPlanAllAgents = [
   },
 ] as any;
 
-const planAllBuildPrimaryAgents = [
+const scoutAllBuildPrimaryAgents = [
   {
-    name: "plan",
-    description: "All-mode plan agent",
+    name: "scout",
+    description: "All-mode scout agent",
     mode: "all",
     builtIn: true,
     permission: { edit: "deny", bash: {} },
@@ -235,22 +235,22 @@ describe("初期化", () => {
     });
   });
 
-  // When agents message arrives with build before plan (both primary)
-  context("agents メッセージに plan を含む場合（build が先頭）", () => {
+  // When agents message arrives with build before scout (both primary)
+  context("agents メッセージに scout を含む場合（build が先頭）", () => {
     beforeEach(async () => {
       renderApp();
       await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
-      await sendExtMessage({ type: "agents", agents: buildPrimaryPlanPrimaryAgents });
+      await sendExtMessage({ type: "agents", agents: buildPrimaryScoutPrimaryAgents });
     });
 
-    // Selector shows plan as "chat"
-    it('AgentSelector が plan を "chat" として表示すること', () => {
+    // Selector shows scout as "chat"
+    it('AgentSelector が scout を "chat" として表示すること', () => {
       expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
       expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("build");
     });
 
-    // Send payload uses primaryAgent: "plan"
-    it('送信時に primaryAgent: "plan" が含まれること', async () => {
+    // Send payload uses primaryAgent: "scout"
+    it('送信時に primaryAgent: "scout" が含まれること', async () => {
       const user = userEvent.setup();
       const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
       await user.type(textarea, "Hello{Enter}");
@@ -258,42 +258,42 @@ describe("初期化", () => {
         expect.objectContaining({
           type: "sendMessage",
           text: "Hello",
-          primaryAgent: "plan",
+          primaryAgent: "scout",
         }),
       );
     });
   });
 
-  // When agents message includes plan with mode: "all" alongside build primary
-  context("agents メッセージに plan（mode: all）と build（mode: primary）が含まれる場合", () => {
+  // When agents message includes scout with mode: "all" alongside build primary
+  context("agents メッセージに scout（mode: all）と build（mode: primary）が含まれる場合", () => {
     beforeEach(async () => {
       renderApp();
       await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
-      await sendExtMessage({ type: "agents", agents: buildPrimaryPlanAllAgents });
+      await sendExtMessage({ type: "agents", agents: buildPrimaryScoutAllAgents });
     });
 
-    // Selector shows plan as "chat"
-    it('AgentSelector が plan を "chat" として表示すること', () => {
+    // Selector shows scout as "chat"
+    it('AgentSelector が scout を "chat" として表示すること', () => {
       expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
     });
   });
 
-  // When agents message starts with plan (mode: all) and build follows
-  context("agents メッセージが plan（mode: all）から始まる場合", () => {
+  // When agents message starts with scout (mode: all) and build follows
+  context("agents メッセージが scout（mode: all）から始まる場合", () => {
     beforeEach(async () => {
       renderApp();
       await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
-      await sendExtMessage({ type: "agents", agents: planAllBuildPrimaryAgents });
+      await sendExtMessage({ type: "agents", agents: scoutAllBuildPrimaryAgents });
     });
 
-    // Selector still shows plan as "chat" (no ordering regression)
-    it('AgentSelector が plan を "chat" として表示すること', () => {
+    // Selector still shows scout as "chat" (no ordering regression)
+    it('AgentSelector が scout を "chat" として表示すること', () => {
       expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
     });
   });
 
-  // When agents message has no plan, fallback to first primary/all
-  context("agents メッセージに plan が含まれない場合", () => {
+  // When agents message has no scout, fallback to first primary/all
+  context("agents メッセージに scout が含まれない場合", () => {
     beforeEach(async () => {
       renderApp();
       await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
@@ -354,8 +354,8 @@ describe("初期化", () => {
   });
 
   // When a primary agent is already user-selected and a new agents message
-  // includes an eligible plan agent, the existing selection must be preserved.
-  context("ユーザーが build を選択済みで、その後に plan を含む agents を受信した場合", () => {
+  // includes an eligible scout agent, the existing selection must be preserved.
+  context("ユーザーが build を選択済みで、その後に scout を含む agents を受信した場合", () => {
     beforeEach(async () => {
       renderApp();
       await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
@@ -363,7 +363,7 @@ describe("初期化", () => {
       await sendExtMessage({ type: "agents", agents: buildOnlyPrimaryAgents });
     });
 
-    // Subsequent agents message with plan must not overwrite user choice
+    // Subsequent agents message with scout must not overwrite user choice
     it("AgentSelector は build のまま上書きされないこと", async () => {
       const user = userEvent.setup();
 
@@ -379,12 +379,12 @@ describe("初期化", () => {
       // [0] is the trigger label, [1] is the popover item.
       await user.click(buildItems[1]);
 
-      // Now an agents message arrives that includes plan (eligible).
-      await sendExtMessage({ type: "agents", agents: buildPrimaryPlanPrimaryAgents });
+      // Now an agents message arrives that includes scout (eligible).
+      await sendExtMessage({ type: "agents", agents: buildPrimaryScoutPrimaryAgents });
 
       // The user selection must remain build.
       expect(screen.getByTitle("Select agent")).toHaveTextContent("build");
-      expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("plan");
+      expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("scout");
 
       // And the send payload must use build.
       vi.mocked(postMessage).mockClear();
@@ -420,8 +420,8 @@ describe("初期化", () => {
       options: {},
     },
     {
-      name: "plan",
-      description: "Primary plan agent",
+      name: "scout",
+      description: "Primary scout agent",
       mode: "primary",
       builtIn: true,
       permission: { edit: "deny", bash: {} },
@@ -430,7 +430,7 @@ describe("初期化", () => {
     },
   ] as any;
 
-  // When agents message includes compaction, build, plan (non-menu order)
+  // When agents message includes compaction, build, scout (non-menu order)
   context("agents メッセージに compaction を含む場合", () => {
     beforeEach(async () => {
       renderApp();

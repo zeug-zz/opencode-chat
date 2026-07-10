@@ -299,12 +299,12 @@ export function App() {
         }
         case "agents": {
           setAgents(data.agents);
-          // 初回: まだプライマリエージェントが未選択なら plan を優先し、無ければ最初の primary/all にフォールバックする
+          // 初回: まだプライマリエージェントが未選択なら scout を優先し、無ければ最初の primary/all にフォールバックする
           setSelectedPrimaryAgent((prev) => {
             if (prev) return prev;
             const isPrimaryOrAll = (a: AgentInfo) => a.mode === "primary" || a.mode === "all";
-            const plan = data.agents.find((a) => isPrimaryOrAll(a) && a.name === "plan");
-            if (plan) return plan.name;
+            const scout = data.agents.find((a) => isPrimaryOrAll(a) && a.name === "scout");
+            if (scout) return scout.name;
             const first = data.agents.find(isPrimaryOrAll);
             return first?.name ?? null;
           });
