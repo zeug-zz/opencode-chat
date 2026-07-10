@@ -23,7 +23,7 @@ export function useClickOutside(
 
     const handler = (e: MouseEvent) => {
       const refArray = Array.isArray(refsRef.current) ? refsRef.current : [refsRef.current];
-      const isOutside = refArray.every((r) => !r.current || !r.current.contains(e.target as Node));
+      const isOutside = refArray.every((r) => !r.current?.contains(e.target as Node));
       if (isOutside) {
         callbackRef.current();
       }

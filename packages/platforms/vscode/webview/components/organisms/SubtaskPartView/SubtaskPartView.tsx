@@ -140,5 +140,5 @@ export function isTaskToolPart(part: { type: string; tool?: string }): boolean {
   return part.type === "tool" && part.tool === "task";
 }
 
-export { findMatchingChild };
 export type { SubtaskPart };
+export { findMatchingChild };

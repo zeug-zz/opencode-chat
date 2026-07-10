@@ -8,6 +8,11 @@
   line-height: 1.4;
 }
 
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
 .done {
   opacity: 0.6;
 }
@@ -26,11 +31,6 @@
 
 .done .indicator {
   color: var(--vscode-testing-iconPassed, #73c991);
-}
-
-.content {
-  flex: 1;
-  min-width: 0;
 }
 
 .badge {

@@ -1,7 +1,7 @@
 {
   "repo": "opencode-chat",
   "type": "node",
-  "timestamp": "2026-06-22T03:56:40.592Z",
+  "timestamp": "2026-07-10T19:49:50.957Z",
   "scope": "workspace",
   "mode": "all",
   "findings": [],
@@ -16,5 +16,10 @@
       "deps": 0
     }
   },
-  "triaged": null
+  "triaged": null,
+  "tools": {
+    "gitleaks": "8.30.1",
+    "semgrep": "1.168.0",
+    "npm-audit": "10.9.8"
+  }
 }

@@ -16,7 +16,7 @@
     "test:all": "pnpm --filter opencode-chat test:all"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.4"
+    "@biomejs/biome": "2.5.3"
   },
   "pnpm": {
     "overrides": {
