@@ -103,6 +103,18 @@ const subagentOnlyAgents = [
   },
 ] as any;
 
+const subagentScoutOnlyAgents = [
+  {
+    name: "scout",
+    description: "Subagent scout (should not be promoted to chat)",
+    mode: "subagent",
+    builtIn: true,
+    permission: { edit: "deny", bash: {} },
+    tools: {},
+    options: {},
+  },
+] as any;
+
 // Initialization
 describe("初期化", () => {
   // On mount
@@ -276,6 +288,20 @@ describe("初期化", () => {
     it('AgentSelector が scout を "chat" として表示すること', () => {
       expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
     });
+
+    // Send payload uses primaryAgent: "scout"
+    it('送信時に primaryAgent: "scout" が含まれること', async () => {
+      const user = userEvent.setup();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Hello{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Hello",
+          primaryAgent: "scout",
+        }),
+      );
+    });
   });
 
   // When agents message starts with scout (mode: all) and build follows
@@ -289,6 +315,20 @@ describe("初期化", () => {
     // Selector still shows scout as "chat" (no ordering regression)
     it('AgentSelector が scout を "chat" として表示すること', () => {
       expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
+    });
+
+    // Send payload uses primaryAgent: "scout"
+    it('送信時に primaryAgent: "scout" が含まれること', async () => {
+      const user = userEvent.setup();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Hello{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Hello",
+          primaryAgent: "scout",
+        }),
+      );
     });
   });
 
@@ -334,6 +374,41 @@ describe("初期化", () => {
     });
 
     // Send payload does NOT include primaryAgent
+    it("送信時に primaryAgent が含まれないこと", async () => {
+      const user = userEvent.setup();
+      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+      await user.type(textarea, "Hi{Enter}");
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          text: "Hi",
+        }),
+      );
+      expect(postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "sendMessage",
+          primaryAgent: expect.anything(),
+        }),
+      );
+    });
+  });
+
+  // When agents message has scout only as subagent (should not be promoted)
+  context("agents メッセージに scout が subagent としてのみ含まれる場合", () => {
+    beforeEach(async () => {
+      renderApp();
+      await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+      await sendExtMessage({ type: "agents", agents: subagentScoutOnlyAgents });
+    });
+
+    // AgentSelector IS rendered because "scout" is in the allowlist,
+    // but shows no agent selected — the subagent scout was not promoted.
+    it("AgentSelector が表示されるがエージェント未選択であること", () => {
+      expect(screen.getByTitle("Select agent")).toBeInTheDocument();
+      // No primaryAgent is set (subagent was not promoted)
+    });
+
+    // Send payload does NOT include primaryAgent (scout subagent was not auto-promoted)
     it("送信時に primaryAgent が含まれないこと", async () => {
       const user = userEvent.setup();
       const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");

@@ -61,8 +61,8 @@ function createMockSdkClient() {
         .fn()
         .mockResolvedValue({ data: { config: "/home/.config/opencode", data: "/home/.local/share/opencode" } }),
     },
-    event: {
-      subscribe: vi.fn().mockResolvedValue({
+    global: {
+      event: vi.fn().mockResolvedValue({
         stream: (async function* () {
           // デフォルトは空ストリーム
         })(),
@@ -139,17 +139,46 @@ describe("OpenCodeAgent", () => {
   // ============================================================
 
   describe("connect()", () => {
-    it("should create server on port 0 and create client", async () => {
+    it("should create server with port 0 and Scout config overlay", async () => {
       await agent.connect();
 
-      expect(createOpencodeServer).toHaveBeenCalledWith({ port: 0 });
+      expect(createOpencodeServer).toHaveBeenCalledWith({
+        port: 0,
+        config: {
+          agent: {
+            scout: {
+              mode: "all",
+              description: "Read-only chat and research companion.",
+              permission: {
+                edit: "deny",
+                bash: "deny",
+                task: "deny",
+                read: "allow",
+                glob: "allow",
+                grep: "allow",
+                list: "allow",
+                webfetch: "allow",
+                websearch: "allow",
+                question: "allow",
+              },
+            },
+          },
+        },
+      });
       expect(createOpencodeClient).toHaveBeenCalledWith({ baseUrl: "http://localhost:12345" });
+    });
+
+    it("should not write config files during connect", async () => {
+      await agent.connect();
+
+      expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
     });
 
     it("should subscribe to SSE events after connecting", async () => {
       await agent.connect();
 
-      expect(mockClient.event.subscribe).toHaveBeenCalled();
+      expect(mockClient.global.event).toHaveBeenCalled();
     });
 
     it("should expose serverUrl via getServerUrl() after connecting", async () => {
@@ -843,18 +872,20 @@ describe("OpenCodeAgent", () => {
     });
 
     it("should deliver events from SSE stream to listeners", async () => {
-      const events = [
+      // Stream yields { payload: Event } — production code extracts .payload
+      const rawEvents = [
         { type: "session.updated", properties: { id: "sess-1" } },
         { type: "message.created", properties: { id: "msg-1" } },
       ];
+      const streamEvents = rawEvents.map((payload) => ({ payload }));
       let resolveStream!: () => void;
       const streamDone = new Promise<void>((r) => {
         resolveStream = r;
       });
 
-      mockClient.event.subscribe.mockResolvedValue({
+      mockClient.global.event.mockResolvedValue({
         stream: (async function* () {
-          for (const event of events) {
+          for (const event of streamEvents) {
             yield event;
           }
           resolveStream();
@@ -871,8 +902,8 @@ describe("OpenCodeAgent", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       expect(listener).toHaveBeenCalledTimes(2);
-      expect(listener).toHaveBeenCalledWith(events[0]);
-      expect(listener).toHaveBeenCalledWith(events[1]);
+      expect(listener).toHaveBeenCalledWith(rawEvents[0]);
+      expect(listener).toHaveBeenCalledWith(rawEvents[1]);
     });
 
     it("should remove listener when Disposable is disposed", async () => {
@@ -880,7 +911,7 @@ describe("OpenCodeAgent", () => {
       let emitEvent: ((event: unknown) => void) | undefined;
       let endStream: (() => void) | undefined;
 
-      mockClient.event.subscribe.mockResolvedValue({
+      mockClient.global.event.mockResolvedValue({
         stream: (async function* () {
           const queue: unknown[] = [];
           let resolve: (() => void) | undefined;
@@ -911,14 +942,14 @@ describe("OpenCodeAgent", () => {
       const listener = vi.fn();
       const disposable = agent.onEvent(listener);
 
-      // イベントを1つ送信
-      emitEvent?.({ type: "test-event-1" });
+      // Stream yields { payload: Event } — wrap events in payload
+      emitEvent?.({ payload: { type: "test-event-1" } });
       await new Promise((r) => setTimeout(r, 10));
       expect(listener).toHaveBeenCalledTimes(1);
 
       // Dispose してからイベントを送信 — 呼ばれないはず
       disposable.dispose();
-      emitEvent?.({ type: "test-event-2" });
+      emitEvent?.({ payload: { type: "test-event-2" } });
       await new Promise((r) => setTimeout(r, 10));
       expect(listener).toHaveBeenCalledTimes(1);
 
@@ -931,12 +962,12 @@ describe("OpenCodeAgent", () => {
       await agent.connect();
 
       // 初回の subscribe 呼び出しを確認
-      expect(mockClient.event.subscribe).toHaveBeenCalledTimes(1);
+      expect(mockClient.global.event).toHaveBeenCalledTimes(1);
 
       await agent.resubscribeEvents();
 
       // 2回目の subscribe 呼び出し（旧ストリームの abort + 新ストリーム開始）
-      expect(mockClient.event.subscribe).toHaveBeenCalledTimes(2);
+      expect(mockClient.global.event).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -699,3 +699,119 @@ describe("永続化された effort の復元と送信ペイロード (Task 4.1)
     expect("effort" in (sendCall![0] as object)).toBe(false);
   });
 });
+
+// ============================================================
+// Task 3.1: Scout agent model/effort forwarding
+//
+// With Scout as the active primary agent, the GUI-selected model
+// and explicit effort are forwarded as request-level prompt
+// options; they MUST NOT be stored as a Scout config model.
+// ============================================================
+
+describe("Scout agent での model/effort 転送 (Task 3.1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const scoutAllBuildPrimaryAgents = [
+    {
+      name: "scout",
+      description: "All-mode scout agent",
+      mode: "all",
+      builtIn: true,
+      permission: { edit: "deny", bash: {} },
+      tools: {},
+      options: {},
+    },
+    {
+      name: "build",
+      description: "Primary build agent",
+      mode: "primary",
+      builtIn: true,
+      permission: { edit: "ask", bash: {} },
+      tools: {},
+      options: {},
+    },
+  ] as any;
+
+  it("Scout + 永続化 effort で送信時に model, effort, primaryAgent が含まれること", async () => {
+    vi.mocked(getPersistedState).mockReturnValue({
+      modelEffortByModel: { "openai/gpt-5.4": "low" },
+    });
+
+    renderApp();
+    await sendExtMessage({
+      type: "providers",
+      providers: [openaiConnectedProvider],
+      allProviders: createAllProvidersData(["openai"], [openaiAllProvider as any]),
+      default: { general: "openai/gpt-5.4" },
+      configModel: "openai/gpt-5.4",
+    });
+    await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+    await sendExtMessage({ type: "agents", agents: scoutAllBuildPrimaryAgents });
+
+    // Verify effort is restored from persistence
+    expect(getEffortText()).toBe("Low");
+    // Verify selector shows chat (scout)
+    expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
+
+    vi.mocked(postMessage).mockClear();
+
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    const user = userEvent.setup();
+    await user.type(textarea, "Hello{Enter}");
+
+    // The payload carries model and effort as request-level options,
+    // alongside primaryAgent: "scout" — NOT stored as a Scout config model.
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "sendMessage",
+        sessionId: "s1",
+        text: "Hello",
+        model: { providerID: "openai", modelID: "gpt-5.4" },
+        effort: { id: "low", label: "Low" },
+        primaryAgent: "scout",
+      }),
+    );
+  });
+
+  it("Scout + effort なしで送信時に model と primaryAgent のみ含まれること", async () => {
+    // Reset persisted state from prior test — vi.clearAllMocks does not
+    // clear mock implementations (vitest v4), so mockReturnValue from
+    // the "persisted effort" test would leak a valid "low" effort.
+    vi.mocked(getPersistedState).mockReturnValue(undefined);
+
+    renderApp();
+    await sendExtMessage({
+      type: "providers",
+      providers: [openaiConnectedProvider],
+      allProviders: createAllProvidersData(["openai"], [openaiAllProvider as any]),
+      default: { general: "openai/gpt-5.4" },
+      configModel: "openai/gpt-5.4",
+    });
+    await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
+    await sendExtMessage({ type: "agents", agents: scoutAllBuildPrimaryAgents });
+
+    vi.mocked(postMessage).mockClear();
+
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    const user = userEvent.setup();
+    await user.type(textarea, "Hello{Enter}");
+
+    // Request-level model and primaryAgent present, effort omitted.
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "sendMessage",
+        sessionId: "s1",
+        text: "Hello",
+        model: { providerID: "openai", modelID: "gpt-5.4" },
+        primaryAgent: "scout",
+      }),
+    );
+
+    const calls = vi.mocked(postMessage).mock.calls;
+    const sendCall = calls.find((c) => (c[0] as { type?: string })?.type === "sendMessage");
+    expect(sendCall, "sendMessage must have been called").toBeDefined();
+    expect("effort" in (sendCall![0] as object)).toBe(false);
+  });
+});

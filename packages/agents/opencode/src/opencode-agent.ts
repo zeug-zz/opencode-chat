@@ -84,7 +84,30 @@ export class OpenCodeAgent implements IAgent {
 
   async connect(): Promise<void> {
     // Port 0: let OS assign a free port to avoid conflicts
-    const server = await createOpencodeServer({ port: 0 });
+    // In-memory Scout overlay scoped to this child process via OPENCODE_CONFIG_CONTENT.
+    const server = await createOpencodeServer({
+      port: 0,
+      config: {
+        agent: {
+          scout: {
+            mode: "all",
+            description: "Read-only chat and research companion.",
+            permission: {
+              edit: "deny",
+              bash: "deny",
+              task: "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              webfetch: "allow",
+              websearch: "allow",
+              question: "allow",
+            },
+          },
+        },
+      },
+    });
     this.server = server;
     this.client = createOpencodeClient({
       baseUrl: server.url,
