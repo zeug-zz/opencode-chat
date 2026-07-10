@@ -70,6 +70,16 @@ code --install-extension opencode-chat-<version>.vsix --force
 - **React:** Functional components, hooks, no class components. State management via React context + hooks.
 - **No comments:** Do not add comments to code unless explicitly requested.
 
+## Security
+
+- **Pre-commit:** Gitleaks secret scanning (`.pre-commit-config.yaml`). Run `pre-commit run --all-files` to verify.
+- **CI:** Gitleaks, Semgrep SAST, Semgrep OSS, pnpm audit, and CodeQL on every push.
+- **Dependabot:** Enabled for npm and GitHub Actions.
+- **MCP trust model:** The companion Scout agent runs with read-only permissions (edit/bash/task denied
+  via in-memory config overlay in `opencode-agent.ts`). User-installed MCP servers are NOT sandboxed
+  by this extension — verify tool permissions on any connected MCP servers. See `SECURITY.md` for details.
+- **Audit trail:** `scripts/security/last-audit.json`. Reports: `plans/security/`.
+
 ## Documentation Source Hierarchy (Doc Contract)
 
 1. `AGENTS.md` — stable repo standards and workflow
