@@ -1,4 +1,4 @@
-import type { ProviderInfo as CoreProviderInfo, ModelVariantRef } from "@opencode-chat/core";
+import type { ProviderInfo as CoreProviderInfo } from "@opencode-chat/core";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "../../../locales";
 import type { AllProvidersData, ModelInfo, ProviderInfo } from "../../../vscode-api";
@@ -13,16 +13,7 @@ type Props = {
   selectedModel: { providerID: string; modelID: string } | null;
   onSelect: (model: { providerID: string; modelID: string }) => void;
   /**
-   * Optional explicit model effort/variant for the selected model.
-   * When unset, the selector shows only the model name (no separator
-   * or placeholder like "default"). When set, the effort label (or
-   * id fallback) is rendered compactly next to the model name with a
-   * middle-dot separator. Display-only; click handling lives elsewhere.
-   */
-  selectedModelEffort?: ModelVariantRef;
-  /**
    * Most-recent-first list of recently selected models (capped at five).
-   * Not yet rendered — consumed in Task 3.2.
    */
   recentModels?: Array<{ providerID: string; modelID: string }>;
 };
@@ -43,14 +34,7 @@ const badgeClass: Record<string, string> = {
   deprecated: styles.deprecated,
 };
 
-export function ModelSelector({
-  providers,
-  allProvidersData,
-  selectedModel,
-  onSelect,
-  selectedModelEffort,
-  recentModels,
-}: Props) {
+export function ModelSelector({ providers, allProvidersData, selectedModel, onSelect, recentModels }: Props) {
   const t = useLocale();
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
@@ -163,17 +147,6 @@ export function ModelSelector({
     return selectedModel.modelID;
   }, [selectedModel, allDisplayProviders, t["model.selectModel"]]);
 
-  // Effort display text. Prefer the normalized `label`; fall back to `id`.
-  // Only render when both a model is selected and an explicit effort is set.
-  // The label is intentionally compact (e.g. "Low" / "Medium" / "High") and
-  // uses a middle-dot separator so the rendered text reads as
-  // "GPT-5.4 · Low" without dominating the model name.
-  const selectedModelEffortText = useMemo(() => {
-    if (!selectedModel) return null;
-    if (!selectedModelEffort) return null;
-    return selectedModelEffort.label || selectedModelEffort.id;
-  }, [selectedModel, selectedModelEffort]);
-
   const toggleProvider = (id: string) => {
     setExpandedProviders((prev) => {
       const next = new Set(prev);
@@ -190,16 +163,6 @@ export function ModelSelector({
         <button type="button" className={styles.button} onClick={toggle} title={t["model.selectModel"]}>
           <span className={styles.label}>
             <span className={styles.modelName}>{selectedModelName}</span>
-            {selectedModelEffortText && (
-              <>
-                <span className={styles.separator} aria-hidden="true">
-                  ·
-                </span>
-                <span className={styles.effort} title={`effort: ${selectedModelEffortText}`}>
-                  {selectedModelEffortText}
-                </span>
-              </>
-            )}
           </span>
           <span className={`${styles.chevron} ${open ? styles.expanded : ""}`}>
             <ChevronRightIcon />

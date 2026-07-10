@@ -1,6 +1,6 @@
 import type { ModelInfo, ModelVariantRef, ProviderInfo } from "@opencode-chat/core";
-import { validateModelVariant } from "@opencode-chat/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { getModelVariants, validateModelVariant } from "@opencode-chat/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AllProvidersData } from "../vscode-api";
 import { getPersistedState, postMessage, setPersistedState } from "../vscode-api";
 
@@ -177,6 +177,14 @@ export function useProviders() {
     [selectedModel, allProvidersData, providers],
   );
 
+  // Derive the normalized variant list for the currently selected model.
+  // Updates when the selected model or provider metadata changes so callers
+  // (effort menu, Ctrl+T) always see the current capability set.
+  const selectedModelVariants = useMemo(() => {
+    const info = findModelInfo(selectedModel, allProvidersData, providers);
+    return getModelVariants(info);
+  }, [selectedModel, allProvidersData, providers]);
+
   return {
     providers,
     setProviders,
@@ -188,6 +196,7 @@ export function useProviders() {
     selectedModelEffort,
     setSelectedModelEffort,
     handleModelSelect,
+    selectedModelVariants,
   } as const;
 }
 

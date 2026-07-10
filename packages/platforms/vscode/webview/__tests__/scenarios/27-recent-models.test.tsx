@@ -79,7 +79,7 @@ describe("モデルセレクターの Recent セクション", () => {
     fireEvent.click(container.querySelector(".button")!);
 
     // Click the second .item — GPT-4 (first is already-selected GPT-5.4)
-    const items = container.querySelectorAll(".item");
+    const items = document.body.querySelectorAll(".item");
     fireEvent.click(items[1]);
 
     // setPersistedState should have been called with recentModels
@@ -95,15 +95,15 @@ describe("モデルセレクターの Recent セクション", () => {
     fireEvent.click(container.querySelector(".button")!);
 
     // Recent section is visible
-    expect(container.textContent).toContain("Recent");
+    expect(document.body.textContent).toContain("Recent");
 
     // Recent row shows the provider name (OpenAI from allProvidersData)
-    const providerSpan = container.querySelector(".itemProvider");
+    const providerSpan = document.body.querySelector(".itemProvider");
     expect(providerSpan).toBeInTheDocument();
     expect(providerSpan!.textContent).toBe("OpenAI");
 
     // Search box shows the placeholder
-    const searchInput = container.querySelector(".searchInput");
+    const searchInput = document.body.querySelector(".searchInput");
     expect(searchInput?.getAttribute("placeholder")).toBeTruthy();
   });
 
@@ -130,17 +130,17 @@ describe("モデルセレクターの Recent セクション", () => {
     fireEvent.click(container.querySelector(".button")!);
 
     // Recent section shows GPT-4 with provider "OpenAI"
-    expect(container.textContent).toContain("Recent");
-    const providerSpan = container.querySelector(".itemProvider");
+    expect(document.body.textContent).toContain("Recent");
+    const providerSpan = document.body.querySelector(".itemProvider");
     expect(providerSpan).toBeInTheDocument();
     expect(providerSpan!.textContent).toBe("OpenAI");
 
     // Click the Recent entry (first .item in the panel)
-    const recentItem = container.querySelectorAll(".item")[0];
+    const recentItem = document.body.querySelectorAll(".item")[0];
     fireEvent.click(recentItem);
 
-    // Panel closes and trigger shows "GPT-4 · Low" (effort restored)
-    expect(container.querySelector(".effort")?.textContent).toBe("Low");
+    // Panel closes and dedicated effort selector shows "Low" (effort restored)
+    expect(screen.getByRole("button", { name: /^Select effort:/i }).textContent).toBe("Low");
 
     // Optional: verify sendMessage includes effort
     vi.mocked(postMessage).mockClear();
@@ -178,20 +178,20 @@ describe("モデルセレクターの Recent セクション", () => {
     fireEvent.click(container.querySelector(".button")!);
 
     // Recent section is visible
-    expect(container.textContent).toContain("Recent");
+    expect(document.body.textContent).toContain("Recent");
 
     // Type into the search input
-    const searchInput = container.querySelector(".searchInput") as HTMLInputElement;
+    const searchInput = document.body.querySelector(".searchInput") as HTMLInputElement;
     fireEvent.change(searchInput, { target: { value: "nonexistent" } });
 
     // Recent section hidden, "no matching models" message shown
-    expect(container.textContent).not.toContain("Recent");
-    expect(container.textContent).toContain("No matching models");
+    expect(document.body.textContent).not.toContain("Recent");
+    expect(document.body.textContent).toContain("No matching models");
 
     // Clear search
     fireEvent.change(searchInput!, { target: { value: "" } });
 
     // Recent section reappears
-    expect(container.textContent).toContain("Recent");
+    expect(document.body.textContent).toContain("Recent");
   });
 });

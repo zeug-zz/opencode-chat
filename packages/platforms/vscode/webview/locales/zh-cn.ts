@@ -91,6 +91,8 @@ export const zhCn: LocaleSchema = {
   "model.searchPlaceholder": "搜索模型...",
   "model.noSearchResults": "没有匹配的模型",
   "model.recent": "最近使用",
+  "model.effort.default": "默认",
+  "model.effort.select": "选择努力级别",
 
   // AgentSelector
   "agent.selectAgent": "选择代理",

@@ -89,6 +89,8 @@ export const en = {
   "model.searchPlaceholder": "Search models...",
   "model.noSearchResults": "No matching models",
   "model.recent": "Recent",
+  "model.effort.default": "Default",
+  "model.effort.select": "Select effort",
 
   // AgentSelector
   "agent.selectAgent": "Select agent",

@@ -91,6 +91,8 @@ export const ptBr: LocaleSchema = {
   "model.searchPlaceholder": "Pesquisar modelos...",
   "model.noSearchResults": "Nenhum modelo encontrado",
   "model.recent": "Recente",
+  "model.effort.default": "Padrão",
+  "model.effort.select": "Selecionar esforço",
 
   // AgentSelector
   "agent.selectAgent": "Selecionar agente",

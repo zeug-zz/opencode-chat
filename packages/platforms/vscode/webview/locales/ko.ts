@@ -91,6 +91,8 @@ export const ko: LocaleSchema = {
   "model.searchPlaceholder": "모델 검색...",
   "model.noSearchResults": "일치하는 모델이 없습니다",
   "model.recent": "최근",
+  "model.effort.default": "기본",
+  "model.effort.select": "노력 수준 선택",
 
   // AgentSelector
   "agent.selectAgent": "에이전트 선택",

@@ -646,4 +646,107 @@ describe("useProviders", () => {
       });
     });
   });
+
+  context("selectedModelVariants", () => {
+    it("authoritative metadata から variant リストを返すこと", () => {
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelVariants).toEqual([
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ]);
+    });
+
+    it("allProvidersData が null の場合、接続プロバイダのデータにフォールバックすること", () => {
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setProviders([openaiProvider]));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelVariants).toEqual([
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ]);
+    });
+
+    it("variant を持たないモデルでは空配列を返すこと", () => {
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "deepseek", modelID: "deepseek-reasoner" }));
+      expect(result.current.selectedModelVariants).toEqual([]);
+    });
+
+    it("モデル未選択の場合は空配列を返すこと", () => {
+      const { result } = renderHook(() => useProviders());
+      expect(result.current.selectedModelVariants).toEqual([]);
+    });
+
+    it("variant が disabled になるとリストから除外されること", () => {
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelVariants).toHaveLength(3);
+
+      const refreshed: AllProvidersData = {
+        ...allProvidersDataFixture,
+        all: allProvidersDataFixture.all.map((p) =>
+          p.id === "openai"
+            ? {
+                ...p,
+                models: {
+                  ...p.models,
+                  "gpt-5.4": {
+                    ...gpt54,
+                    variants: {
+                      low: { label: "Low", disabled: true },
+                      medium: { label: "Medium" },
+                      high: { label: "High" },
+                    },
+                  },
+                },
+              }
+            : p,
+        ),
+      };
+      act(() => result.current.setAllProvidersData(refreshed));
+      expect(result.current.selectedModelVariants).toEqual([
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ]);
+    });
+
+    it("variant が完全に削除されるとリストから消えること", () => {
+      const { result } = renderHook(() => useProviders());
+      act(() => result.current.setAllProvidersData(allProvidersDataFixture));
+      act(() => result.current.setSelectedModel({ providerID: "openai", modelID: "gpt-5.4" }));
+      expect(result.current.selectedModelVariants).toHaveLength(3);
+
+      const refreshed: AllProvidersData = {
+        ...allProvidersDataFixture,
+        all: allProvidersDataFixture.all.map((p) =>
+          p.id === "openai"
+            ? {
+                ...p,
+                models: {
+                  ...p.models,
+                  "gpt-5.4": {
+                    ...gpt54,
+                    variants: {
+                      low: { label: "Low" },
+                      medium: { label: "Medium" },
+                    },
+                  },
+                },
+              }
+            : p,
+        ),
+      };
+      act(() => result.current.setAllProvidersData(refreshed));
+      expect(result.current.selectedModelVariants).toEqual([
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+      ]);
+    });
+  });
 });

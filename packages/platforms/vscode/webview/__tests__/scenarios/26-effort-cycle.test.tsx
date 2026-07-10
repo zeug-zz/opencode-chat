@@ -153,12 +153,22 @@ async function setupWithVariants(
 
 /**
  * Returns the rendered text content of the ModelSelector button
- * (the `.label` wrapper in ModelSelector.module.css). This is
- * how the GUI exposes the cycled effort to the user.
+ * (the `.label` wrapper in ModelSelector.module.css). Effort is no
+ * longer part of this label — use `getEffortText()` for that.
  */
 function getModelButtonText(): string {
   const label = document.querySelector(".label");
   return label?.textContent ?? "";
+}
+
+/**
+ * Returns the text content of the ModelEffortSelector button, or
+ * null when no effort selector is rendered (unsupported model or
+ * no setter wired).
+ */
+function getEffortText(): string | null {
+  const btn = screen.queryByRole("button", { name: /^Select effort:/i });
+  return btn?.textContent ?? null;
 }
 
 /**
@@ -191,6 +201,11 @@ function makeBareProps(overrides: Record<string, unknown> = {}) {
     onSoundSettingChange: vi.fn(),
     agents: [],
     skills: [],
+    selectedModelVariants: [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
     ...overrides,
   };
 }
@@ -212,19 +227,17 @@ describe("Ctrl+T による effort サイクル", () => {
     it("最初の variant が選択されモデル名横に表示されること", async () => {
       const textarea = await setupWithVariants();
 
-      // Baseline: no effort text or separator visible.
-      expect(document.querySelector(".effort")).toBeNull();
-      expect(document.querySelector(".separator")).toBeNull();
+      // Baseline: effort selector shows "Default", model name has no suffix.
+      expect(getEffortText()).toBe("Default");
+      expect(getModelButtonText()).toBe("GPT-5.4");
 
       // Press Ctrl+T.
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
 
       // First effort is "low" / "Low".
-      expect(document.querySelector(".effort")?.textContent).toBe("Low");
-      expect(document.querySelector(".separator")).toBeInTheDocument();
-      // The button contains both the model name and the effort label.
-      expect(getModelButtonText()).toContain("GPT-5.4");
-      expect(getModelButtonText()).toContain("Low");
+      expect(getEffortText()).toBe("Low");
+      // The model button contains only the model name.
+      expect(getModelButtonText()).toBe("GPT-5.4");
     });
 
     it("default が preventDefault され、既存のテキスト入力が影響を受けないこと", async () => {
@@ -261,20 +274,19 @@ describe("Ctrl+T による effort サイクル", () => {
 
       // 1st: low
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("Low");
+      expect(getEffortText()).toBe("Low");
 
       // 2nd: medium
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("Medium");
+      expect(getEffortText()).toBe("Medium");
 
       // 3rd: high
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("High");
+      expect(getEffortText()).toBe("High");
 
-      // 4th: cycles back to unset — effort label and separator disappear
+      // 4th: cycles back to unset — effort selector shows "Default"
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")).toBeNull();
-      expect(document.querySelector(".separator")).toBeNull();
+      expect(getEffortText()).toBe("Default");
     });
 
     it("variant が 1 つだけのモデルでもサイクルして unset に戻ること", async () => {
@@ -282,12 +294,11 @@ describe("Ctrl+T による effort サイクル", () => {
 
       // Cycle once: should land on the only available variant.
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("Minimal");
+      expect(getEffortText()).toBe("Minimal");
 
       // Cycle again: returns to unset (single variant: last === first).
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")).toBeNull();
-      expect(document.querySelector(".separator")).toBeNull();
+      expect(getEffortText()).toBe("Default");
     });
 
     it("最後の variant から Ctrl+T で effort がクリアされること", async () => {
@@ -295,21 +306,19 @@ describe("Ctrl+T による effort サイクル", () => {
 
       // Cycle through all three: low → medium → high
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("Low");
+      expect(getEffortText()).toBe("Low");
 
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("Medium");
+      expect(getEffortText()).toBe("Medium");
 
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")?.textContent).toBe("High");
+      expect(getEffortText()).toBe("High");
 
-      // One more Ctrl+T: effort clears, separator gone
+      // One more Ctrl+T: effort clears, selector shows "Default"
       fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-      expect(document.querySelector(".effort")).toBeNull();
-      expect(document.querySelector(".separator")).toBeNull();
+      expect(getEffortText()).toBe("Default");
 
-      // Subsequent send omits effort (verified by ModelSelector not
-      // showing effort text). The label contains only the model name.
+      // The model button contains only the model name (no effort text).
       expect(document.querySelector(".modelName")?.textContent).toBeTruthy();
       expect(getModelButtonText()).not.toContain("Low");
       expect(getModelButtonText()).not.toContain("Medium");
@@ -341,8 +350,7 @@ describe("Ctrl+T による effort サイクル", () => {
       );
 
       // Pre-condition: no effort UI present.
-      expect(document.querySelector(".effort")).toBeNull();
-      expect(document.querySelector(".separator")).toBeNull();
+      expect(getEffortText()).toBeNull();
 
       const event = new KeyboardEvent("keydown", {
         key: "t",
@@ -361,8 +369,7 @@ describe("Ctrl+T による effort サイクル", () => {
       // Unsupported: no cycle, no preventDefault.
       expect(event.defaultPrevented).toBe(false);
       // No effort rendered.
-      expect(document.querySelector(".effort")).toBeNull();
-      expect(document.querySelector(".separator")).toBeNull();
+      expect(getEffortText()).toBeNull();
     });
 
     it("Cmd+Ctrl+T (metaKey) はサイクルせず preventDefault もしないこと", async () => {
@@ -383,7 +390,8 @@ describe("Ctrl+T による effort サイクル", () => {
       // hijack the user shortcut. We don't prevent default so the
       // platform/browser can still handle Cmd+T (open new tab).
       expect(event.defaultPrevented).toBe(false);
-      expect(document.querySelector(".effort")).toBeNull();
+      // Effort selector still shows "Default" — no cycle occurred.
+      expect(getEffortText()).toBe("Default");
     });
 
     it("Ctrl+Alt+T (altKey) はサイクルせず preventDefault もしないこと", async () => {
@@ -401,7 +409,7 @@ describe("Ctrl+T による effort サイクル", () => {
       });
 
       expect(event.defaultPrevented).toBe(false);
-      expect(document.querySelector(".effort")).toBeNull();
+      expect(getEffortText()).toBe("Default");
     });
   });
 
@@ -426,7 +434,8 @@ describe("Ctrl+T による effort サイクル", () => {
       });
 
       expect(event.defaultPrevented).toBe(false);
-      expect(document.querySelector(".effort")).toBeNull();
+      // No setter → no effort selector rendered.
+      expect(getEffortText()).toBeNull();
       view.unmount();
     });
 
@@ -447,6 +456,81 @@ describe("Ctrl+T による effort サイクル", () => {
       expect((textarea as HTMLTextAreaElement).value).toContain("hello");
       view.unmount();
     });
+  });
+});
+
+// ============================================================
+// Effort menu interaction: selecting from the clickable menu
+// (not Ctrl+T) must update the UI, close the popover, preserve
+// draft text, restore textarea focus, and allow Default to
+// clear the explicit override.
+// ============================================================
+
+describe("Effort menu interaction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("selecting a variant from the menu updates the effort label and preserves draft text and focus", async () => {
+    const textarea = await setupWithVariants();
+    const user = userEvent.setup();
+
+    await user.type(textarea, "Draft message");
+
+    // Open the effort menu
+    const effortButton = screen.getByRole("button", { name: /^Select effort:/i });
+    await user.click(effortButton);
+
+    // Select "Low"
+    await user.click(screen.getByText("Low"));
+
+    // Effort label reflects the choice
+    expect(getEffortText()).toBe("Low");
+
+    // Draft text preserved
+    expect(textarea).toHaveValue("Draft message");
+
+    // Focus restored — can continue typing
+    await user.type(textarea, " and more");
+    expect(textarea).toHaveValue("Draft message and more");
+  });
+
+  it("selecting Default from the menu clears the explicit effort", async () => {
+    const textarea = await setupWithVariants();
+    const user = userEvent.setup();
+
+    // First set an explicit effort via Ctrl+T
+    fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
+    expect(getEffortText()).toBe("Low");
+
+    // Open the effort menu
+    const effortButton = screen.getByRole("button", { name: /^Select effort:/i });
+    await user.click(effortButton);
+
+    // Click the Default radio option (first in the radiogroup)
+    const radios = screen.getAllByRole("radio");
+    await user.click(radios[0]);
+
+    // Effort shows "Default" — override cleared
+    expect(getEffortText()).toBe("Default");
+  });
+
+  it("menu click closes the popover panel", async () => {
+    const textarea = await setupWithVariants();
+    const user = userEvent.setup();
+
+    // Open menu
+    const effortButton = screen.getByRole("button", { name: /^Select effort:/i });
+    await user.click(effortButton);
+
+    // Panel is visible
+    expect(screen.getByRole("radiogroup")).toBeInTheDocument();
+
+    // Select a variant
+    await user.click(screen.getByText("Medium"));
+
+    // Panel is closed
+    expect(screen.queryByRole("radiogroup")).toBeNull();
   });
 });
 
@@ -477,8 +561,8 @@ describe("永続化された effort の復元と送信ペイロード (Task 4.1)
     });
     await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
 
-    // ModelSelector shows "Low" effort label restored from persistence.
-    expect(document.querySelector(".effort")?.textContent).toBe("Low");
+    // ModelEffortSelector shows "Low" effort label restored from persistence.
+    expect(getEffortText()).toBe("Low");
 
     // Send a message — verify effort is included in the payload.
     vi.mocked(postMessage).mockClear();
@@ -572,9 +656,8 @@ describe("永続化された effort の復元と送信ペイロード (Task 4.1)
     });
     await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
 
-    // Effort remains unset — stale value is ignored.
-    expect(document.querySelector(".effort")).toBeNull();
-    expect(document.querySelector(".separator")).toBeNull();
+    // Effort remains unset — stale value is ignored, selector shows "Default".
+    expect(getEffortText()).toBe("Default");
 
     // Send message — effort must NOT appear in payload.
     vi.mocked(postMessage).mockClear();

@@ -91,6 +91,8 @@ export const es: LocaleSchema = {
   "model.searchPlaceholder": "Buscar modelos...",
   "model.noSearchResults": "No hay modelos coincidentes",
   "model.recent": "Reciente",
+  "model.effort.default": "Predeterminado",
+  "model.effort.select": "Seleccionar esfuerzo",
 
   // AgentSelector
   "agent.selectAgent": "Seleccionar agente",

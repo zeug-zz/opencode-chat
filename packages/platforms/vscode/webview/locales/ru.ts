@@ -91,6 +91,8 @@ export const ru: LocaleSchema = {
   "model.searchPlaceholder": "Поиск моделей...",
   "model.noSearchResults": "Нет подходящих моделей",
   "model.recent": "Недавние",
+  "model.effort.default": "По умолчанию",
+  "model.effort.select": "Выбрать уровень усилий",
 
   // AgentSelector
   "agent.selectAgent": "Выбрать агента",

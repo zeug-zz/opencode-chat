@@ -91,6 +91,8 @@ export const zhTw: LocaleSchema = {
   "model.searchPlaceholder": "搜尋模型...",
   "model.noSearchResults": "找不到相符的模型",
   "model.recent": "最近使用",
+  "model.effort.default": "預設",
+  "model.effort.select": "選擇努力級別",
 
   // AgentSelector
   "agent.selectAgent": "選擇代理",

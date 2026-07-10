@@ -7,13 +7,12 @@ import type {
   SoundEventType,
   SoundSettings,
 } from "@opencode-chat/core";
-import { getModelVariants } from "@opencode-chat/core";
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useClickOutside } from "../../../hooks/useClickOutside";
 import { useInputHistory } from "../../../hooks/useInputHistory";
 import type { LocaleSetting } from "../../../locales";
 import { useLocale } from "../../../locales";
-import type { AllProvidersData, FileAttachment, ModelInfo } from "../../../vscode-api";
+import type { AllProvidersData, FileAttachment } from "../../../vscode-api";
 import { postMessage } from "../../../vscode-api";
 import { IconButton } from "../../atoms/IconButton";
 import { ChevronRightIcon, GearIcon, SendIcon, StopIcon, TerminalIcon } from "../../atoms/icons";
@@ -22,6 +21,7 @@ import { AgentPopup } from "../../molecules/AgentPopup";
 import { AgentSelector } from "../../molecules/AgentSelector";
 import { FileAttachmentBar } from "../../molecules/FileAttachmentBar";
 import { HashFilePopup } from "../../molecules/HashFilePopup";
+import { ModelEffortSelector } from "../../molecules/ModelEffortSelector";
 import { ModelSelector } from "../../molecules/ModelSelector";
 import { SkillPopup } from "../../molecules/SkillPopup";
 import { ToolConfigPanel } from "../../organisms/ToolConfigPanel";
@@ -36,15 +36,15 @@ type Props = {
   allProvidersData: AllProvidersData | null;
   selectedModel: { providerID: string; modelID: string } | null;
   onModelSelect: (model: { providerID: string; modelID: string }) => void;
-  /**
-   * Optional explicit model effort/variant for the selected model. When
-   * set, the `ModelSelector` displays the effort label compactly next
-   * to the selected model. When unset, no effort text or separator is
-   * shown — the selector falls back to displaying the model name only.
-   * Display-only at this layer; click/cycle handling lives in the
-   * parent (task 2.3) and protocol forwarding lives in task 3.1+.
-   */
   selectedModelEffort?: ModelVariantRef;
+  /**
+   * Normalized variant list for the currently selected model,
+   * derived once by `useProviders` from authoritative provider
+   * metadata. Shared between the effort menu and Ctrl+T cycling.
+   * An empty array indicates an unsupported model — no menu is
+   * rendered and cycling is a no-op.
+   */
+  selectedModelVariants: ModelVariantRef[];
   /**
    * Setter for the explicit model effort/variant. The webview's
    * `useProviders` hook normalizes the value against the selected
@@ -89,6 +89,7 @@ export function InputArea({
   onModelSelect,
   selectedModelEffort,
   onModelEffortSelect,
+  selectedModelVariants,
   selectedPrimaryAgent,
   onPrimaryAgentSelect,
   openEditors,
@@ -374,21 +375,16 @@ export function InputArea({
 
   // Ctrl+T: cycle model effort for the selected model.
   //
-  // Resolves the selected model's `ModelInfo` from the most
-  // authoritative available source (allProvidersData.all first,
-  // then providers) and derives valid effort choices via
-  // `getModelVariants`, which already filters `disabled: true` and
-  // normalizes labels. Returns true when a cycle action was
-  // performed, so the keydown handler can call `preventDefault`
-  // only in that case. For unsupported / no-variants models the
-  // callback returns false and the event falls through to the
-  // existing textarea behavior — `executeShell` and the default
-  // key handling are not affected.
+  // Uses the shared `selectedModelVariants` prop from `useProviders`
+  // so cycling and the effort menu always see the same capability set.
+  // Returns true when a cycle action was performed, so the keydown
+  // handler can call `preventDefault` only in that case. For
+  // unsupported / no-variants models the callback returns false and
+  // the event falls through to the existing textarea behavior.
   const handleCycleModelEffort = useCallback((): boolean => {
     if (!onModelEffortSelect) return false;
-    const info = findSelectedModelInfo(selectedModel, allProvidersData, providers);
-    const validVariants = getModelVariants(info);
-    if (validVariants.length === 0) return false;
+    const validVariants = selectedModelVariants;
+    if (!validVariants || validVariants.length === 0) return false;
 
     const currentIndex = selectedModelEffort ? validVariants.findIndex((v) => v.id === selectedModelEffort.id) : -1;
 
@@ -403,7 +399,7 @@ export function InputArea({
       onModelEffortSelect(validVariants[currentIndex + 1]);
     }
     return true;
-  }, [onModelEffortSelect, selectedModel, allProvidersData, providers, selectedModelEffort]);
+  }, [onModelEffortSelect, selectedModelVariants, selectedModelEffort]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -799,41 +795,61 @@ export function InputArea({
 
         <div className={styles.actions}>
           <div className={styles.actionsLeft}>
-            <ModelSelector
-              providers={providers}
-              allProvidersData={allProvidersData}
-              selectedModel={selectedModel}
-              onSelect={onModelSelect}
-              selectedModelEffort={selectedModelEffort}
-              recentModels={recentModels}
-            />
-            <AgentSelector agents={agents} selectedAgent={selectedPrimaryAgent} onSelect={onPrimaryAgentSelect} />
-            <Popover
-              trigger={({ open, toggle }) => (
-                <IconButton variant="muted" onClick={toggle} title={t["input.settings"]}>
-                  <GearIcon />
-                  <span className={`${styles.chevron} ${open ? styles.expanded : ""}`}>
-                    <ChevronRightIcon />
-                  </span>
-                </IconButton>
-              )}
-              panel={({ close }) => (
-                <ToolConfigPanel
-                  paths={openCodePaths}
-                  onOpenConfigFile={onOpenConfigFile}
-                  onClose={close}
-                  localeSetting={localeSetting}
-                  onLocaleSettingChange={onLocaleSettingChange}
-                  soundSettings={soundSettings}
-                  onSoundSettingChange={onSoundSettingChange}
+            <div className={`${styles.tool} ${styles.toolModel}`}>
+              <ModelSelector
+                providers={providers}
+                allProvidersData={allProvidersData}
+                selectedModel={selectedModel}
+                onSelect={onModelSelect}
+                recentModels={recentModels}
+              />
+            </div>
+            {onModelEffortSelect != null && selectedModelVariants.length > 0 && (
+              <div className={`${styles.tool} ${styles.toolEffort}`}>
+                <ModelEffortSelector
+                  variants={selectedModelVariants}
+                  selectedEffort={selectedModelEffort}
+                  onSelect={onModelEffortSelect}
+                  onFocus={() => textareaRef.current?.focus()}
                 />
-              )}
-            />
-            <IconButton variant="muted" onClick={onOpenTerminal} title={t["input.openTerminal"]}>
-              <TerminalIcon />
-            </IconButton>
+              </div>
+            )}
+            <div className={`${styles.tool} ${styles.toolAgent}`}>
+              <AgentSelector agents={agents} selectedAgent={selectedPrimaryAgent} onSelect={onPrimaryAgentSelect} />
+            </div>
+            <div className={`${styles.tool} ${styles.toolSettings}`}>
+              <Popover
+                trigger={({ open, toggle }) => (
+                  <IconButton variant="muted" onClick={toggle} title={t["input.settings"]}>
+                    <GearIcon />
+                    <span className={`${styles.chevron} ${open ? styles.expanded : ""}`}>
+                      <ChevronRightIcon />
+                    </span>
+                  </IconButton>
+                )}
+                panel={({ close }) => (
+                  <ToolConfigPanel
+                    paths={openCodePaths}
+                    onOpenConfigFile={onOpenConfigFile}
+                    onClose={close}
+                    localeSetting={localeSetting}
+                    onLocaleSettingChange={onLocaleSettingChange}
+                    soundSettings={soundSettings}
+                    onSoundSettingChange={onSoundSettingChange}
+                  />
+                )}
+              />
+            </div>
+            <div className={`${styles.tool} ${styles.toolTerminal}`}>
+              <IconButton variant="muted" onClick={onOpenTerminal} title={t["input.openTerminal"]}>
+                <TerminalIcon />
+              </IconButton>
+            </div>
             {contextMemoryText && (
-              <span className={styles.contextMemory} title={t["input.contextMemory"]}>
+              <span
+                className={`${styles.contextMemory} ${styles.tool} ${styles.toolContext}`}
+                title={t["input.contextMemory"]}
+              >
                 {contextMemoryText}
               </span>
             )}
@@ -861,37 +877,4 @@ export function InputArea({
 // ============================================================
 // Internal helpers
 // ============================================================
-
-/**
- * Resolve the full `ModelInfo` for a `{ providerID, modelID }` pair
- * from the most authoritative available source.
- *
- * - Prefers `allProvidersData.all` (which carries the `variants` map
- *   and is the source of truth for effort choices).
- * - Falls back to `providers` (the connected-only list) when the
- *   all-providers payload is missing or doesn't contain the target.
- *
- * Returns `null` when the model cannot be resolved from either
- * source. Callers must treat that as "no metadata available" and
- * leave effort cycling disabled for that model.
- *
- * Mirrors the resolver used by `useProviders` so the cycle logic
- * here sees the same metadata view as the invalidation effect.
- */
-function findSelectedModelInfo(
-  target: { providerID: string; modelID: string } | null,
-  allProvidersData: AllProvidersData | null,
-  providers: ProviderInfo[],
-): ModelInfo | null {
-  if (!target) return null;
-  const lookup = (list: ProviderInfo[] | null | undefined): ModelInfo | null => {
-    if (!list) return null;
-    for (const provider of list) {
-      if (provider.id !== target.providerID) continue;
-      const model = provider.models?.[target.modelID];
-      if (model) return model;
-    }
-    return null;
-  };
-  return lookup(allProvidersData?.all) ?? lookup(providers);
-}
+// (none currently)

@@ -79,6 +79,24 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-07-10: Model Effort Menu + Toolbar Density (`add-model-effort-menu`)
+
+Dedicated effort control for models that advertise variants; keeps sticky per-model selection and `Ctrl+T`.
+
+**UI** (`webview/components/molecules/ModelEffortSelector/` + `InputArea.tsx`):
+- Capability-gated effort menu (`Default` + advertised variants) beside the model selector
+- Effort value moved out of the model-selector label (no more `Model · Low` suffix)
+- Tighter toolbar spacing; progressive hide of secondary tools as the chat pane narrows
+- Popovers portaled to `document.body` with fixed positioning so `overflow: hidden` on the toolbar no longer clips menus
+
+**State** (`webview/hooks/useProviders.ts`):
+- Exposes shared `selectedModelVariants` from authoritative provider metadata (+ connected fallback)
+- Existing `modelEffortByModel` persistence / validation / cycle-to-default semantics unchanged
+
+**OpenSpec**: active change `openspec/changes/add-model-effort-menu/` (proposal, design, delta specs, tasks complete). Validate with `openspec validate add-model-effort-menu --strict`.
+
+**Verified**: webview tests green, Biome clean, build + VSIX package install.
+
 ### 2026-07-06: Streaming Reasoning CoT Fix (archived: `2026-07-06-stream-reasoning-cot`)
 
 Streaming reasoning/chain-of-thought display for thinking models (DeepSeek V4 Pro, Kimi, GLM).

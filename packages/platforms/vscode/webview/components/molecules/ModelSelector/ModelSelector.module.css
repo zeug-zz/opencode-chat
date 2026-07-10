@@ -1,8 +1,10 @@
 .button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
+  gap: 1px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 2px;
   background: none;
   border: none;
   color: var(--vscode-descriptionForeground);
@@ -20,7 +22,8 @@
 .label {
   display: inline-flex;
   align-items: baseline;
-  max-width: 240px;
+  max-width: min(240px, 100%);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -33,25 +36,11 @@
   min-width: 0;
 }
 
-.separator {
-  margin: 0 4px;
-  opacity: 0.55;
-  flex-shrink: 0;
-}
-
-.effort {
-  flex-shrink: 0;
-  color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
-  opacity: 0.85;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 .chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: 12px;
   flex-shrink: 0;
   transition: transform 0.15s ease;
 }

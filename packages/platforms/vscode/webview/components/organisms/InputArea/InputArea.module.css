@@ -10,6 +10,8 @@
   border: 1px solid var(--vscode-input-border);
   border-radius: 4px;
   padding: 4px 8px;
+  container-type: inline-size;
+  container-name: input-actions;
 }
 
 .wrapper:focus-within {
@@ -59,18 +61,73 @@
 
 .actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
+  gap: 4px;
   width: 100%;
+  min-width: 0;
   padding-top: 4px;
   position: relative;
 }
 
 .actionsLeft {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 4px;
+  gap: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   position: relative;
+}
+
+.tool {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+.toolModel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.toolModel > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@container input-actions (max-width: 300px) {
+  .toolContext {
+    display: none;
+  }
+}
+
+@container input-actions (max-width: 260px) {
+  .toolTerminal {
+    display: none;
+  }
+}
+
+@container input-actions (max-width: 220px) {
+  .toolSettings {
+    display: none;
+  }
+}
+
+@container input-actions (max-width: 180px) {
+  .toolAgent {
+    display: none;
+  }
+}
+
+@container input-actions (max-width: 140px) {
+  .toolEffort {
+    display: none;
+  }
 }
 
 .sendButton {

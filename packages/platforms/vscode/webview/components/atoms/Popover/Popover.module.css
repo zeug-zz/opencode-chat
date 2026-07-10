@@ -1,3 +1,21 @@
 .root {
   position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.floating {
+  position: fixed;
+  z-index: 1000;
+}
+
+.floating > * {
+  position: static !important;
+  bottom: auto !important;
+  left: auto !important;
+  right: auto !important;
+  top: auto !important;
+  margin-bottom: 0 !important;
 }

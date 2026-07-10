@@ -91,6 +91,8 @@ export const ja: LocaleSchema = {
   "model.searchPlaceholder": "モデルを検索...",
   "model.noSearchResults": "一致するモデルがありません",
   "model.recent": "最近",
+  "model.effort.default": "デフォルト",
+  "model.effort.select": "努力レベルを選択",
 
   // AgentSelector
   "agent.selectAgent": "エージェントを選択",
