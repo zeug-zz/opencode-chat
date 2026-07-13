@@ -105,6 +105,11 @@ export const zhTw: LocaleSchema = {
   // ShellResultView
   "shell.title": "Shell",
 
+  // MCP setting
+  "config.mcp": "MCP",
+  "config.mcpEmpty": "未設定 MCP 伺服器。請透過專案設定或全域設定進行設定。",
+  "config.mcpTrust": "使用者安裝的 MCP 工具未被 Scout 的編輯/Shell 拒絕功能沙箱化。",
+
   // ToolConfigPanel
   "config.title": "設定",
   "config.projectConfig": "專案設定",

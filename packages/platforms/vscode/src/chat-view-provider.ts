@@ -325,6 +325,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: "skills", skills });
         break;
       }
+      // --- MCP ---
+      case "getMcpStatus": {
+        const mcpStatus = await this.agent.getMcpStatus();
+        this.postMessage({ type: "mcpStatus", status: mcpStatus });
+        break;
+      }
+      case "connectMcp": {
+        await this.agent.connectMcp(message.server);
+        const connectStatus = await this.agent.getMcpStatus();
+        this.postMessage({ type: "mcpStatus", status: connectStatus });
+        break;
+      }
+      case "disconnectMcp": {
+        await this.agent.disconnectMcp(message.server);
+        const disconnectStatus = await this.agent.getMcpStatus();
+        this.postMessage({ type: "mcpStatus", status: disconnectStatus });
+        break;
+      }
       case "shareSession": {
         const session = await this.agent.shareSession(message.sessionId);
         this.activeSession = session;

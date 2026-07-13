@@ -22,6 +22,7 @@ export const workspace = {
 export const window = {
   registerWebviewViewProvider: vi.fn(() => ({ dispose: vi.fn() })),
   showWarningMessage: vi.fn(),
+  showErrorMessage: vi.fn(),
   showTextDocument: vi.fn().mockResolvedValue(undefined),
   activeTextEditor: undefined as unknown,
   onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
@@ -49,7 +50,12 @@ export const commands = {
 
 // --- l10n ---
 export const l10n = {
-  t: vi.fn((s: string) => s),
+  t: vi.fn((template: string, ...args: unknown[]) => {
+    return template.replace(/\{(\d+)\}/g, (_match, index) => {
+      const arg = args[Number(index)];
+      return arg !== undefined ? String(arg) : _match;
+    });
+  }),
 };
 
 // --- Uri ---

@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentInfo, ChatSession, SkillInfo, TodoItem } from "@opencode-chat/core";
+import type { AgentCapabilities, AgentEvent, AgentInfo, ChatSession, SkillInfo, TodoItem } from "@opencode-chat/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState } from "./components/molecules/EmptyState";
 import { FileChangesHeader } from "./components/molecules/FileChangesHeader";
@@ -11,6 +11,7 @@ import { SessionList } from "./components/organisms/SessionList";
 import { AppContextProvider, type AppContextValue } from "./contexts/AppContext";
 import { useFileChanges } from "./hooks/useFileChanges";
 import { useLocale } from "./hooks/useLocale";
+import { useMcp } from "./hooks/useMcp";
 import { useMessages } from "./hooks/useMessages";
 import { usePermissions } from "./hooks/usePermissions";
 import { useProviders } from "./hooks/useProviders";
@@ -75,6 +76,10 @@ export function App() {
     state: string;
     directory: string;
   } | null>(null);
+
+  const [capabilities, setCapabilities] = useState<AgentCapabilities | undefined>(undefined);
+
+  const mcp = useMcp(capabilities);
 
   const [contextMemory, setContextMemory] = useState<string>("");
   const awaitingCompactionContextRef = useRef<string | null>(null);
@@ -266,6 +271,7 @@ export function App() {
           locale.setVscodeLanguage(data.vscodeLanguage);
           break;
         case "init":
+          setCapabilities(data.capabilities);
           locale.setVscodeLanguage(data.locale);
           setOpenCodePaths(data.paths);
           break;
@@ -316,6 +322,10 @@ export function App() {
         }
         case "difitAvailable": {
           setDifitAvailable(data.available);
+          break;
+        }
+        case "mcpStatus": {
+          mcp.handleMcpStatus(data.status);
           break;
         }
       }
@@ -677,6 +687,9 @@ export function App() {
                   onSoundSettingChange={sound.handleSoundSettingChange}
                   agents={agents}
                   skills={skills}
+                  mcpServers={capabilities?.mcp ? mcp.servers : null}
+                  onMcpToggle={capabilities?.mcp ? mcp.toggle : undefined}
+                  onMcpRefresh={capabilities?.mcp ? mcp.refresh : undefined}
                 />
               )}
             </>

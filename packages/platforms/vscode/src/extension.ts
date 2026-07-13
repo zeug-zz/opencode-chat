@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { OpenCodeAgent } from "@opencode-chat/agent-opencode";
 import * as vscode from "vscode";
 import { ChatViewProvider } from "./chat-view-provider";
+import { classifyConnectError } from "./connect-error";
 import { DiffReviewManager } from "./diff-review-manager";
 import { VscodePlatformServices } from "./vscode-platform-services";
 
@@ -21,14 +22,13 @@ export async function activate(context: vscode.ExtensionContext) {
   // プロセスのカレントディレクトリを変更してからサーバーを起動する。
   const originalCwd = process.cwd();
   process.chdir(workspaceFolder);
+  let connectFailed = false;
   try {
     agent.workspaceFolder = workspaceFolder;
     await agent.connect();
   } catch (error) {
-    const isNotFound =
-      error instanceof Error &&
-      (("code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") || error.message.includes("ENOENT"));
-    if (isNotFound) {
+    const kind = classifyConnectError(error);
+    if (kind === "not-found") {
       vscode.window.showWarningMessage(
         vscode.l10n.t(
           'OpenCode Chat: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
@@ -36,7 +36,18 @@ export async function activate(context: vscode.ExtensionContext) {
       );
       return;
     }
-    throw error;
+    connectFailed = true;
+    if (kind === "database-locked") {
+      vscode.window.showErrorMessage(
+        vscode.l10n.t(
+          "OpenCode Chat: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
+        ),
+      );
+    } else {
+      const message = error instanceof Error ? error.message : String(error);
+      const truncated = message.length > 500 ? `${message.slice(0, 500)}...` : message;
+      vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Chat: Failed to start companion server. {0}", truncated));
+    }
   } finally {
     process.chdir(originalCwd);
   }
@@ -71,6 +82,13 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(new vscode.Disposable(() => agent.disconnect()));
+
+  // When connectFailed is true (database-locked or other non-ENOENT), the agent
+  // has no client. The webview provider is still registered so the sidebar is
+  // not an infinite spinner. The ready handler will throw from agent methods
+  // (getPath, listSessions, etc.) with "OpenCode client is not connected".
+  // Those errors are caught by ChatViewProvider.handleWebviewMessage and
+  // logged. The webview shows an error surface rather than hanging silently.
 }
 
 export function deactivate() {

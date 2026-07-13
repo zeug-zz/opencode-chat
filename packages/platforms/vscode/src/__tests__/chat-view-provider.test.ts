@@ -1059,6 +1059,100 @@ describe("ChatViewProvider", () => {
   });
 
   // ============================================================
+  // MCP handlers
+  // ============================================================
+
+  describe("MCP handlers", () => {
+    describe("getMcpStatus", () => {
+      it("should call agent.getMcpStatus and post mcpStatus", async () => {
+        const status = { "my-server": { connected: true } };
+        mockAgent.getMcpStatus.mockResolvedValue(status);
+
+        const { postMessage, sendMessage } = setupProvider(mockAgent);
+        await sendMessage({ type: "getMcpStatus" });
+
+        expect(mockAgent.getMcpStatus).toHaveBeenCalled();
+        expect(postMessage).toHaveBeenCalledWith({ type: "mcpStatus", status });
+      });
+    });
+
+    describe("connectMcp", () => {
+      it("should call agent.connectMcp and refresh status", async () => {
+        const status = { "my-server": { connected: true } };
+        mockAgent.getMcpStatus.mockResolvedValue(status);
+
+        const { postMessage, sendMessage } = setupProvider(mockAgent);
+        await sendMessage({ type: "connectMcp", server: "my-server" });
+
+        expect(mockAgent.connectMcp).toHaveBeenCalledWith("my-server");
+        expect(mockAgent.getMcpStatus).toHaveBeenCalled();
+        expect(postMessage).toHaveBeenCalledWith({ type: "mcpStatus", status });
+      });
+    });
+
+    describe("disconnectMcp", () => {
+      it("should call agent.disconnectMcp and refresh status", async () => {
+        const status = { "my-server": { connected: false } };
+        mockAgent.getMcpStatus.mockResolvedValue(status);
+
+        const { postMessage, sendMessage } = setupProvider(mockAgent);
+        await sendMessage({ type: "disconnectMcp", server: "my-server" });
+
+        expect(mockAgent.disconnectMcp).toHaveBeenCalledWith("my-server");
+        expect(mockAgent.getMcpStatus).toHaveBeenCalled();
+        expect(postMessage).toHaveBeenCalledWith({ type: "mcpStatus", status });
+      });
+    });
+
+    describe("error handling", () => {
+      it("should catch getMcpStatus errors via existing error path", async () => {
+        mockAgent.getMcpStatus.mockRejectedValue(new Error("MCP error"));
+        const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const { sendMessage } = setupProvider(mockAgent);
+        await expect(sendMessage({ type: "getMcpStatus" })).resolves.toBeUndefined();
+
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Error handling message 'getMcpStatus'"),
+          expect.any(Error),
+        );
+
+        consoleSpy.mockRestore();
+      });
+
+      it("should catch connectMcp errors via existing error path", async () => {
+        mockAgent.connectMcp.mockRejectedValue(new Error("Connect error"));
+        const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const { sendMessage } = setupProvider(mockAgent);
+        await expect(sendMessage({ type: "connectMcp", server: "bad-server" })).resolves.toBeUndefined();
+
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Error handling message 'connectMcp'"),
+          expect.any(Error),
+        );
+
+        consoleSpy.mockRestore();
+      });
+
+      it("should catch disconnectMcp errors via existing error path", async () => {
+        mockAgent.disconnectMcp.mockRejectedValue(new Error("Disconnect error"));
+        const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const { sendMessage } = setupProvider(mockAgent);
+        await expect(sendMessage({ type: "disconnectMcp", server: "bad-server" })).resolves.toBeUndefined();
+
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Error handling message 'disconnectMcp'"),
+          expect.any(Error),
+        );
+
+        consoleSpy.mockRestore();
+      });
+    });
+  });
+
+  // ============================================================
   // shareSession
   // ============================================================
 

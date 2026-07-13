@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  McpStatus,
   ModelVariantRef,
   ProviderInfo,
   SkillInfo,
@@ -76,6 +77,9 @@ type Props = {
   agents: AgentInfo[];
   skills: SkillInfo[];
   contextMemoryText?: string;
+  mcpServers?: McpStatus | null;
+  onMcpToggle?: (server: string, enabled: boolean) => void;
+  onMcpRefresh?: () => void;
 };
 
 export function InputArea({
@@ -108,6 +112,9 @@ export function InputArea({
   skills,
   recentModels,
   contextMemoryText,
+  mcpServers,
+  onMcpToggle,
+  onMcpRefresh,
 }: Props) {
   const t = useLocale();
   const [text, setText] = useState("");
@@ -820,7 +827,14 @@ export function InputArea({
             <div className={`${styles.tool} ${styles.toolSettings}`}>
               <Popover
                 trigger={({ open, toggle }) => (
-                  <IconButton variant="muted" onClick={toggle} title={t["input.settings"]}>
+                  <IconButton
+                    variant="muted"
+                    onClick={() => {
+                      if (!open) onMcpRefresh?.();
+                      toggle();
+                    }}
+                    title={t["input.settings"]}
+                  >
                     <GearIcon />
                     <span className={`${styles.chevron} ${open ? styles.expanded : ""}`}>
                       <ChevronRightIcon />
@@ -836,6 +850,8 @@ export function InputArea({
                     onLocaleSettingChange={onLocaleSettingChange}
                     soundSettings={soundSettings}
                     onSoundSettingChange={onSoundSettingChange}
+                    mcpServers={mcpServers}
+                    onMcpToggle={onMcpToggle}
                   />
                 )}
               />

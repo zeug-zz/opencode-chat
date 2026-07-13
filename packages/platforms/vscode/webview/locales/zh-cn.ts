@@ -105,6 +105,11 @@ export const zhCn: LocaleSchema = {
   // ShellResultView
   "shell.title": "Shell",
 
+  // MCP setting
+  "config.mcp": "MCP",
+  "config.mcpEmpty": "未配置 MCP 服务器。请通过项目配置或全局配置进行配置。",
+  "config.mcpTrust": "用户安装的 MCP 工具未被 Scout 的编辑/Shell 拒绝功能沙箱化。",
+
   // ToolConfigPanel
   "config.title": "设置",
   "config.projectConfig": "项目配置",

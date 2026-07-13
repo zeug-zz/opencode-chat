@@ -105,6 +105,12 @@ export const ja: LocaleSchema = {
   // ShellResultView
   "shell.title": "シェル",
 
+  // MCP setting
+  "config.mcp": "MCP",
+  "config.mcpEmpty": "MCPサーバーが設定されていません。プロジェクト設定またはグローバル設定から設定してください。",
+  "config.mcpTrust":
+    "ユーザーがインストールしたMCPツールはScoutの編集/シェル拒否によってサンドボックス化されていません。",
+
   // ToolConfigPanel
   "config.title": "設定",
   "config.projectConfig": "プロジェクト設定",

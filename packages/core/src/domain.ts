@@ -561,7 +561,22 @@ export type SendMessageOptions = {
 // MCP
 // ============================================================
 
-export type McpStatus = Record<string, unknown>;
+export type McpServerLifecycle =
+  | "connected"
+  | "disabled"
+  | "failed"
+  | "needs_auth"
+  | "needs_client_registration"
+  | "unknown";
+
+export type McpServerStatus = {
+  connected: boolean; // true iff status === "connected"
+  status: McpServerLifecycle;
+  error?: string;
+  tools?: string[];
+};
+
+export type McpStatus = Record<string, McpServerStatus>;
 
 // ============================================================
 // Tool

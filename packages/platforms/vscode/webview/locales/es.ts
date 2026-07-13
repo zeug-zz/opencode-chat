@@ -105,6 +105,13 @@ export const es: LocaleSchema = {
   // ShellResultView
   "shell.title": "Shell",
 
+  // MCP setting
+  "config.mcp": "MCP",
+  "config.mcpEmpty":
+    "No hay servidores MCP configurados. Configura mediante Configuración del Proyecto o Configuración Global.",
+  "config.mcpTrust":
+    "Las herramientas MCP instaladas por el usuario no están aisladas por las denegaciones de edición/shell de Scout.",
+
   // ToolConfigPanel
   "config.title": "Configuración",
   "config.projectConfig": "Configuración del proyecto",

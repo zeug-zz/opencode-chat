@@ -35,6 +35,8 @@ export type UIPersistedState = {
   modelEffortByModel?: Record<string, string>;
   /** Most-recent-first list of recently selected models, capped at five. */
   recentModels?: Array<{ providerID: string; modelID: string }>;
+  /** Per-server MCP connection preference, keyed by server name. Applied after companion ready. */
+  mcpEnabledByServer?: Record<string, boolean>;
 };
 
 /** Platform-specific services */

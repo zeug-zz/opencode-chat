@@ -1,10 +1,13 @@
-import type { SoundEventSetting, SoundEventType, SoundSettings } from "@opencode-chat/core";
+import type { McpServerStatus, McpStatus, SoundEventSetting, SoundEventType, SoundSettings } from "@opencode-chat/core";
+import { useMemo, useState } from "react";
 import type { LocaleSetting } from "../../../locales";
 import { useLocale } from "../../../locales";
 import { IconButton } from "../../atoms/IconButton";
-import { CloseIcon, FileIcon } from "../../atoms/icons";
+import { ChevronRightIcon, CloseIcon, FileIcon } from "../../atoms/icons";
 import { LinkButton } from "../../atoms/LinkButton";
 import styles from "./ToolConfigPanel.module.css";
+
+const LOCALE_OPTIONS = ["auto", "en", "ja", "zh-cn", "ko", "zh-tw", "es", "pt-br", "ru"] as const;
 
 type Props = {
   paths: { home?: string; config: string; state: string; directory: string } | null;
@@ -14,6 +17,8 @@ type Props = {
   onLocaleSettingChange: (setting: LocaleSetting) => void;
   soundSettings: SoundSettings;
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
+  mcpServers?: McpStatus | null;
+  onMcpToggle?: (server: string, enabled: boolean) => void;
 };
 
 export function ToolConfigPanel({
@@ -24,8 +29,27 @@ export function ToolConfigPanel({
   onLocaleSettingChange,
   soundSettings,
   onSoundSettingChange,
+  mcpServers,
+  onMcpToggle,
 }: Props) {
   const t = useLocale();
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
+
+  const localeLabelMap = useMemo(
+    () =>
+      ({
+        auto: t["config.langAuto"],
+        en: t["config.langEn"],
+        ja: t["config.langJa"],
+        "zh-cn": t["config.langZhCn"],
+        ko: t["config.langKo"],
+        "zh-tw": t["config.langZhTw"],
+        es: t["config.langEs"],
+        "pt-br": t["config.langPtBr"],
+        ru: t["config.langRu"],
+      }) as const,
+    [t],
+  );
 
   return (
     <div className={styles.root}>
@@ -37,34 +61,45 @@ export function ToolConfigPanel({
       </div>
 
       <div className={styles.body}>
-        {/* Language Setting */}
+        {/* Language Setting — compact in-panel menu (not radios, not old webview cache) */}
         <div className={styles.section}>
           <div className={styles.sectionTitle}>{t["config.language"]}</div>
-          <div>
-            {(["auto", "en", "ja", "zh-cn", "ko", "zh-tw", "es", "pt-br", "ru"] as const).map((opt) => {
-              const labelMap = {
-                auto: t["config.langAuto"],
-                en: t["config.langEn"],
-                ja: t["config.langJa"],
-                "zh-cn": t["config.langZhCn"],
-                ko: t["config.langKo"],
-                "zh-tw": t["config.langZhTw"],
-                es: t["config.langEs"],
-                "pt-br": t["config.langPtBr"],
-                ru: t["config.langRu"],
-              } as const;
-              return (
-                <label key={opt} className={`${styles.toggle} ${styles.toolItem}`}>
-                  <input
-                    type="radio"
-                    name="locale"
-                    checked={localeSetting === opt}
-                    onChange={() => onLocaleSettingChange(opt)}
-                  />
-                  <span className={styles.toolName}>{labelMap[opt]}</span>
-                </label>
-              );
-            })}
+          <div className={styles.langMenu}>
+            <button
+              type="button"
+              className={styles.langTrigger}
+              aria-haspopup="listbox"
+              aria-expanded={langMenuOpen}
+              onClick={() => setLangMenuOpen((o) => !o)}
+            >
+              <span className={styles.langTriggerLabel}>{localeLabelMap[localeSetting]}</span>
+              <span className={`${styles.langChevron} ${langMenuOpen ? styles.langChevronOpen : ""}`}>
+                <ChevronRightIcon />
+              </span>
+            </button>
+            {langMenuOpen && (
+              <div className={styles.langList} role="listbox" aria-label={t["config.language"]}>
+                {LOCALE_OPTIONS.map((opt) => {
+                  const selected = localeSetting === opt;
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={`${styles.langOption} ${selected ? styles.langOptionActive : ""}`}
+                      onClick={() => {
+                        onLocaleSettingChange(opt);
+                        setLangMenuOpen(false);
+                      }}
+                    >
+                      <span className={styles.langOptionCheck}>{selected ? "✓" : ""}</span>
+                      <span>{localeLabelMap[opt]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
@@ -109,9 +144,37 @@ export function ToolConfigPanel({
             })}
           </div>
         </div>
+
+        {/* MCP Setting */}
+        {mcpServers != null && (
+          <div className={styles.section}>
+            <div className={styles.sectionTitle}>{t["config.mcp"]}</div>
+            {Object.keys(mcpServers).length === 0 ? (
+              <div className={styles.mcpEmpty}>{t["config.mcpEmpty"]}</div>
+            ) : (
+              <div>
+                {Object.entries(mcpServers).map(([name, server]) => {
+                  const lifecycleLabel =
+                    !server.connected && server.status !== "unknown" ? formatMcpLifecycle(server) : null;
+                  return (
+                    <label key={name} className={`${styles.toggle} ${styles.toolItem} ${styles.mcpRow}`}>
+                      <input
+                        type="checkbox"
+                        checked={server.connected}
+                        onChange={(e) => onMcpToggle?.(name, e.target.checked)}
+                      />
+                      <span className={styles.toolName}>{name}</span>
+                      {lifecycleLabel && <span className={styles.mcpLifecycle}>{lifecycleLabel}</span>}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <div className={styles.trustNotice}>{t["config.mcpTrust"]}</div>
+          </div>
+        )}
       </div>
 
-      {/* 設定ファイルへのリンク */}
       {paths && (
         <div className={styles.footer}>
           <LinkButton onClick={() => onOpenConfigFile(`${paths.directory}/opencode.json`)}>
@@ -126,4 +189,9 @@ export function ToolConfigPanel({
       )}
     </div>
   );
+}
+
+function formatMcpLifecycle(s: McpServerStatus): string {
+  const label = s.status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return s.error ? `${label}: ${s.error}` : label;
 }

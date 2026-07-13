@@ -3,6 +3,7 @@
  * ChatViewProvider と OpenCodeAgent をモックし、起動・停止の振る舞いを検証する。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { classifyConnectError } from "../connect-error";
 
 // --- モックの準備 ---
 
@@ -168,18 +169,95 @@ describe("extension", () => {
   });
 
   // ============================================================
-  // activate - 非 ENOENT エラー
+  // activate - 非 ENOENT エラー（データベースロック / その他）
   // ============================================================
 
-  describe("activate() - non-ENOENT error", () => {
-    it("should rethrow non-ENOENT errors", async () => {
+  describe("activate() - database locked error", () => {
+    it("should show error message and register provider for database is locked", async () => {
+      const error = new Error("database is locked");
+      mockConnect.mockRejectedValueOnce(error);
+
+      const ext = await importExtension();
+      const subscriptions: { dispose: () => void }[] = [];
+      const context = { extensionUri: { fsPath: "/ext" }, subscriptions };
+
+      await ext.activate(context as never);
+
+      // database is locked ではエラーメッセージを表示
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("database"));
+      // webview provider が登録される（サイドバーが無限ロードにならない）
+      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalled();
+    });
+  });
+
+  describe("activate() - other non-ENOENT error", () => {
+    it("should show error message and register provider for other errors", async () => {
       const error = new Error("Connection refused");
       mockConnect.mockRejectedValueOnce(error);
 
       const ext = await importExtension();
-      const context = { extensionUri: { fsPath: "/ext" }, subscriptions: [] };
+      const subscriptions: { dispose: () => void }[] = [];
+      const context = { extensionUri: { fsPath: "/ext" }, subscriptions };
 
-      await expect(ext.activate(context as never)).rejects.toThrow("Connection refused");
+      await ext.activate(context as never);
+
+      // エラーメッセージが表示される
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Connection refused"));
+      // webview provider が登録される
+      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalled();
+    });
+
+    it("should truncate very long error messages", async () => {
+      const longMessage = "x".repeat(1000);
+      const error = new Error(longMessage);
+      mockConnect.mockRejectedValueOnce(error);
+
+      const ext = await importExtension();
+      const subscriptions: { dispose: () => void }[] = [];
+      const context = { extensionUri: { fsPath: "/ext" }, subscriptions };
+
+      await ext.activate(context as never);
+
+      // 500 文字以上で ... がつく
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("..."));
+    });
+  });
+
+  // ============================================================
+  // classifyConnectError pure helper
+  // ============================================================
+
+  describe("classifyConnectError", () => {
+    it("should return 'not-found' for ENOENT code", () => {
+      const error = new Error("spawn opencode ENOENT") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      expect(classifyConnectError(error)).toBe("not-found");
+    });
+
+    it("should return 'not-found' for ENOENT in message", () => {
+      const error = new Error("ENOENT: command not found");
+      expect(classifyConnectError(error)).toBe("not-found");
+    });
+
+    it("should return 'database-locked' for database is locked message", () => {
+      const error = new Error("database is locked");
+      expect(classifyConnectError(error)).toBe("database-locked");
+    });
+
+    it("should return 'database-locked' case-insensitively", () => {
+      const error = new Error("DATABASE IS LOCKED");
+      expect(classifyConnectError(error)).toBe("database-locked");
+    });
+
+    it("should return 'other' for unrelated errors", () => {
+      const error = new Error("Connection refused");
+      expect(classifyConnectError(error)).toBe("other");
+    });
+
+    it("should return 'other' for non-Error values", () => {
+      expect(classifyConnectError("string error")).toBe("other");
+      expect(classifyConnectError(42)).toBe("other");
+      expect(classifyConnectError(null)).toBe("other");
     });
   });
 

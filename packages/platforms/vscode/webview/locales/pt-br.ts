@@ -105,6 +105,12 @@ export const ptBr: LocaleSchema = {
   // ShellResultView
   "shell.title": "Shell",
 
+  // MCP setting
+  "config.mcp": "MCP",
+  "config.mcpEmpty": "Nenhum servidor MCP configurado. Configure via Configuração do Projeto ou Configuração Global.",
+  "config.mcpTrust":
+    "Ferramentas MCP instaladas pelo usuário não são isoladas pelas negações de edição/shell do Scout.",
+
   // ToolConfigPanel
   "config.title": "Configurações",
   "config.projectConfig": "Configuração do projeto",

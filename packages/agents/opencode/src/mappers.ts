@@ -29,6 +29,7 @@ import type {
   ChatMessageWithParts,
   ChatSession,
   FileDiff,
+  McpServerLifecycle,
   McpStatus,
   MessagePart,
   ProviderInfo,
@@ -164,7 +165,22 @@ export function mapPath(sdkPath: SdkPath): AppPaths {
 // ============================================================
 
 export function mapMcpStatus(status: Record<string, SdkMcpStatus>): McpStatus {
-  return status as unknown as McpStatus;
+  const result: McpStatus = {};
+  for (const [key, entry] of Object.entries(status)) {
+    if (!entry || typeof entry.status !== "string") {
+      result[key] = { connected: false, status: "unknown" };
+      continue;
+    }
+    const connected = entry.status === "connected";
+    // error is only present on "failed" and "needs_client_registration" variants
+    const error = (entry as { error?: string }).error;
+    result[key] = {
+      connected,
+      status: entry.status as McpServerLifecycle,
+      ...(error ? { error } : {}),
+    };
+  }
+  return result;
 }
 
 // ============================================================

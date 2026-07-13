@@ -122,6 +122,11 @@ export const en = {
   "config.langPtBr": "Português (Brasil)",
   "config.langRu": "Русский",
 
+  // MCP setting
+  "config.mcp": "MCP",
+  "config.mcpEmpty": "No MCP servers configured. Configure via Project or Global Config.",
+  "config.mcpTrust": "User-installed MCP tools are not sandboxed by Scout edit/bash denials.",
+
   // Sound notification
   "config.sound": "Sound Notification",
   "config.soundResponseComplete": "Response complete",

@@ -89,6 +89,34 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-07-13: Chat MCP Settings Panel (archived: `2026-07-13-add-chat-mcp-settings`)
+
+Companion-only MCP connect/disconnect controls in the gear settings panel, with remembered prefs and SDK status normalization.
+
+**Core / protocol** (`packages/core`):
+- `McpServerStatus` with lifecycle + derived `connected` boolean
+- `UIPersistedState.mcpEnabledByServer`
+- Messages: `getMcpStatus` / `connectMcp` / `disconnectMcp` / `mcpStatus`
+
+**Agent** (`packages/agents/opencode`):
+- Normalizing `mapMcpStatus` from OpenCode SDK `{ status, error? }` shapes
+
+**Host** (`packages/platforms/vscode/src`):
+- ChatViewProvider MCP handlers (companion process only; no opencode.json writes)
+- Connect failure hardening: `database is locked` and other non-ENOENT errors surface VS Code messages; webview still registers (`connect-error.ts`)
+
+**Webview**:
+- `useMcp` hook: status fetch, re-apply prefs, toggle/refresh
+- `ToolConfigPanel` MCP section (inline lifecycle labels) + compact language dropdown menu
+- i18n across 8 locales
+
+**Main spec**: `openspec/specs/chat-mcp-settings/spec.md`
+
+**VSIX note**: always `npm run build` then `npm run package` then install; `package` alone does not rebuild webview.
+
+**Verified**: openspec validate --strict; focused + full tests green; live verified MCP list + language menu.
+
+
 ### 2026-07-10: Model Effort Menu + Toolbar Density (archived: `2026-07-10-add-model-effort-menu`)
 
 Dedicated effort control for models that advertise variants; keeps sticky per-model selection and `Ctrl+T`.

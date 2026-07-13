@@ -47,8 +47,11 @@ describe("設定", () => {
     // 設定パネルを開く
     await user.click(screen.getByTitle("Settings"));
 
-    // 「日本語」ラジオボタンをクリック
-    await user.click(screen.getByText("日本語"));
+    // 「日本語」を選択 via in-panel language menu
+    const languageBtn = screen.getAllByRole("button").find((b) => b.getAttribute("aria-haspopup") === "listbox");
+    expect(languageBtn).toBeTruthy();
+    await user.click(languageBtn!);
+    await user.click(screen.getByRole("option", { name: /日本語|Japanese/i }));
 
     expect(setPersistedState).toHaveBeenCalledWith(expect.objectContaining({ localeSetting: "ja" }));
   });
@@ -101,7 +104,10 @@ describe("設定", () => {
 
     // 設定パネルを開いて日本語に変更
     await user.click(screen.getByTitle("Settings"));
-    await user.click(screen.getByText("日本語"));
+    const languageBtn = screen.getAllByRole("button").find((b) => b.getAttribute("aria-haspopup") === "listbox");
+    expect(languageBtn).toBeTruthy();
+    await user.click(languageBtn!);
+    await user.click(screen.getByRole("option", { name: /日本語|Japanese/i }));
 
     // ヘッダーの「New chat」が「新しいチャット」になる
     expect(screen.getByTitle("新しいチャット")).toBeInTheDocument();

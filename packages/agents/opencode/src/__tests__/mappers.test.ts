@@ -303,18 +303,103 @@ describe("mapPath", () => {
 // ============================================================
 
 describe("mapMcpStatus", () => {
-  it("should pass through MCP status data", () => {
-    const status = {
-      "server-1": { connected: true, tools: ["tool-a"] },
-      "server-2": { connected: false, tools: [] },
+  it("should normalize connected SDK entry", () => {
+    const sdkStatus = {
+      "server-1": { status: "connected" },
     };
-    const result = mapMcpStatus(status as never);
-    expect(result).toEqual(status);
+    const result = mapMcpStatus(sdkStatus as never);
+    expect(result["server-1"]).toEqual({
+      connected: true,
+      status: "connected",
+    });
+  });
+
+  it("should normalize disabled SDK entry as not connected", () => {
+    const sdkStatus = {
+      "server-1": { status: "disabled" },
+    };
+    const result = mapMcpStatus(sdkStatus as never);
+    expect(result["server-1"]).toEqual({
+      connected: false,
+      status: "disabled",
+    });
+  });
+
+  it("should normalize failed SDK entry with error", () => {
+    const sdkStatus = {
+      "server-1": { status: "failed", error: "Connection refused" },
+    };
+    const result = mapMcpStatus(sdkStatus as never);
+    expect(result["server-1"]).toEqual({
+      connected: false,
+      status: "failed",
+      error: "Connection refused",
+    });
+  });
+
+  it("should normalize needs_auth SDK entry as not connected", () => {
+    const sdkStatus = {
+      "server-1": { status: "needs_auth" },
+    };
+    const result = mapMcpStatus(sdkStatus as never);
+    expect(result["server-1"]).toEqual({
+      connected: false,
+      status: "needs_auth",
+    });
+  });
+
+  it("should normalize needs_client_registration with error", () => {
+    const sdkStatus = {
+      "server-1": { status: "needs_client_registration", error: "OAuth required" },
+    };
+    const result = mapMcpStatus(sdkStatus as never);
+    expect(result["server-1"]).toEqual({
+      connected: false,
+      status: "needs_client_registration",
+      error: "OAuth required",
+    });
+  });
+
+  it("should treat null entry as unknown", () => {
+    const sdkStatus: Record<string, unknown> = {
+      "server-1": null,
+    };
+    const result = mapMcpStatus(sdkStatus as Record<string, never>);
+    expect(result["server-1"]).toEqual({
+      connected: false,
+      status: "unknown",
+    });
+  });
+
+  it("should treat entry without valid status as unknown", () => {
+    const sdkStatus: Record<string, unknown> = {
+      "server-1": { foo: "bar" },
+    };
+    const result = mapMcpStatus(sdkStatus as Record<string, never>);
+    expect(result["server-1"]).toEqual({
+      connected: false,
+      status: "unknown",
+    });
   });
 
   it("should handle empty status", () => {
     const result = mapMcpStatus({} as never);
     expect(result).toEqual({});
+  });
+
+  it("should normalize multiple servers with mixed statuses", () => {
+    const sdkStatus = {
+      "ok-server": { status: "connected" },
+      "down-server": { status: "disabled" },
+      "bad-server": { status: "failed", error: "timeout" },
+      "auth-server": { status: "needs_auth" },
+    };
+    const result = mapMcpStatus(sdkStatus as never);
+    expect(result["ok-server"].connected).toBe(true);
+    expect(result["down-server"].connected).toBe(false);
+    expect(result["bad-server"].connected).toBe(false);
+    expect(result["bad-server"].error).toBe("timeout");
+    expect(result["auth-server"].connected).toBe(false);
   });
 });
 

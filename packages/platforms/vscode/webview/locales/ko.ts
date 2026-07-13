@@ -105,6 +105,11 @@ export const ko: LocaleSchema = {
   // ShellResultView
   "shell.title": "셸",
 
+  // MCP setting
+  "config.mcp": "MCP",
+  "config.mcpEmpty": "MCP 서버가 구성되지 않았습니다. 프로젝트 설정 또는 전역 설정에서 구성하세요.",
+  "config.mcpTrust": "사용자가 설치한 MCP 도구는 Scout의 편집/셸 거부에 의해 샌드박스 처리되지 않습니다.",
+
   // ToolConfigPanel
   "config.title": "설정",
   "config.projectConfig": "프로젝트 설정",

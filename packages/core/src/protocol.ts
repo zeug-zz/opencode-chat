@@ -16,6 +16,7 @@ import type {
   ChatSession,
   FileAttachment,
   FileDiff,
+  McpStatus,
   ModelRef,
   ModelVariantRef,
   PermissionResponse,
@@ -150,6 +151,11 @@ export type UIToHostMessage =
   | { type: "copyToClipboard"; text: string }
   | { type: "openFile"; filePath: string; line?: number }
 
+  // --- MCP ---
+  | { type: "getMcpStatus" }
+  | { type: "connectMcp"; server: string }
+  | { type: "disconnectMcp"; server: string }
+
   // --- Diff Review ---
   | { type: "openDiffReview"; focusFile?: string }
   | { type: "stopDiffReview" }
@@ -231,4 +237,7 @@ export type HostToUIMessage =
   | { type: "difitAvailable"; available: boolean }
   | { type: "diffReviewStarted" }
   | { type: "diffReviewStopped" }
-  | { type: "diffReviewError"; error: string };
+  | { type: "diffReviewError"; error: string }
+
+  // --- MCP ---
+  | { type: "mcpStatus"; status: McpStatus };

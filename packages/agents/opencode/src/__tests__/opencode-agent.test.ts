@@ -745,15 +745,17 @@ describe("OpenCodeAgent", () => {
   // ============================================================
 
   describe("getMcpStatus()", () => {
-    it("should call mcp.status()", async () => {
-      const status = { server1: { connected: true } };
-      mockClient.mcp.status.mockResolvedValue({ data: status });
+    it("should call mcp.status() and normalize via mapMcpStatus", async () => {
+      const sdkData = { server1: { status: "connected" } };
+      mockClient.mcp.status.mockResolvedValue({ data: sdkData });
       await agent.connect();
 
       const result = await agent.getMcpStatus();
 
       expect(mockClient.mcp.status).toHaveBeenCalled();
-      expect(result).toEqual(status);
+      expect(result).toEqual({
+        server1: { connected: true, status: "connected" },
+      });
     });
   });
 
