@@ -1,16 +1,16 @@
 # OpenCode Chat
 
-[![Visual Studio Code](https://img.shields.io/badge/VS%20Code-^1.125.0-007ACC?logo=visual-studio-code)](https://code.visualstudio.com/)
+[![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.125.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
 [![Version](https://img.shields.io/visual-studio-marketplace/v/zeug-zz.opencode-chat?label=version&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=zeug-zz.opencode-chat)
 [![License](https://img.shields.io/github/license/zeug-zz/opencode-chat)](LICENSE)
 [![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
-[![Security Audit](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
+[![Security Audit](<https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github>)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
 
-An unofficial VS Code opencode chat companion designed to sit alongside the [VS Code opencode TUI](https://marketplace.visualstudio.com/items?itemName=sst-dev.opencode) extension rather than replace it. It provides a focused sidebar chat window using your opencode models, memory, skills, and MCP servers. The chat adds KaTeX and Mermaid rendering along with Markdown copying and other writing-friendly enhancements that are not otherwise available in the code-oriented TUI.
+An unofficial VS Code **research-first chat companion** for [OpenCode](https://github.com/anomalyco/opencode) — designed to sit **alongside** the OpenCode TUI, not replace it. Default agent is **Scout** (shown as **chat**): read, reason, and research. Optional **Build** when you need edits. Full plan/orchestrate loadouts go to an independent TUI via **Hand off to TUI** without killing chat.
 
 **This is an unofficial, community-developed extension unaffiliated with or endorsed by the OpenCode project.**
 
-Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui)
+Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui) and reshaped for chat + research (not another Cline-style coding loop).
 
 ---
 
@@ -28,8 +28,8 @@ Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui)
 
 ### Documents
 
-| File                                            | Description          |
-| ----------------------------------------------- | -------------------- |
+| File                                              | Description          |
+| ------------------------------------------------- | -------------------- |
 | [CONTRIBUTING.md](./CONTRIBUTING.md)               | Contributing guide   |
 | [CHANGELOG.md](./CHANGELOG.md)                     | Release history      |
 | [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) | Third-party licenses |
@@ -38,40 +38,21 @@ Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui)
 
 ### Features
 
-- Focused chat UI (send/receive messages, streaming display)
-- Markdown rendering with KaTeX math and Mermaid diagrams
-- Markdown copy actions for assistant replies
-- Tool call collapsible display
-- Permission approval UI (Allow / Once / Deny)
-- Session management (create, switch, fork, delete)
-- Message editing & checkpoint restore
-- Model search and selection
-- Model effort toggles with per-model persistence across sessions
-- Recent models section in the model selector for quick re-selection (persisted across sessions)
-- Collapsible provider lists in the model selector (collapsed by default, selected provider auto-expanded)
-- Agent selector for primary agent selection
-- File context attachment
-- File changes diff view
-- Session diff review via [difit](https://github.com/yoshiko-pg/difit) (opens in browser)
-- Shell command execution
-- Reasoning / thinking display
-- Todo display
-- Undo / Redo
-- Session sharing
-- Agent mention (`@` mention)
-- Child session navigation (subtask)
-- Settings panel
-- Keyboard navigation for inline popups (Tab / Arrow keys)
-- Subtask display
-- Auto-scroll during streaming
-- File type icons
-- File path links (clickable file chips with extension-based icons)
-- Syntax highlighting and copy button for code blocks
-- Quick-add button with active editor file
-- Input history navigation (ArrowUp / ArrowDown)
-- Sound notification on assistant response completion
-- Question interaction UI for agent-initiated questions
-- i18n support (English, Japanese, Simplified Chinese, Korean, Traditional Chinese, Spanish, Brazilian Portuguese, Russian)
+#### What makes this different
+
+- **Scout-first chat** — Default primary agent is OpenCode **Scout** (**chat** in UI): read-oriented, edit/shell denied by default; **Build** when you want writes.
+- **Companion-owned OpenCode server** — Own `opencode serve` + in-memory Scout injection; does **not** rewrite your global `opencode.json`. Independent TUI keeps normal agents/config.
+- **Research MCP, chat-scoped** — Gear toggles connect/disconnect MCP on the **companion only**, with remembered prefs (paper search, Brave, Context7, … without forcing the same set on TUI).
+- **Hand off to full TUI** — Export session → independent `opencode import` + TUI while **chat keeps running**; attach fallback if the project DB is locked.
+- **Stable thinking / CoT stream** — Reasoning display for thinking models without mid-stream blanking.
+- **Research-grade message UI** — Markdown, KaTeX, Mermaid, highlighted code, **copy as Markdown**.
+- **Model + effort UX** — Search, sticky per-model effort, recent models, collapsed providers.
+- **Context chip** — token / context usage in the input area for long research threads.
+- **Security posture** — Gitleaks, Semgrep, dependency audit in CI; Scout denials explicit; MCP trust notice (user MCP tools are not sandboxed by Scout).
+
+#### Still a full OpenCode companion
+
+Streaming, sessions, tools/permissions/questions, shell on Build, file chips & diffs, undo/redo, skills, 8-locale i18n, notifications — the OpenCode surface you need, without turning the sidebar into a coding-agent product.
 
 ### Requirements
 
