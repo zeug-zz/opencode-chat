@@ -18,7 +18,7 @@ export const ja: LocaleSchema = {
   "input.remove": "削除",
   "input.placeholder": "OpenCode に質問... (# でファイルを添付)",
   "input.addFile": (name: string) => `${name} を追加`,
-  "input.openTerminal": "セッションをターミナルで開く",
+  "input.openTerminal": "TUI に引き継ぐ",
   "input.contextMemory": "コンテキストメモリ",
   "input.shellMode": "シェルモード",
   "input.placeholder.shell": "シェルコマンドを入力...",

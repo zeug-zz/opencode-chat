@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-13
+
 ### Added
 
-- Context memory display chip in InputArea — shows contextual token usage (e.g. `22.1K (2%)`) next to the terminal button using multi-source fallback from session tokens, message tokens, and state-based effects
+- Companion-scoped Scout: chat companion’s own `opencode serve` injects a read-only in-memory `scout` agent (shown as **chat**) without writing the user’s `opencode.json`; independent TUI is not affected
+- Chat MCP settings panel: companion-only connect/disconnect toggles in the gear, remembered prefs (`mcpEnabledByServer`), SDK MCP status normalization, trust notice; no `opencode.json` writes from toggles
+- **Hand off to TUI**: export active session and open a full independent OpenCode TUI (`import` + `--continue`) while chat stays running; attach-to-companion fallback if independent start fails (e.g. project database locked)
+- Compact language dropdown menu in settings; MCP lifecycle labels shown inline with server names
+- Companion connect failure UX (`database is locked` and other failures): clear VS Code error, webview still registers when possible
+- Context memory display chip in InputArea — token usage next to the terminal / handoff control
+
+### Changed
+
+- Terminal session button is now **Hand off to TUI** (independent handoff), not companion fork+attach as the primary path
+- Extension version **0.7.0** (marketplace/VSIX identity)
+
+### Fixed
+
+- Open-in-terminal silent failures / fragility: progress + errors, absolute `opencode` path, shell-ready command send
+- VSIX packaging reminder: always `npm run build` before `npm run package` (package alone does not rebuild the webview)
 
 ## [0.6.0] - 2026-06-22
 

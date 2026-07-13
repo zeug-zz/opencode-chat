@@ -89,6 +89,19 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-07-13: Session handoff to independent TUI (archived: `2026-07-13-handoff-session-to-tui`)
+
+Gear **Hand off to TUI** exports the active companion session (`{info,messages}`) via companion client, runs independent `opencode import` + `opencode --continue` without stopping chat. On failure (e.g. `database is locked`), offers attach fallback to the companion session (no fork). Absolute `opencode` path + shell-ready terminal send.
+
+**Main spec**: `openspec/specs/session-tui-handoff/spec.md`
+
+### 2026-07-13: Companion-scoped Scout (archived: `2026-07-13-scope-scout-to-companion-server`)
+
+Companion `opencode serve` injects read-only in-memory `scout` (mode `all`) via `OPENCODE_CONFIG_CONTENT` without writing user `opencode.json`. Independent TUI unaffected. Build remains the edit/shell agent.
+
+**Main spec**: `openspec/specs/companion-scoped-scout/spec.md`
+
+
 ### 2026-07-13: Chat MCP Settings Panel (archived: `2026-07-13-add-chat-mcp-settings`)
 
 Companion-only MCP connect/disconnect controls in the gear settings panel, with remembered prefs and SDK status normalization.

@@ -22,10 +22,12 @@ export const workspace = {
 export const window = {
   registerWebviewViewProvider: vi.fn(() => ({ dispose: vi.fn() })),
   showWarningMessage: vi.fn(),
-  showErrorMessage: vi.fn(),
+  showErrorMessage: vi.fn().mockResolvedValue(undefined),
+  showInformationMessage: vi.fn().mockResolvedValue(undefined),
   showTextDocument: vi.fn().mockResolvedValue(undefined),
   activeTextEditor: undefined as unknown,
   onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
+  onDidChangeTerminalShellIntegration: vi.fn(() => ({ dispose: vi.fn() })),
   tabGroups: { all: [] as unknown[] },
   createTerminal: vi.fn(() => ({ show: vi.fn(), sendText: vi.fn() })),
   createWebviewPanel: vi.fn(() => ({
@@ -34,6 +36,7 @@ export const window = {
     onDidDispose: vi.fn(),
     dispose: vi.fn(),
   })),
+  withProgress: vi.fn(async (_opts: unknown, task: (progress: unknown) => Promise<unknown>) => task({})),
 };
 
 // --- env ---
@@ -110,4 +113,11 @@ export const ViewColumn = {
   Two: 2,
   Three: 3,
   Beside: -2,
+};
+
+// --- ProgressLocation ---
+export const ProgressLocation = {
+  SourceControl: 1,
+  Window: 10,
+  Notification: 15,
 };

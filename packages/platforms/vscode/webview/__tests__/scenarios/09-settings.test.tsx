@@ -92,7 +92,7 @@ describe("設定", () => {
     await setupForSettings();
     const user = userEvent.setup();
 
-    await user.click(screen.getByTitle("Open session in terminal"));
+    await user.click(screen.getByTitle("Hand off to TUI"));
 
     expect(postMessage).toHaveBeenCalledWith({ type: "openTerminal" });
   });

@@ -2,7 +2,7 @@
   "name": "opencode-chat",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "zeug-zz",
   "license": "MIT",
   "repository": {

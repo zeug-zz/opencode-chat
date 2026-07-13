@@ -71,6 +71,7 @@ function createMockAgent(): {
     disconnectMcp: vi.fn().mockResolvedValue(undefined),
     getToolIds: vi.fn().mockResolvedValue([]),
     getServerUrl: vi.fn().mockReturnValue("http://localhost:12345"),
+    exportSessionSnapshot: vi.fn().mockResolvedValue("/tmp/handoff.json"),
     setModel: vi.fn().mockResolvedValue(undefined),
   } as never;
 }
@@ -84,6 +85,7 @@ function createMockPlatformServices(): {
     openDiffEditor: vi.fn().mockResolvedValue(undefined),
     copyToClipboard: vi.fn().mockResolvedValue(undefined),
     openTerminal: vi.fn().mockResolvedValue(undefined),
+    runHandoffTerminal: vi.fn().mockResolvedValue(undefined),
     openConfigFile: vi.fn().mockResolvedValue(undefined),
     openFile: vi.fn().mockResolvedValue(undefined),
     searchWorkspaceFiles: vi.fn().mockResolvedValue([]),
@@ -893,43 +895,55 @@ describe("ChatViewProvider", () => {
   // ============================================================
 
   describe("openTerminal", () => {
-    it("should do nothing when serverUrl is undefined", async () => {
+    it("should show error and skip when serverUrl is undefined", async () => {
       mockAgent.getServerUrl.mockReturnValue(undefined);
       const mockPS = createMockPlatformServices();
 
       const { sendMessage } = setupProvider(mockAgent, mockPS);
       await sendMessage({ type: "openTerminal" });
 
+      expect(mockPS.runHandoffTerminal).not.toHaveBeenCalled();
       expect(mockPS.openTerminal).not.toHaveBeenCalled();
     });
 
-    it("should open terminal without session when no active session", async () => {
+    it("should show error when no active session", async () => {
       const mockPS = createMockPlatformServices();
 
       const { sendMessage } = setupProvider(mockAgent, mockPS);
       await sendMessage({ type: "openTerminal" });
 
-      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345", undefined);
+      expect(mockPS.runHandoffTerminal).not.toHaveBeenCalled();
+      expect(mockAgent.exportSessionSnapshot).not.toHaveBeenCalled();
     });
 
-    it("should fork active session and open TUI on forked session", async () => {
+    it("should export session and run independent handoff terminal", async () => {
       const mockPS = createMockPlatformServices();
       mockAgent.createSession.mockResolvedValue({ id: "sess-1" });
-      mockAgent.forkSession.mockResolvedValue({ id: "forked-1" });
-      mockAgent.listSessions.mockResolvedValue([{ id: "sess-1" }, { id: "forked-1" }]);
+      mockAgent.exportSessionSnapshot.mockResolvedValue("/tmp/sess-1-handoff.json");
 
-      const { postMessage, sendMessage } = setupProvider(mockAgent, mockPS);
+      const { sendMessage } = setupProvider(mockAgent, mockPS);
 
       await sendMessage({ type: "createSession" });
-
       await sendMessage({ type: "openTerminal" });
 
-      expect(mockAgent.forkSession).toHaveBeenCalledWith("sess-1");
-      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345", "forked-1");
-      expect(postMessage).toHaveBeenCalledWith({
-        type: "sessions",
-        sessions: [{ id: "sess-1" }, { id: "forked-1" }],
-      });
+      expect(mockAgent.forkSession).not.toHaveBeenCalled();
+      expect(mockAgent.exportSessionSnapshot).toHaveBeenCalledWith("sess-1");
+      expect(mockPS.runHandoffTerminal).toHaveBeenCalledWith("/tmp/sess-1-handoff.json");
+    });
+
+    it("should offer attach fallback when handoff export fails", async () => {
+      const mockPS = createMockPlatformServices();
+      mockAgent.createSession.mockResolvedValue({ id: "sess-1" });
+      mockAgent.exportSessionSnapshot.mockRejectedValue(new Error("database is locked"));
+      const vscode = await import("vscode");
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue("Open on chat server" as never);
+
+      const { sendMessage } = setupProvider(mockAgent, mockPS);
+      await sendMessage({ type: "createSession" });
+      await sendMessage({ type: "openTerminal" });
+
+      expect(mockPS.runHandoffTerminal).not.toHaveBeenCalled();
+      expect(mockPS.openTerminal).toHaveBeenCalledWith("http://localhost:12345", "sess-1");
     });
   });
 

@@ -1043,4 +1043,23 @@ describe("OpenCodeAgent", () => {
       await expect(agent.setModel!("some-model")).rejects.toThrow("OpenCode client is not connected");
     });
   });
+
+  describe("exportSessionSnapshot()", () => {
+    it("writes {info,messages} JSON via companion client", async () => {
+      const info = { id: "sess-1", title: "T" };
+      const messages = [{ info: { id: "m1" }, parts: [] }];
+      mockClient.session.get.mockResolvedValue({ data: info });
+      mockClient.session.messages.mockResolvedValue({ data: messages });
+      await agent.connect();
+      const filePath = await agent.exportSessionSnapshot("sess-1");
+      expect(filePath).toContain("sess-1");
+      expect(mockClient.session.get).toHaveBeenCalledWith({ sessionID: "sess-1" });
+      expect(mockClient.session.messages).toHaveBeenCalledWith({ sessionID: "sess-1" });
+      expect(fs.writeFile).toHaveBeenCalled();
+      const writeCall = vi.mocked(fs.writeFile).mock.calls.at(-1)!;
+      expect(writeCall[0]).toBe(filePath);
+      const parsed = JSON.parse((writeCall[1] as string).trim());
+      expect(parsed).toEqual({ info, messages });
+    });
+  });
 });

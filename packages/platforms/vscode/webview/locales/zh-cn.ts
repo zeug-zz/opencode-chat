@@ -18,7 +18,7 @@ export const zhCn: LocaleSchema = {
   "input.remove": "移除",
   "input.placeholder": "向 OpenCode 提问...（输入 # 附加文件）",
   "input.addFile": (name: string) => `添加 ${name}`,
-  "input.openTerminal": "在终端中打开会话",
+  "input.openTerminal": "移交到 TUI",
   "input.contextMemory": "上下文内存",
   "input.shellMode": "Shell 模式",
   "input.placeholder.shell": "输入 Shell 命令...",

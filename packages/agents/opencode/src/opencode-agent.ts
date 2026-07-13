@@ -9,6 +9,7 @@
  */
 
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { createOpencodeClient, createOpencodeServer, type Event, type OpencodeClient } from "@opencode-ai/sdk/v2";
 import type {
@@ -468,6 +469,26 @@ export class OpenCodeAgent implements IAgent {
 
   getServerUrl(): string | undefined {
     return this.server?.url;
+  }
+
+  /**
+   * Export raw session snapshot for `opencode import`.
+   * Uses companion client so the extension does not open the project DB as a second writer for reads.
+   */
+  async exportSessionSnapshot(sessionId: string): Promise<string> {
+    const client = this.requireClient();
+    const infoRes = await client.session.get({ sessionID: sessionId });
+    const messagesRes = await client.session.messages({ sessionID: sessionId });
+    const exportData = {
+      info: infoRes.data,
+      messages: messagesRes.data,
+    };
+    const filePath = path.join(
+      os.tmpdir(),
+      `opencode-chat-handoff-${sessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.json`,
+    );
+    await fs.writeFile(filePath, `${JSON.stringify(exportData, null, 2)}\n`, "utf-8");
+    return filePath;
   }
 
   // --- Model management (setModel) ---

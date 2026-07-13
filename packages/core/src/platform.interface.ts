@@ -47,8 +47,17 @@ export interface IPlatformServices {
   /** Copy text to clipboard */
   copyToClipboard(text: string): Promise<void>;
 
-  /** Open a terminal and connect to the agent's server */
+  /**
+   * Open a terminal attached to the companion server (fallback path).
+   * @deprecated Prefer independent handoff via runHandoffTerminal when possible.
+   */
   openTerminal(serverUrl: string, sessionId?: string): Promise<void>;
+
+  /**
+   * Independent TUI handoff: import a session export file then continue in full OpenCode.
+   * Companion must stay running; this starts a separate process.
+   */
+  runHandoffTerminal(exportFilePath: string): Promise<void>;
 
   /** Open a config file in the editor */
   openConfigFile(filePath: string): Promise<void>;

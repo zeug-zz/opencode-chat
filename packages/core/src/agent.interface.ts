@@ -131,6 +131,9 @@ export interface IAgent {
   // --- Server URL (agent-specific, for terminal attachment etc.) ---
   getServerUrl(): string | undefined;
 
+  /** Write opencode-import-compatible session JSON; return absolute file path. */
+  exportSessionSnapshot(sessionId: string): Promise<string>;
+
   // --- Model management ---
   setModel?(model: string): Promise<void>;
 }

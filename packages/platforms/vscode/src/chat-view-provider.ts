@@ -274,15 +274,50 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "openTerminal": {
         const serverUrl = this.agent.getServerUrl();
-        if (!serverUrl) break;
-        let sessionId: string | undefined;
-        if (this.activeSession) {
-          const forked = await this.agent.forkSession(this.activeSession.id);
-          sessionId = forked.id;
-          const sessions = await this.agent.listSessions();
-          this.postMessage({ type: "sessions", sessions });
+        if (!serverUrl) {
+          vscode.window.showErrorMessage(
+            vscode.l10n.t("OpenCode Chat: companion server is not connected. Reload the window and try again."),
+          );
+          break;
         }
-        await this.platformServices.openTerminal(serverUrl, sessionId);
+        if (!this.activeSession) {
+          vscode.window.showErrorMessage(
+            vscode.l10n.t("OpenCode Chat: select an active session before handing off to the TUI."),
+          );
+          break;
+        }
+        const sessionId = this.activeSession.id;
+
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: vscode.l10n.t("OpenCode Chat: exporting session for TUI…"),
+            cancellable: false,
+          },
+          async () => {
+            try {
+              const exportPath = await this.agent.exportSessionSnapshot(sessionId);
+              await this.platformServices.runHandoffTerminal(exportPath);
+              vscode.window.showInformationMessage(
+                vscode.l10n.t(
+                  "OpenCode Chat: opened independent TUI with a copy of this session. Chat is still running.",
+                ),
+              );
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              const choice = await vscode.window.showErrorMessage(
+                vscode.l10n.t(
+                  "OpenCode Chat: independent TUI handoff failed ({0}). Chat is still running. Open on the chat server instead?",
+                  msg.slice(0, 200),
+                ),
+                vscode.l10n.t("Open on chat server"),
+              );
+              if (choice === vscode.l10n.t("Open on chat server")) {
+                await this.platformServices.openTerminal(serverUrl, sessionId);
+              }
+            }
+          },
+        );
         break;
       }
       case "setModel": {
