@@ -96,7 +96,7 @@
     "@opencode-chat/agent-opencode": "workspace:*",
     "@opencode-chat/core": "workspace:*",
     "diff": "^9.0.0",
-    "dompurify": "^3.4.0",
+    "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",
     "marked-katex-extension": "^5.1.10",
