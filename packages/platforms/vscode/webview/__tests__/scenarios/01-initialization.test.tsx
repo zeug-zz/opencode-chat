@@ -258,7 +258,7 @@ describe("初期化", () => {
     // Selector shows scout as "chat"
     it('AgentSelector が scout を "chat" として表示すること', () => {
       expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
-      expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("build");
+      expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("write");
     });
 
     // Send payload uses primaryAgent: "scout"
@@ -340,9 +340,9 @@ describe("初期化", () => {
       await sendExtMessage({ type: "agents", agents: buildOnlyPrimaryAgents });
     });
 
-    // Selector shows build
-    it("AgentSelector が build を表示すること（先頭の primary/all にフォールバック）", () => {
-      expect(screen.getByTitle("Select agent")).toHaveTextContent("build");
+    // Selector shows write
+    it("AgentSelector が write を表示すること（先頭の primary/all にフォールバック）", () => {
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("write");
     });
 
     // Send payload uses primaryAgent: "build"
@@ -430,7 +430,7 @@ describe("初期化", () => {
 
   // When a primary agent is already user-selected and a new agents message
   // includes an eligible scout agent, the existing selection must be preserved.
-  context("ユーザーが build を選択済みで、その後に scout を含む agents を受信した場合", () => {
+  context("ユーザーが write を選択済みで、その後に scout を含む agents を受信した場合", () => {
     beforeEach(async () => {
       renderApp();
       await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
@@ -439,26 +439,26 @@ describe("初期化", () => {
     });
 
     // Subsequent agents message with scout must not overwrite user choice
-    it("AgentSelector は build のまま上書きされないこと", async () => {
+    it("AgentSelector は write のまま上書きされないこと", async () => {
       const user = userEvent.setup();
 
-      // Sanity: fallback selected build.
+      // Sanity: fallback selected write.
       const trigger = screen.getByTitle("Select agent");
-      expect(trigger).toHaveTextContent("build");
+      expect(trigger).toHaveTextContent("write");
 
-      // Simulate the user explicitly selecting build through the selector.
+      // Simulate the user explicitly selecting write through the selector.
       // The popover item name lives in a separate node from the trigger
       // button label, so use getAllByText and pick the popover item.
       await user.click(trigger);
-      const buildItems = screen.getAllByText("build");
+      const buildItems = screen.getAllByText("write");
       // [0] is the trigger label, [1] is the popover item.
       await user.click(buildItems[1]);
 
       // Now an agents message arrives that includes scout (eligible).
       await sendExtMessage({ type: "agents", agents: buildPrimaryScoutPrimaryAgents });
 
-      // The user selection must remain build.
-      expect(screen.getByTitle("Select agent")).toHaveTextContent("build");
+      // The user selection must remain write.
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("write");
       expect(screen.queryByTitle("Select agent")).not.toHaveTextContent("scout");
 
       // And the send payload must use build.
@@ -542,23 +542,31 @@ describe("初期化", () => {
       expect(screen.getByTitle("Select agent")).toHaveTextContent("chat");
     });
 
-    it("AgentSelector が chat, build のみを表示すること (compact は表示されない)", async () => {
+    it("AgentSelector が chat, write のみを表示すること (compact は表示されない)", async () => {
       const user = userEvent.setup();
       const trigger = screen.getByTitle("Select agent");
       await user.click(trigger);
 
       const items = document.querySelectorAll('[class*="itemName"]');
       const labels = Array.from(items).map((el) => el.textContent);
-      expect(labels).toEqual(["chat", "build"]);
+      expect(labels).toEqual(["chat", "write"]);
+      expect(
+        screen.getByText("Default mode for chatting and research. Read-only, no code execution."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Research, draft, and save reports to requested files. Use terminal handoff for serious coding.",
+        ),
+      ).toBeInTheDocument();
     });
 
-    it("build 選択後に送信すると build が維持されること", async () => {
+    it("write 選択後に送信すると write が維持されること", async () => {
       const user = userEvent.setup();
       const trigger = screen.getByTitle("Select agent");
 
       await user.click(trigger);
-      await user.click(screen.getByText("build"));
-      expect(screen.getByTitle("Select agent")).toHaveTextContent("build");
+      await user.click(screen.getByText("write"));
+      expect(screen.getByTitle("Select agent")).toHaveTextContent("write");
 
       vi.mocked(postMessage).mockClear();
       const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");

@@ -106,6 +106,18 @@ export class OpenCodeAgent implements IAgent {
               question: "allow",
             },
           },
+          build: {
+            permission: {
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              webfetch: "allow",
+              websearch: "allow",
+              edit: "allow",
+            },
+          },
         },
       },
     });

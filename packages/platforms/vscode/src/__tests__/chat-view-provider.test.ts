@@ -4,6 +4,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("node:fs", () => ({
+  readFileSync: vi.fn((filePath: string) => {
+    if (filePath.endsWith("CHAT_SYSTEM.md")) return "chat prompt";
+    if (filePath.endsWith("WRITE_SYSTEM.md")) return "write prompt";
+    throw new Error("ENOENT");
+  }),
+}));
+
 // node:fs/promises と node:path のモック
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
@@ -561,6 +569,110 @@ describe("ChatViewProvider", () => {
       const options = (mockAgent.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][2] as Record<string, unknown>;
       expect(options.effort).toEqual(effort);
     });
+
+    it("should route edit-and-resend through the Scout prompt", async () => {
+      mockAgent.revertSession.mockResolvedValue({ id: "sess-1" });
+      const { sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({
+        type: "editAndResend",
+        sessionId: "sess-1",
+        messageId: "msg-3",
+        text: "Revised",
+        primaryAgent: "scout",
+      });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Revised",
+        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+      );
+    });
+
+    it("should route edit-and-resend through the Write prompt and preserve explicit overrides", async () => {
+      mockAgent.revertSession.mockResolvedValue({ id: "sess-1" });
+      const { sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({
+        type: "editAndResend",
+        sessionId: "sess-1",
+        messageId: "msg-3",
+        text: "Revised",
+        primaryAgent: "build",
+      });
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Revised",
+        expect.objectContaining({ primaryAgent: "build", system: "write prompt" }),
+      );
+
+      mockAgent.sendMessage.mockClear();
+      await sendMessage({
+        type: "editAndResend",
+        sessionId: "sess-1",
+        messageId: "msg-3",
+        text: "Override",
+        primaryAgent: "build",
+        system: "explicit prompt",
+      });
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Override",
+        expect.objectContaining({ primaryAgent: "build", system: "explicit prompt" }),
+      );
+    });
+
+    it("should route the Scout default prompt", async () => {
+      const { sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Hello", primaryAgent: "scout" });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Hello",
+        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+      );
+    });
+
+    it("should route the Build-backed Write default prompt", async () => {
+      const { sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Write", primaryAgent: "build" });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Write",
+        expect.objectContaining({ primaryAgent: "build", system: "write prompt" }),
+      );
+    });
+
+    it("should preserve an explicit system override", async () => {
+      const { sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Override",
+        primaryAgent: "build",
+        system: "explicit prompt",
+      });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Override",
+        expect.objectContaining({ primaryAgent: "build", system: "explicit prompt" }),
+      );
+    });
+
+    it("should not apply a default prompt without a recognized primary agent", async () => {
+      const { sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "No default" });
+
+      const options = (mockAgent.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][2] as Record<string, unknown>;
+      expect(options.primaryAgent).toBeUndefined();
+      expect(options.system).toBeUndefined();
+    });
   });
 
   // ============================================================
@@ -853,25 +965,21 @@ describe("ChatViewProvider", () => {
   // ============================================================
 
   describe("executeShell", () => {
-    it("should call agent.executeShell", async () => {
+    it("should reject legacy shell requests without invoking the agent", async () => {
       const { sendMessage } = setupProvider(mockAgent);
       const model = { providerID: "openai", modelID: "gpt-4" };
 
       await sendMessage({ type: "executeShell", sessionId: "sess-1", command: "ls", model });
 
-      expect(mockAgent.executeShell).toHaveBeenCalledWith("sess-1", "ls", model);
+      expect(mockAgent.executeShell).not.toHaveBeenCalled();
     });
 
-    it("should NOT forward effort or trigger the sendMessage path for executeShell", async () => {
+    it("should reject malformed legacy shell requests", async () => {
       const { sendMessage } = setupProvider(mockAgent);
-      const model = { providerID: "openai", modelID: "gpt-4" };
 
-      // Protocol does not carry effort for executeShell; the extension host must
-      // continue to use only (sessionId, command, model).
-      await sendMessage({ type: "executeShell", sessionId: "sess-1", command: "ls", model });
+      await sendMessage({ type: "executeShell", sessionId: "sess-1", command: 42 } as never);
 
-      expect(mockAgent.executeShell).toHaveBeenCalledWith("sess-1", "ls", model);
-      // No third-arg options object should ever be created for executeShell.
+      expect(mockAgent.executeShell).not.toHaveBeenCalled();
       expect(mockAgent.sendMessage).not.toHaveBeenCalled();
     });
   });

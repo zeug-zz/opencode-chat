@@ -1,11 +1,10 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { postMessage } from "../../vscode-api";
-import { createAllProvidersData, createMessage, createProvider, createSession, createToolPart } from "../factories";
+import { createSession } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
-/** アクティブセッションを持つ状態をセットアップする */
 async function setupActiveSession() {
   renderApp();
   const session = createSession({ id: "s1", title: "Chat" });
@@ -14,404 +13,45 @@ async function setupActiveSession() {
   return session;
 }
 
-// Shell command execution
 describe("シェルコマンド実行", () => {
-  // ! prefix sends executeShell instead of sendMessage
-  it("! プレフィクスで executeShell が送信されること", async () => {
+  it("! プレフィクスを含む入力を通常の sendMessage として送信すること", async () => {
     const session = await setupActiveSession();
     const user = userEvent.setup();
-
     const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+
     await user.type(textarea, "!ls -la{Enter}");
-
-    expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "executeShell",
-        sessionId: session.id,
-        command: "ls -la",
-      }),
-    );
-  });
-
-  // ! prefix does not send sendMessage
-  it("! プレフィクスの場合 sendMessage が送信されないこと", async () => {
-    await setupActiveSession();
-    const user = userEvent.setup();
-
-    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-    await user.type(textarea, "!echo hello{Enter}");
-
-    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
-  });
-
-  // ! only (no command) does not send
-  it("! のみでは送信されないこと", async () => {
-    await setupActiveSession();
-    const user = userEvent.setup();
-
-    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-    await user.type(textarea, "!{Enter}");
-
-    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "executeShell" }));
-    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
-  });
-
-  // Shell mode indicator appears when typing !
-  context("! を入力した場合", () => {
-    beforeEach(async () => {
-      await setupActiveSession();
-      const user = userEvent.setup();
-      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-      await user.type(textarea, "!");
-    });
-
-    // Shell mode chip is displayed in contextBar
-    it("シェルモードチップが contextBar に表示されること", () => {
-      const chip = screen.getByTestId("shell-chip");
-      expect(within(chip).getByText("Shell mode")).toBeInTheDocument();
-    });
-
-    // Placeholder changes to shell-specific text
-    it("プレースホルダーがシェルコマンド用に変わること", () => {
-      expect(screen.getByPlaceholderText("Enter shell command...")).toBeInTheDocument();
-    });
-
-    // ! is removed from textarea text
-    it("テキストエリアから ! が除去されること", () => {
-      const textarea = screen.getByPlaceholderText("Enter shell command...");
-      expect(textarea).toHaveValue("");
-    });
-  });
-
-  // Shell mode chip × button disables shell mode
-  context("シェルモードチップの × ボタンをクリックした場合", () => {
-    beforeEach(async () => {
-      await setupActiveSession();
-      const user = userEvent.setup();
-      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-      await user.type(textarea, "!");
-      // × ボタンをクリックしてシェルモードを解除する
-      const chip = screen.getByTestId("shell-chip");
-      const closeButton = within(chip).getByRole("button");
-      await user.click(closeButton);
-    });
-
-    // Shell mode chip is hidden
-    it("シェルモードチップが非表示になること", () => {
-      expect(screen.queryByTestId("shell-chip")).not.toBeInTheDocument();
-    });
-
-    // Placeholder reverts to normal
-    it("プレースホルダーが通常に戻ること", () => {
-      expect(screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)")).toBeInTheDocument();
-    });
-  });
-
-  // Text without ! prefix sends normal message
-  it("! なしのテキストは通常の sendMessage として送信されること", async () => {
-    const session = await setupActiveSession();
-    const user = userEvent.setup();
-
-    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-    await user.type(textarea, "Hello world{Enter}");
 
     expect(postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "sendMessage",
         sessionId: session.id,
-        text: "Hello world",
+        text: "!ls -la",
       }),
     );
     expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "executeShell" }));
   });
 
-  // executeShell includes selectedModel
-  it("executeShell に selectedModel が含まれること", async () => {
-    renderApp();
-
-    const provider = createProvider("anthropic", {
-      "claude-4-opus": { id: "claude-4-opus", name: "Claude 4 Opus", limit: { context: 200000, output: 4096 } },
-    });
-    await sendExtMessage({
-      type: "providers",
-      providers: [provider],
-      allProviders: createAllProvidersData(
-        ["anthropic"],
-        [
-          {
-            id: "anthropic",
-            name: "Anthropic",
-            models: {
-              "claude-4-opus": { id: "claude-4-opus", name: "Claude 4 Opus", limit: { context: 200000, output: 4096 } },
-            },
-          },
-        ],
-      ),
-      default: { general: "anthropic/claude-4-opus" },
-      configModel: "anthropic/claude-4-opus",
-    });
-
-    const session = createSession({ id: "s1" });
-    await sendExtMessage({ type: "activeSession", session });
-    vi.mocked(postMessage).mockClear();
-
-    const user = userEvent.setup();
-    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-    await user.type(textarea, "!git status{Enter}");
-
-    expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "executeShell",
-        sessionId: "s1",
-        command: "git status",
-        model: { providerID: "anthropic", modelID: "claude-4-opus" },
-      }),
-    );
-  });
-
-  // Input is cleared after shell command execution
-  it("シェルコマンド実行後に入力欄がクリアされること", async () => {
+  it("シェルモードの UI を表示しないこと", async () => {
     await setupActiveSession();
     const user = userEvent.setup();
-
     const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+
+    await user.type(textarea, "!");
+
+    expect(textarea).toHaveValue("!");
+    expect(screen.queryByTestId("shell-chip")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("shell-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Enter shell command...")).not.toBeInTheDocument();
+  });
+
+  it("通常の入力を送信した後に入力欄をクリアすること", async () => {
+    await setupActiveSession();
+    const user = userEvent.setup();
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+
     await user.type(textarea, "!pwd{Enter}");
 
     expect(textarea).toHaveValue("");
-  });
-
-  // Shell result is rendered with ShellResultView (terminal-style)
-  context("シェルコマンドの結果を受信した場合", () => {
-    beforeEach(async () => {
-      await setupActiveSession();
-      const user = userEvent.setup();
-
-      // ! プレフィクスでシェルコマンドを送信
-      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-      await user.type(textarea, "!ls{Enter}");
-
-      // サーバーからの応答をシミュレート: user メッセージ（シェルコマンドのトリガー）
-      const userMsg = createMessage({ id: "shell-u1", sessionID: "s1", role: "user" });
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.updated", properties: { info: userMsg } } as any,
-      });
-
-      // サーバーからの応答をシミュレート: message.updated（新しい assistant メッセージ）
-      const shellMsg = createMessage({ id: "shell-m1", sessionID: "s1", role: "assistant" });
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.updated", properties: { info: shellMsg } } as any,
-      });
-
-      // ツールパート（bash の実行結果）
-      const shellPart = createToolPart("bash", {
-        messageID: "shell-m1",
-        sessionID: "s1",
-        state: {
-          status: "completed",
-          title: "ls",
-          input: { command: "ls" },
-          output: "file1.txt\nfile2.txt",
-        },
-      } as any);
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.part.updated", properties: { sessionID: "s1", part: shellPart } } as any,
-      });
-    });
-
-    // Shell result is displayed in terminal style (shows "Shell" header)
-    it("ターミナル風のシェル結果ヘッダーが表示されること", () => {
-      expect(screen.getByText("Shell")).toBeInTheDocument();
-    });
-
-    // Shell output is visible without clicking (expanded by default)
-    it("シェル出力がデフォルトで展開表示されること", () => {
-      expect(screen.getByText(/file1\.txt/)).toBeInTheDocument();
-    });
-
-    // User message bubble is hidden for shell commands
-    it("シェルコマンドのユーザー吹き出しが非表示であること", () => {
-      // ユーザーメッセージは ShellResultView の "$ command" で表示されるため
-      // 通常のユーザー吹き出し（クリックで編集可能な要素）は表示されない
-      const userBubbles = document.querySelectorAll("[class*='userBubble']");
-      expect(userBubbles).toHaveLength(0);
-    });
-
-    // $ prompt is rendered for the command
-    it("$ プロンプトとコマンドが表示されること", () => {
-      expect(screen.getByText("$")).toBeInTheDocument();
-      expect(screen.getByText("ls")).toBeInTheDocument();
-    });
-  });
-
-  // Shell result with error
-  context("シェルコマンドがエラーを返した場合", () => {
-    beforeEach(async () => {
-      await setupActiveSession();
-      const user = userEvent.setup();
-
-      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-      await user.type(textarea, "!bad-cmd{Enter}");
-
-      const userMsg = createMessage({ id: "err-u1", sessionID: "s1", role: "user" });
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.updated", properties: { info: userMsg } } as any,
-      });
-
-      const shellMsg = createMessage({ id: "err-m1", sessionID: "s1", role: "assistant" });
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.updated", properties: { info: shellMsg } } as any,
-      });
-
-      const shellPart = createToolPart("bash", {
-        messageID: "err-m1",
-        sessionID: "s1",
-        state: {
-          status: "error",
-          title: "bad-cmd",
-          input: { command: "bad-cmd" },
-          error: "command not found: bad-cmd",
-        },
-      } as any);
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.part.updated", properties: { sessionID: "s1", part: shellPart } } as any,
-      });
-    });
-
-    // error message is displayed
-    it("エラーメッセージが表示されること", () => {
-      expect(screen.getByText("command not found: bad-cmd")).toBeInTheDocument();
-    });
-
-    // error styling is applied
-    it("エラー用のスタイルが適用されること", () => {
-      const errorOutput = document.querySelector("[class*='outputError']");
-      expect(errorOutput).toBeInTheDocument();
-    });
-  });
-
-  // Shell result in running state
-  context("シェルコマンドが実行中の場合", () => {
-    beforeEach(async () => {
-      await setupActiveSession();
-      const user = userEvent.setup();
-
-      const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-      await user.type(textarea, "!sleep 30{Enter}");
-
-      const userMsg = createMessage({ id: "run-u1", sessionID: "s1", role: "user" });
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.updated", properties: { info: userMsg } } as any,
-      });
-
-      const shellMsg = createMessage({ id: "run-m1", sessionID: "s1", role: "assistant" });
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.updated", properties: { info: shellMsg } } as any,
-      });
-
-      const shellPart = createToolPart("bash", {
-        messageID: "run-m1",
-        sessionID: "s1",
-        state: {
-          status: "running",
-          title: "sleep 30",
-          input: { command: "sleep 30" },
-        },
-      } as any);
-      await sendExtMessage({
-        type: "event",
-        event: { type: "message.part.updated", properties: { sessionID: "s1", part: shellPart } } as any,
-      });
-    });
-
-    // spinner is displayed
-    it("スピナーが表示されること", () => {
-      const spinner = document.querySelector("[class*='spinner']");
-      expect(spinner).toBeInTheDocument();
-    });
-  });
-
-  // task 3.1: executeShell is intentionally NOT extended with
-  // `effort` in this change. The opencode SDK 1.2.17
-  // `client.session.shell(...)` body has no `variant` field, so the
-  // shell payload must remain `{ sessionId, command, model }` only,
-  // even when an explicit effort is selected in the GUI. This guards
-  // both the default (no effort) and explicit-effort code paths.
-  it("effort 選択時でも executeShell には effort プロパティが含まれないこと", async () => {
-    renderApp();
-
-    const provider = createProvider("openai", {
-      "gpt-5.4": {
-        id: "gpt-5.4",
-        name: "GPT-5.4",
-        limit: { context: 128000, output: 4096 },
-        variants: {
-          low: { label: "Low" },
-          medium: { label: "Medium" },
-          high: { label: "High" },
-        },
-      },
-    });
-    await sendExtMessage({
-      type: "providers",
-      providers: [provider],
-      allProviders: createAllProvidersData(
-        ["openai"],
-        [
-          {
-            id: "openai",
-            name: "OpenAI",
-            models: {
-              "gpt-5.4": {
-                id: "gpt-5.4",
-                name: "GPT-5.4",
-                limit: { context: 128000, output: 4096 },
-                variants: {
-                  low: { label: "Low" },
-                  medium: { label: "Medium" },
-                  high: { label: "High" },
-                },
-              },
-            },
-          },
-        ],
-      ),
-      default: { general: "openai/gpt-5.4" },
-      configModel: "openai/gpt-5.4",
-    });
-
-    const session = createSession({ id: "s1" });
-    await sendExtMessage({ type: "activeSession", session });
-    vi.mocked(postMessage).mockClear();
-
-    // Ctrl+T で effort を選択する
-    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
-    fireEvent.keyDown(textarea, { key: "t", ctrlKey: true });
-
-    // ! プレフィクスでシェルコマンドを送信
-    const user = userEvent.setup();
-    await user.type(textarea, "!git status{Enter}");
-
-    const calls = vi.mocked(postMessage).mock.calls;
-    const shellCall = calls.find((c) => (c[0] as { type?: string })?.type === "executeShell");
-    expect(shellCall, "executeShell must have been called").toBeDefined();
-    // effort プロパティは payload 自体に存在しない。
-    expect("effort" in (shellCall![0] as object)).toBe(false);
-    // 既存のフィールドは維持される。
-    expect(shellCall![0]).toEqual(
-      expect.objectContaining({
-        type: "executeShell",
-        sessionId: "s1",
-        command: "git status",
-        model: { providerID: "openai", modelID: "gpt-5.4" },
-      }),
-    );
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "executeShell" }));
   });
 });

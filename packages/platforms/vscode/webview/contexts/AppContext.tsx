@@ -55,7 +55,6 @@ export type AppContextValue = {
 
   // Actions
   onSend: (text: string, files: FileAttachment[]) => void;
-  onShellExecute: (command: string) => void;
   isShellMessage: (messageId: string) => boolean;
   onAbort: () => void;
   onEditAndResend: (messageId: string, text: string) => void;

@@ -13,6 +13,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // UI クライアント側で管理する（TUI も同様の設計）。
   private activeSession: ChatSession | null = null;
   private readonly chatSystemPrompt: string | null;
+  private readonly writeSystemPrompt: string | null;
+
+  private getSystemPrompt(primaryAgent: string | undefined, explicitSystem: string | undefined): string | undefined {
+    return (
+      explicitSystem ??
+      (primaryAgent === "scout"
+        ? this.chatSystemPrompt
+        : primaryAgent === "build"
+          ? this.writeSystemPrompt
+          : undefined) ??
+      undefined
+    );
+  }
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -21,14 +34,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly diffReviewManager: DiffReviewManager,
     private readonly difitAvailable: boolean,
   ) {
-    let prompt: string | null = null;
-    try {
-      const content = readFileSync(path.join(this.extensionUri.fsPath, "CHAT_SYSTEM.md"), "utf-8").trim();
-      if (content) prompt = content;
-    } catch {
-      // CHAT_SYSTEM.md missing or unreadable — no custom system prompt injected
-    }
-    this.chatSystemPrompt = prompt;
+    this.chatSystemPrompt = this.loadSystemPrompt("CHAT_SYSTEM.md");
+    this.writeSystemPrompt = this.loadSystemPrompt("WRITE_SYSTEM.md");
   }
 
   resolveWebviewView(
@@ -132,8 +139,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "sendMessage": {
-        const system =
-          message.system ?? (message.primaryAgent === "scout" ? this.chatSystemPrompt : undefined) ?? undefined;
+        const system = this.getSystemPrompt(message.primaryAgent, message.system);
         await this.agent.sendMessage(message.sessionId, message.text, {
           model: message.model,
           files: message.files,
@@ -260,12 +266,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.agent.sendMessage(message.sessionId, message.text, {
           model: message.model,
           files: message.files,
+          ...(message.primaryAgent !== undefined && { primaryAgent: message.primaryAgent }),
+          ...(message.system !== undefined || message.primaryAgent !== undefined
+            ? { system: this.getSystemPrompt(message.primaryAgent, message.system) }
+            : {}),
           ...(message.effort !== undefined && { effort: message.effort }),
         });
         break;
       }
       case "executeShell": {
-        await this.agent.executeShell(message.sessionId, message.command, message.model);
         break;
       }
       case "openConfigFile": {
@@ -469,6 +478,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private postMessage(message: HostToUIMessage): void {
     this.view?.webview.postMessage(message);
+  }
+
+  private loadSystemPrompt(filename: string): string | null {
+    try {
+      const content = readFileSync(path.join(this.extensionUri.fsPath, filename), "utf-8").trim();
+      return content || null;
+    } catch {
+      return null;
+    }
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string {

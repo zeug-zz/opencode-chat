@@ -43,6 +43,18 @@ and task permissions. However:
 - **The Scout read-only overlay is defense-in-depth**, not a sandbox. It limits the companion
   agent itself; downstream tool execution through MCP servers is the user's responsibility.
 
+## Companion Write Boundary and Coding Handoff
+
+The companion's user-facing Write mode is backed by OpenCode's `build` agent, but its
+companion permissions are limited to reading files, searching the workspace, configured web
+research, and editing requested report files. Write does not receive agent-level Bash or
+task/subagent execution. This boundary applies to the companion process and does not change
+the independent OpenCode TUI's normal Build behavior.
+
+For serious coding or shell work, use the existing terminal handoff to open the active session
+in an independent OpenCode TUI process. The companion remains available, but terminal handoff
+is the supported coding escape hatch rather than an unrestricted command runner in the chat UI.
+
 ## Accepted Risks
 
 | Date       | Finding | Severity | Rationale |

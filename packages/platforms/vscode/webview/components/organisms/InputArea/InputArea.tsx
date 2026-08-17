@@ -30,7 +30,6 @@ import styles from "./InputArea.module.css";
 
 type Props = {
   onSend: (text: string, files: FileAttachment[], agent?: string, primaryAgent?: string, skill?: string) => void;
-  onShellExecute: (command: string) => void;
   onAbort: () => void;
   isBusy: boolean;
   providers: ProviderInfo[];
@@ -84,7 +83,6 @@ type Props = {
 
 export function InputArea({
   onSend,
-  onShellExecute,
   onAbort,
   isBusy,
   providers,
@@ -140,7 +138,6 @@ export function InputArea({
   const [slashQuery, setSlashQuery] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
-  const [isShellMode, setIsShellMode] = useState(false);
   // ポップアップ内のフォーカス位置（-1 = フォーカスなし）
   const [hashFocusedIndex, setHashFocusedIndex] = useState(-1);
   const [atFocusedIndex, setAtFocusedIndex] = useState(-1);
@@ -193,8 +190,6 @@ export function InputArea({
         if (prev.some((f) => f.filePath === file.filePath)) return prev;
         return [...prev, file];
       });
-      // ファイル添付はシェルモードと排他
-      setIsShellMode(false);
       setShowFilePicker(false);
       // # トリガーの場合はテキストから #query を消す
       if (hashTrigger.active) {
@@ -256,34 +251,10 @@ export function InputArea({
     }
   }, [hashTrigger.active, hashQuery]);
 
-  // シェルモード ON: session.shell() はファイル・エージェントパラメータを受け付けないため排他にする
-  const enableShellMode = useCallback(() => {
-    setIsShellMode(true);
-    setAttachedFiles([]);
-    setSelectedAgent(null);
-    setSelectedSkill(null);
-  }, []);
-
-  // シェルモード OFF
-  const disableShellMode = useCallback(() => {
-    setIsShellMode(false);
-  }, []);
-
-  // シェルモードトグル（統合メニュー用）
-  const toggleShellMode = useCallback(() => {
-    if (isShellMode) {
-      disableShellMode();
-    } else {
-      enableShellMode();
-    }
-  }, [isShellMode, enableShellMode, disableShellMode]);
-
   // @ トリガー: エージェント選択時のハンドラ
   const selectAgent = useCallback(
     (agent: AgentInfo) => {
       setSelectedAgent(agent);
-      // エージェント選択はシェルモードと排他
-      setIsShellMode(false);
       // テキストから @query を削除する
       if (atTrigger.active) {
         setText((prev) => {
@@ -307,7 +278,6 @@ export function InputArea({
   const selectSkill = useCallback(
     (skill: SkillInfo) => {
       setSelectedSkill(skill);
-      setIsShellMode(false);
       if (slashTrigger.active) {
         setText((prev) => {
           const before = prev.slice(0, slashTrigger.startIndex);
@@ -332,30 +302,15 @@ export function InputArea({
     if (!trimmed) return;
     // 送信テキストを履歴に追加する
     inputHistory.addEntry(trimmed);
-    if (isShellMode) {
-      onShellExecute(trimmed);
-    } else {
-      onSend(trimmed, attachedFiles, selectedAgent?.name, selectedPrimaryAgent ?? undefined, selectedSkill?.name);
-    }
+    onSend(trimmed, attachedFiles, selectedAgent?.name, selectedPrimaryAgent ?? undefined, selectedSkill?.name);
     setText("");
     setAttachedFiles([]);
     setSelectedAgent(null);
     setSelectedSkill(null);
-    setIsShellMode(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [
-    text,
-    attachedFiles,
-    onSend,
-    onShellExecute,
-    selectedAgent?.name,
-    selectedSkill?.name,
-    isShellMode,
-    inputHistory,
-    selectedPrimaryAgent,
-  ]);
+  }, [text, attachedFiles, onSend, selectedAgent?.name, selectedSkill?.name, inputHistory, selectedPrimaryAgent]);
 
   // # トリガーのファイル候補
   const hashFiles = hashQuery
@@ -617,14 +572,6 @@ export function InputArea({
         inputHistory.resetNavigation();
       }
 
-      // ! プレフィクス検出: 先頭に ! が入力されたらシェルモードを ON にし ! をテキストから除去する
-      if (newText.startsWith("!") && !isShellMode) {
-        enableShellMode();
-        const withoutBang = newText.slice(1);
-        setText(withoutBang);
-        return;
-      }
-
       // # トリガー検出
       const cursorPos = e.target.selectionStart;
       if (newText.length > text.length) {
@@ -700,7 +647,7 @@ export function InputArea({
         }
       }
     },
-    [text, hashTrigger, atTrigger, slashTrigger, isShellMode, enableShellMode, inputHistory],
+    [text, hashTrigger, atTrigger, slashTrigger, inputHistory],
   );
 
   const handleInput = useCallback(() => {
@@ -747,9 +694,6 @@ export function InputArea({
               selectedSkill={selectedSkill}
               onSelectSkill={selectSkill}
               onClearSkill={clearSkill}
-              isShellMode={isShellMode}
-              onToggleShellMode={toggleShellMode}
-              onDisableShellMode={disableShellMode}
             />
           </div>
         </div>
@@ -759,7 +703,7 @@ export function InputArea({
           <textarea
             ref={textareaRef}
             className={styles.textarea}
-            placeholder={isShellMode ? t["input.placeholder.shell"] : t["input.placeholder"]}
+            placeholder={t["input.placeholder"]}
             value={text}
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { FileAttachmentBar } from "../../../components/molecules/FileAttachmentBar";
@@ -34,9 +34,6 @@ const defaultProps = {
   selectedSkill: null,
   onSelectSkill: vi.fn(),
   onClearSkill: vi.fn(),
-  isShellMode: false,
-  onToggleShellMode: vi.fn(),
-  onDisableShellMode: vi.fn(),
 };
 
 describe("FileAttachmentBar", () => {
@@ -109,8 +106,7 @@ describe("FileAttachmentBar", () => {
       expect(container.querySelector(".pickerDropdown")).toBeInTheDocument();
     });
 
-    // renders four sections: Files, Agents, Skills, Shell Mode
-    it("4 つのセクション（Files, Agents, Skills, Shell Mode）を表示すること", () => {
+    it("Files, Agents, Skills のセクションを表示し Shell Mode を表示しないこと", () => {
       render(
         <FileAttachmentBar
           {...defaultProps}
@@ -123,7 +119,7 @@ describe("FileAttachmentBar", () => {
       expect(screen.getByText("Files")).toBeInTheDocument();
       expect(screen.getByText("Sub-agents")).toBeInTheDocument();
       expect(screen.getByText("Skills")).toBeInTheDocument();
-      expect(screen.getByText("Shell Mode")).toBeInTheDocument();
+      expect(screen.queryByText("Shell Mode")).not.toBeInTheDocument();
     });
   });
 
@@ -143,42 +139,6 @@ describe("FileAttachmentBar", () => {
       const user = userEvent.setup();
       await user.click(screen.getByText("coder"));
       expect(onSelectAgent).toHaveBeenCalledWith(agent1);
-    });
-  });
-
-  // when shell toggle is clicked
-  context("シェルモードトグルをクリックした場合", () => {
-    // calls onToggleShellMode
-    it("onToggleShellMode が呼ばれること", async () => {
-      const onToggleShellMode = vi.fn();
-      render(<FileAttachmentBar {...defaultProps} showFilePicker={true} onToggleShellMode={onToggleShellMode} />);
-      const user = userEvent.setup();
-      await user.click(screen.getByTestId("shell-toggle"));
-      expect(onToggleShellMode).toHaveBeenCalledOnce();
-    });
-  });
-
-  // when isShellMode is true
-  context("シェルモードが ON の場合", () => {
-    // file section is disabled
-    it("ファイルセクションが無効化されること", () => {
-      const { container } = render(
-        <FileAttachmentBar
-          {...defaultProps}
-          showFilePicker={true}
-          pickerFiles={[file1]}
-          agents={[agent1]}
-          isShellMode={true}
-        />,
-      );
-      const disabledSections = container.querySelectorAll(".sectionDisabled");
-      expect(disabledSections.length).toBe(3);
-    });
-
-    // toggle track has toggleOn class
-    it("トグルが ON 状態で表示されること", () => {
-      const { container } = render(<FileAttachmentBar {...defaultProps} showFilePicker={true} isShellMode={true} />);
-      expect(container.querySelector(".toggleOn")).toBeInTheDocument();
     });
   });
 });

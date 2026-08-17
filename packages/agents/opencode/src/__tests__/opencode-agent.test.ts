@@ -162,10 +162,53 @@ describe("OpenCodeAgent", () => {
                 question: "allow",
               },
             },
+            build: {
+              permission: {
+                "*": "deny",
+                read: "allow",
+                glob: "allow",
+                grep: "allow",
+                list: "allow",
+                webfetch: "allow",
+                websearch: "allow",
+                edit: "allow",
+              },
+            },
           },
         },
       });
       expect(createOpencodeClient).toHaveBeenCalledWith({ baseUrl: "http://localhost:12345" });
+    });
+
+    it("should constrain Build-backed Write to the effective report tools", async () => {
+      await agent.connect();
+
+      const options = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
+      expect(options).toBeDefined();
+      if (!options) throw new Error("Expected companion server options");
+      const config = options.config;
+      const agents = config?.agent as Record<string, { permission?: Record<string, string> }>;
+      const writePermission = agents.build.permission;
+      const allowedTools = ["read", "glob", "grep", "list", "webfetch", "websearch", "edit"];
+      const deniedTools = ["bash", "task", "question", "todowrite", "skill"];
+
+      expect(writePermission?.["*"]).toBe("deny");
+      expect(Object.keys(writePermission ?? {}).filter((key) => key !== "*")).toEqual(allowedTools);
+      expect(allowedTools.every((tool) => writePermission?.[tool] === "allow")).toBe(true);
+      expect(deniedTools.every((tool) => (writePermission?.[tool] ?? writePermission?.["*"]) === "deny")).toBe(true);
+      expect(agents.build).not.toHaveProperty("prompt");
+      expect(agents.scout.permission).toEqual({
+        edit: "deny",
+        bash: "deny",
+        task: "deny",
+        read: "allow",
+        glob: "allow",
+        grep: "allow",
+        list: "allow",
+        webfetch: "allow",
+        websearch: "allow",
+        question: "allow",
+      });
     });
 
     it("should not write config files during connect", async () => {

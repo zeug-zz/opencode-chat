@@ -76,6 +76,36 @@ describe("メッセージ編集とチェックポイント", () => {
     );
   });
 
+  it("Chat mode を編集して再送すると primaryAgent に scout を含めること", async () => {
+    await setupConversation();
+    await sendExtMessage({
+      type: "agents",
+      agents: [{ name: "scout", description: "Chat", mode: "primary" } as any],
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Second question"));
+    const editTextarea = screen.getByDisplayValue("Second question");
+    await user.clear(editTextarea);
+    await user.type(editTextarea, "Revised chat{Enter}");
+
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "editAndResend", primaryAgent: "scout" }));
+  });
+
+  it("Write mode を編集して再送すると内部 primaryAgent に build を含めること", async () => {
+    await setupConversation();
+    await sendExtMessage({
+      type: "agents",
+      agents: [{ name: "build", description: "Write", mode: "primary" } as any],
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Second question"));
+    const editTextarea = screen.getByDisplayValue("Second question");
+    await user.clear(editTextarea);
+    await user.type(editTextarea, "Revised report{Enter}");
+
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "editAndResend", primaryAgent: "build" }));
+  });
+
   // Escape cancels editing
   context("Escape で編集をキャンセルした場合", () => {
     beforeEach(async () => {

@@ -3,7 +3,7 @@ import { useLocale } from "../../../locales";
 import { getFileIcon } from "../../../utils/file-icons";
 import type { FileAttachment } from "../../../vscode-api";
 import { IconButton } from "../../atoms/IconButton";
-import { AgentIcon, ClipIcon, CloseIcon, GearIcon, PlusIcon, TerminalIcon } from "../../atoms/icons";
+import { AgentIcon, ClipIcon, CloseIcon, GearIcon, PlusIcon } from "../../atoms/icons";
 import { ListItem } from "../../atoms/ListItem";
 import styles from "./FileAttachmentBar.module.css";
 
@@ -27,9 +27,6 @@ type Props = {
   selectedSkill: SkillInfo | null;
   onSelectSkill: (skill: SkillInfo) => void;
   onClearSkill: () => void;
-  isShellMode: boolean;
-  onToggleShellMode: () => void;
-  onDisableShellMode: () => void;
 };
 
 export function FileAttachmentBar({
@@ -52,9 +49,6 @@ export function FileAttachmentBar({
   selectedSkill,
   onSelectSkill,
   onClearSkill,
-  isShellMode,
-  onToggleShellMode,
-  onDisableShellMode,
 }: Props) {
   const t = useLocale();
 
@@ -74,14 +68,13 @@ export function FileAttachmentBar({
         {showFilePicker && (
           <div className={styles.pickerDropdown}>
             {/* ファイルセクション */}
-            <div className={isShellMode ? styles.sectionDisabled : undefined}>
+            <div>
               <div className={styles.sectionHeader}>{t["input.section.files"]}</div>
               <input
                 className={styles.pickerSearch}
                 placeholder={t["input.searchFiles"]}
                 value={filePickerQuery}
                 onChange={(e) => onFilePickerSearch(e.target.value)}
-                disabled={isShellMode}
               />
               <div className={styles.pickerList}>
                 {pickerFiles.length > 0 ? (
@@ -104,7 +97,7 @@ export function FileAttachmentBar({
             </div>
 
             {/* エージェントセクション */}
-            <div className={isShellMode ? styles.sectionDisabled : undefined}>
+            <div>
               <div className={styles.sectionDivider} />
               <div className={styles.sectionHeader}>{t["input.section.agents"]}</div>
               <div className={styles.pickerList}>
@@ -125,7 +118,7 @@ export function FileAttachmentBar({
             </div>
 
             {/* スキルセクション */}
-            <div className={isShellMode ? styles.sectionDisabled : undefined}>
+            <div>
               <div className={styles.sectionDivider} />
               <div className={styles.sectionHeader}>{t["input.section.skills"]}</div>
               <div className={styles.pickerList}>
@@ -145,30 +138,9 @@ export function FileAttachmentBar({
                 )}
               </div>
             </div>
-
-            {/* シェルモードセクション */}
-            <div className={styles.sectionDivider} />
-            <div className={styles.sectionHeader}>{t["input.section.shell"]}</div>
-            <button type="button" className={styles.toggleRow} onClick={onToggleShellMode} data-testid="shell-toggle">
-              <TerminalIcon />
-              <span className={styles.toggleLabel}>{t["input.shellMode"]}</span>
-              <div className={`${styles.toggleTrack} ${isShellMode ? styles.toggleOn : ""}`}>
-                <div className={styles.toggleThumb} />
-              </div>
-            </button>
           </div>
         )}
       </div>
-      {/* シェルモードチップ */}
-      {isShellMode && (
-        <div className={styles.shellChip} data-testid="shell-chip">
-          <TerminalIcon />
-          <span className={styles.shellChipName}>{t["input.shellMode"]}</span>
-          <button type="button" className={styles.shellChipClear} onClick={onDisableShellMode}>
-            <CloseIcon width={12} height={12} />
-          </button>
-        </div>
-      )}
       {/* 選択済みエージェントチップ */}
       {selectedAgent && (
         <div className={styles.agentChip}>

@@ -178,7 +178,6 @@ function getEffortText(): string | null {
 function makeBareProps(overrides: Record<string, unknown> = {}) {
   return {
     onSend: vi.fn(),
-    onShellExecute: vi.fn(),
     onAbort: vi.fn(),
     isBusy: false,
     providers: [openaiConnectedProvider],

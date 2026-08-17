@@ -12,12 +12,12 @@ type Props = {
 };
 
 const ALLOWED_AGENTS = ["scout", "build"];
-const AGENT_DISPLAY_NAMES: Record<string, string> = { scout: "chat" };
+const AGENT_DISPLAY_NAMES: Record<string, string> = { scout: "chat", build: "write" };
 const getDisplayName = (name: string) => AGENT_DISPLAY_NAMES[name] ?? name;
 
 const AGENT_DESCRIPTIONS: Record<string, string> = {
   scout: "Default mode for chatting and research. Read-only, no code execution.",
-  build: "Full agent mode. Can run commands and edit files.",
+  build: "Research, draft, and save reports to requested files. Use terminal handoff for serious coding.",
 };
 const getDescription = (agent: AgentInfo) => AGENT_DESCRIPTIONS[agent.name] ?? agent.description;
 

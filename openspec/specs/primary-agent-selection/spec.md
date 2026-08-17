@@ -1,7 +1,7 @@
 # primary-agent-selection Specification
 
 ## Purpose
-Selects and displays the primary chat agent in the VS Code companion, defaulting the lightweight chat canvas and preserving build mode as an escape hatch.
+Selects and displays the primary chat agent in the VS Code companion, defaulting the lightweight chat canvas and preserving write mode as an escape hatch.
 
 ## Requirements
 
@@ -36,6 +36,16 @@ OpenCode Chat SHALL NOT overwrite a non-empty selected primary agent when a subs
 - **THEN** the existing selected primary agent SHALL remain selected
 - **AND** initialization fallback logic SHALL NOT replace it
 
+### Requirement: Display user-facing mode names
+
+The primary-agent selector SHALL display `chat` for the internal `scout` agent and `write` for the internal `build` agent while preserving the internal agent names for message requests.
+
+#### Scenario: Chat and write modes are displayed
+
+- **WHEN** the webview receives eligible `scout` and `build` agents
+- **THEN** the primary-agent selector SHALL offer `chat` and `write`
+- **AND** selecting `write` SHALL continue to send `primaryAgent: "build"`
+
 ### Requirement: Keep primary-agent send behavior unchanged
 
 The default primary-agent selection change SHALL preserve existing message send behavior for primary agents.
@@ -57,7 +67,7 @@ OpenCode Chat SHALL append the chat companion system prompt when sending a messa
 - **AND** the message does not include an explicit `system` override
 - **THEN** the extension host SHALL forward the loaded chat companion system prompt to the agent send call
 
-#### Scenario: Build message does not use chat companion prompt
+#### Scenario: Write message does not use chat companion prompt
 
 - **WHEN** the webview sends a chat message with `primaryAgent: "build"`
 - **AND** the message does not include an explicit `system` override

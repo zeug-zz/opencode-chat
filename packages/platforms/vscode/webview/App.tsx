@@ -381,22 +381,6 @@ export function App() {
     [session.activeSession, prov.selectedModel, prov.selectedModelEffort],
   );
 
-  // ! プレフィクスで入力されたシェルコマンドを session.shell API 経由で実行する
-  const handleShellExecute = useCallback(
-    (command: string) => {
-      if (!session.activeSession) return;
-      // 次に到着する assistant メッセージをシェル結果としてタグ付けする準備
-      msg.markPendingShell();
-      postMessage({
-        type: "executeShell",
-        sessionId: session.activeSession.id,
-        command,
-        model: prov.selectedModel ?? undefined,
-      });
-    },
-    [session.activeSession, prov.selectedModel, msg.markPendingShell],
-  );
-
   const handleAbort = useCallback(() => {
     if (!session.activeSession) return;
     postMessage({ type: "abort", sessionId: session.activeSession.id });
@@ -426,6 +410,7 @@ export function App() {
           messageId: targetMessageId,
           text,
           model: prov.selectedModel ?? undefined,
+          ...(selectedPrimaryAgent !== null && { primaryAgent: selectedPrimaryAgent }),
         };
         if (prov.selectedModelEffort) {
           payload.effort = prov.selectedModelEffort;
@@ -445,7 +430,7 @@ export function App() {
         postMessage(buildPayload(prevMessageId));
       }
     },
-    [session.activeSession, prov.selectedModel, prov.selectedModelEffort],
+    [session.activeSession, prov.selectedModel, prov.selectedModelEffort, selectedPrimaryAgent],
   );
 
   // チェックポイントまで巻き戻す + ユーザーメッセージのテキストを入力欄に復元
@@ -592,7 +577,6 @@ export function App() {
     onOpenDiffEditor: handleOpenDiffEditor,
     onOpenFile: handleOpenFile,
     onSend: handleSend,
-    onShellExecute: handleShellExecute,
     isShellMessage: msg.isShellMessage,
     onAbort: handleAbort,
     onEditAndResend: handleEditAndResend,
@@ -659,7 +643,6 @@ export function App() {
               {!isChildSession && (
                 <InputArea
                   onSend={handleSend}
-                  onShellExecute={handleShellExecute}
                   onAbort={handleAbort}
                   isBusy={session.sessionBusy}
                   providers={prov.providers}

@@ -72,8 +72,8 @@ export type UIToHostMessage =
       /**
        * Optional system prompt override. When sent from the webview, the
        * extension host merges this into the promptAsync call. If omitted,
-       * the extension host auto-injects a chat companion prompt when the
-       * primary agent is "plan".
+       * the extension host auto-injects the Scout chat prompt or the Write
+       * report-authoring prompt based on the selected primary agent.
        */
       system?: string;
     }
@@ -90,6 +90,8 @@ export type UIToHostMessage =
        */
       effort?: ModelVariantRef;
       files?: FileAttachment[];
+      primaryAgent?: string;
+      system?: string;
     }
   | { type: "abort"; sessionId: string }
 
