@@ -22,6 +22,7 @@ vi.mock("node:fs/promises", () => ({
 import * as fs from "node:fs/promises";
 import type { IAgent, IPlatformServices } from "@opencode-chat/core";
 import * as vscode from "vscode";
+import type { ChatMcpPrefs, ChatMcpPrefsStore } from "../chat-mcp-prefs";
 import { ChatViewProvider } from "../chat-view-provider";
 import type { DiffReviewManager } from "../diff-review-manager";
 
@@ -162,6 +163,10 @@ function setupProvider(
   mockPlatformServices?: ReturnType<typeof createMockPlatformServices>,
   mockDiffReviewManager?: ReturnType<typeof createMockDiffReviewManager>,
   difitAvailable = false,
+  setChatSandboxSettings?: (
+    settings: import("@opencode-chat/core").ChatSandboxSettings,
+  ) => Promise<import("@opencode-chat/core").ChatSandboxStatus>,
+  chatMcpPrefs?: ChatMcpPrefsStore,
 ) {
   const extensionUri = { fsPath: "/ext" };
   const ps = mockPlatformServices ?? createMockPlatformServices();
@@ -172,6 +177,7 @@ function setupProvider(
     ps as never,
     drm as never,
     difitAvailable,
+    { setChatSandboxSettings, chatMcpPrefs },
   );
   const mock = createMockWebviewView();
   provider.resolveWebviewView(
@@ -192,6 +198,46 @@ describe("ChatViewProvider", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe("Chat sandbox settings", () => {
+    const previousStatus = {
+      mode: "off" as const,
+      allowNetwork: true,
+      enabled: false,
+      inherited: false,
+      applying: false,
+      managed: false,
+      supported: true,
+    };
+
+    it("applies settings through the injected operation and posts the resulting status", async () => {
+      const apply = vi.fn().mockResolvedValue({ ...previousStatus, mode: "on", enabled: true });
+      const settings = { mode: "on" as const, allowNetwork: false };
+      const { provider, postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, apply);
+      provider.publishChatSandboxStatus(previousStatus);
+      await sendMessage({ type: "setChatSandboxSettings", settings });
+
+      expect(apply).toHaveBeenCalledWith(settings);
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "chatSandboxStatus",
+        status: { ...previousStatus, mode: "on", enabled: true },
+      });
+    });
+
+    it("posts the previous effective status with an error when applying fails", async () => {
+      const apply = vi.fn().mockRejectedValue(new Error("sandbox startup failed"));
+      const { provider, postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, apply);
+      provider.publishChatSandboxStatus(previousStatus);
+      postMessage.mockClear();
+
+      await sendMessage({ type: "setChatSandboxSettings", settings: { mode: "on", allowNetwork: true } });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "chatSandboxStatus",
+        status: { ...previousStatus, applying: false, error: "sandbox startup failed" },
+      });
+    });
   });
 
   // ============================================================
@@ -391,6 +437,92 @@ describe("ChatViewProvider", () => {
           configModel: undefined,
         }),
       );
+    });
+
+    it("publishes empty host preferences with no locked servers on ready", async () => {
+      const store: ChatMcpPrefsStore = { read: () => ({}), write: vi.fn() };
+      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "mcpPrefs", prefs: {}, locked: [] });
+    });
+
+    it("keeps populated host preferences authoritative on ready", async () => {
+      const store: ChatMcpPrefsStore = {
+        read: () => ({ selected: true }),
+        write: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "mcpPrefs", prefs: { selected: true }, locked: [] });
+    });
+  });
+
+  describe("refresh after reconnect", () => {
+    it("refreshes active data and posts sandbox status without changing MCP or config", async () => {
+      const activeSession = { id: "active", title: "Active" };
+      const refreshedSession = { id: "active", title: "Refreshed" };
+      const sessions = [refreshedSession];
+      const messages = [{ id: "message-1" }];
+      const providers = { providers: [{ id: "provider-1" }], default: { model: "model-1" } };
+      const allProviders = { all: [{ id: "provider-1" }], default: {}, connected: ["provider-1"] };
+      const agents = [{ id: "agent-1" }];
+      const mcpStatus = { server: { connected: true } };
+      const sandboxStatus = {
+        mode: "on" as const,
+        allowNetwork: true,
+        enabled: true,
+        inherited: false,
+        applying: false,
+        managed: false,
+        supported: true,
+      };
+
+      mockAgent.getSession.mockResolvedValueOnce(activeSession).mockResolvedValueOnce(refreshedSession);
+      mockAgent.listSessions.mockResolvedValue(sessions);
+      mockAgent.getMessages.mockResolvedValue(messages);
+      mockAgent.getProviders.mockResolvedValue(providers);
+      mockAgent.listAllProviders.mockResolvedValue(allProviders);
+      mockAgent.getAgents.mockResolvedValue(agents);
+      mockAgent.getMcpStatus.mockResolvedValue(mcpStatus);
+      vi.mocked(fs.readFile).mockResolvedValue('{"model":"provider/model-1"}');
+
+      const { provider, postMessage, sendMessage } = setupProvider(mockAgent);
+      await sendMessage({ type: "selectSession", sessionId: "active" });
+      postMessage.mockClear();
+
+      await provider.refresh(sandboxStatus);
+
+      expect(mockAgent.getSession).toHaveBeenCalledWith("active");
+      expect(mockAgent.getMessages).toHaveBeenCalledWith("active");
+      expect(postMessage).toHaveBeenCalledWith({ type: "sessions", sessions });
+      expect(postMessage).toHaveBeenCalledWith({ type: "activeSession", session: refreshedSession });
+      expect(postMessage).toHaveBeenCalledWith({ type: "messages", sessionId: "active", messages });
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "providers", configModel: "provider/model-1" }),
+      );
+      expect(postMessage).toHaveBeenCalledWith({ type: "agents", agents });
+      expect(postMessage).toHaveBeenCalledWith({ type: "mcpStatus", status: mcpStatus });
+      expect(postMessage).toHaveBeenCalledWith({ type: "chatSandboxStatus", status: sandboxStatus });
+      expect(mockAgent.connectMcp).not.toHaveBeenCalled();
+      expect(mockAgent.disconnectMcp).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
+    });
+
+    it("is safe when no webview is attached", async () => {
+      const provider = new ChatViewProvider(
+        { fsPath: "/ext" } as never,
+        mockAgent as never,
+        createMockPlatformServices() as never,
+        createMockDiffReviewManager() as never,
+        false,
+      );
+
+      await expect(provider.refresh()).resolves.toBeUndefined();
+      expect(mockAgent.listSessions).not.toHaveBeenCalled();
     });
   });
 
@@ -1037,6 +1169,9 @@ describe("ChatViewProvider", () => {
       expect(mockAgent.forkSession).not.toHaveBeenCalled();
       expect(mockAgent.exportSessionSnapshot).toHaveBeenCalledWith("sess-1");
       expect(mockPS.runHandoffTerminal).toHaveBeenCalledWith("/tmp/sess-1-handoff.json");
+      expect(mockPS.runHandoffTerminal.mock.calls[0]).toHaveLength(1);
+      expect(JSON.stringify(mockPS.runHandoffTerminal.mock.calls[0])).not.toContain("OPENCODE_CONFIG_CONTENT");
+      expect(JSON.stringify(mockPS.runHandoffTerminal.mock.calls[0])).not.toContain("mcpOverlay");
     });
 
     it("should offer attach fallback when handoff export fails", async () => {
@@ -1185,6 +1320,49 @@ describe("ChatViewProvider", () => {
   // ============================================================
 
   describe("MCP handlers", () => {
+    describe("setMcpPrefs", () => {
+      function createStore(initial: ChatMcpPrefs): ChatMcpPrefsStore & { state: ChatMcpPrefs } {
+        const store = {
+          state: { ...initial },
+          read() {
+            return { ...this.state };
+          },
+          write: vi.fn(async (prefs: ChatMcpPrefs) => {
+            store.state = { ...prefs };
+          }),
+        };
+        return store;
+      }
+
+      it("migrates the first non-empty webview map into empty host state", async () => {
+        const store = createStore({});
+        const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+
+        await sendMessage({ type: "setMcpPrefs", prefs: { selected: true } });
+
+        expect(store.write).toHaveBeenCalledWith({ selected: true });
+        expect(postMessage).toHaveBeenCalledWith({
+          type: "mcpPrefs",
+          prefs: { selected: true },
+          locked: [],
+        });
+        expect(mockAgent.connectMcp).not.toHaveBeenCalled();
+        expect(mockAgent.disconnectMcp).not.toHaveBeenCalled();
+      });
+
+      it("persists subsequent preference changes and posts the authoritative map", async () => {
+        const store = createStore({ selected: true });
+        const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+
+        await sendMessage({ type: "setMcpPrefs", prefs: { selected: false } });
+
+        expect(store.write).toHaveBeenCalledWith({ selected: false });
+        expect(postMessage).toHaveBeenCalledWith({ type: "mcpPrefs", prefs: { selected: false }, locked: [] });
+        expect(mockAgent.connectMcp).not.toHaveBeenCalled();
+        expect(mockAgent.disconnectMcp).not.toHaveBeenCalled();
+      });
+    });
+
     describe("getMcpStatus", () => {
       it("should call agent.getMcpStatus and post mcpStatus", async () => {
         const status = { "my-server": { connected: true } };
@@ -1209,6 +1387,19 @@ describe("ChatViewProvider", () => {
         expect(mockAgent.connectMcp).toHaveBeenCalledWith("my-server");
         expect(mockAgent.getMcpStatus).toHaveBeenCalled();
         expect(postMessage).toHaveBeenCalledWith({ type: "mcpStatus", status });
+      });
+
+      it("should connect config-disabled servers and refresh status without refusal", async () => {
+        const status = { "locked-server": { connected: true } };
+        mockAgent.getMcpStatus.mockResolvedValue(status);
+        const { postMessage, sendMessage } = setupProvider(mockAgent);
+
+        await sendMessage({ type: "connectMcp", server: "locked-server" });
+
+        expect(mockAgent.connectMcp).toHaveBeenCalledWith("locked-server");
+        expect(mockAgent.getMcpStatus).toHaveBeenCalled();
+        expect(postMessage).toHaveBeenCalledWith({ type: "mcpStatus", status });
+        expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
       });
     });
 

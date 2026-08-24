@@ -13,6 +13,8 @@ import type {
   AllProvidersData,
   AppPaths,
   ChatMessageWithParts,
+  ChatSandboxSettings,
+  ChatSandboxStatus,
   ChatSession,
   FileAttachment,
   FileDiff,
@@ -157,6 +159,10 @@ export type UIToHostMessage =
   | { type: "getMcpStatus" }
   | { type: "connectMcp"; server: string }
   | { type: "disconnectMcp"; server: string }
+  | { type: "setMcpPrefs"; prefs: Record<string, boolean> }
+
+  // --- Chat sandbox ---
+  | { type: "setChatSandboxSettings"; settings: ChatSandboxSettings }
 
   // --- Diff Review ---
   | { type: "openDiffReview"; focusFile?: string }
@@ -242,4 +248,8 @@ export type HostToUIMessage =
   | { type: "diffReviewError"; error: string }
 
   // --- MCP ---
-  | { type: "mcpStatus"; status: McpStatus };
+  | { type: "mcpStatus"; status: McpStatus }
+  | { type: "mcpPrefs"; prefs: Record<string, boolean>; locked: string[] }
+
+  // --- Chat sandbox ---
+  | { type: "chatSandboxStatus"; status: ChatSandboxStatus };

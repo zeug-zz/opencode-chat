@@ -1,8 +1,18 @@
 import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ChatSession, HostToUIMessage, IAgent, IPlatformServices, UIToHostMessage } from "@opencode-chat/core";
+import type {
+  AppPaths,
+  ChatSandboxSettings,
+  ChatSandboxStatus,
+  ChatSession,
+  HostToUIMessage,
+  IAgent,
+  IPlatformServices,
+  UIToHostMessage,
+} from "@opencode-chat/core";
 import * as vscode from "vscode";
+import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
 import type { DiffReviewManager } from "./diff-review-manager";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -12,8 +22,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // OpenCode サーバーには「現在アクティブなセッション」を保持する API がないため、
   // UI クライアント側で管理する（TUI も同様の設計）。
   private activeSession: ChatSession | null = null;
+  private chatSandboxStatus: ChatSandboxStatus | undefined;
   private readonly chatSystemPrompt: string | null;
   private readonly writeSystemPrompt: string | null;
+  private readonly setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
+  private readonly chatMcpPrefs?: ChatMcpPrefsStore;
 
   private getSystemPrompt(primaryAgent: string | undefined, explicitSystem: string | undefined): string | undefined {
     return (
@@ -33,9 +46,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly platformServices: IPlatformServices,
     private readonly diffReviewManager: DiffReviewManager,
     private readonly difitAvailable: boolean,
+    options?: {
+      setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
+      chatMcpPrefs?: ChatMcpPrefsStore;
+    },
   ) {
     this.chatSystemPrompt = this.loadSystemPrompt("CHAT_SYSTEM.md");
     this.writeSystemPrompt = this.loadSystemPrompt("WRITE_SYSTEM.md");
+    this.setChatSandboxSettings = options?.setChatSandboxSettings;
+    this.chatMcpPrefs = options?.chatMcpPrefs;
   }
 
   resolveWebviewView(
@@ -108,30 +127,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           locale: vscode.env.language,
           paths,
         });
-        // セッション一覧、現在のセッション、プロバイダー一覧を送信する
-        const sessions = await this.agent.listSessions();
-        this.postMessage({ type: "sessions", sessions });
-        this.postMessage({ type: "activeSession", session: this.activeSession });
-        const [providersData, allProviders] = await Promise.all([
-          this.agent.getProviders(),
-          this.agent.listAllProviders(),
-        ]);
-        // config ファイルから model を直接読み取る（config.get API は model を正しく返さない）
-        let configModel: string | undefined;
-        try {
-          const raw = await fs.readFile(path.join(paths.config, "opencode.json"), "utf-8");
-          const configJson = JSON.parse(raw);
-          configModel = configJson.model;
-        } catch {
-          // ファイルが存在しない場合は undefined のまま
+        this.postMcpPrefs();
+        await this.refresh(undefined, paths);
+        if (this.chatSandboxStatus) {
+          this.postMessage({ type: "chatSandboxStatus", status: this.chatSandboxStatus });
         }
-        this.postMessage({
-          type: "providers",
-          providers: providersData.providers,
-          allProviders,
-          default: providersData.default,
-          configModel,
-        });
         // 初期アクティブエディタを送信する
         this.postMessage({ type: "activeEditor", file: this.getActiveEditorFile(vscode.window.activeTextEditor) });
         // difit の利用可否を Webview に通知する
@@ -335,6 +335,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: "modelUpdated", model: message.model, default: {} });
         break;
       }
+      case "setChatSandboxSettings": {
+        if (!this.setChatSandboxSettings) break;
+        const previous = this.chatSandboxStatus;
+        try {
+          const status = await this.setChatSandboxSettings(message.settings);
+          this.chatSandboxStatus = status;
+          this.postMessage({ type: "chatSandboxStatus", status });
+        } catch (error) {
+          if (previous) {
+            const failedStatus: ChatSandboxStatus = {
+              ...previous,
+              applying: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+            this.chatSandboxStatus = failedStatus;
+            this.postMessage({ type: "chatSandboxStatus", status: failedStatus });
+          }
+          throw error;
+        }
+        break;
+      }
       case "forkSession": {
         // Fork で新しいセッションを作成し、アクティブセッションを切り替える
         const forkedSession = await this.agent.forkSession(message.sessionId, message.messageId);
@@ -373,6 +394,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "getMcpStatus": {
         const mcpStatus = await this.agent.getMcpStatus();
         this.postMessage({ type: "mcpStatus", status: mcpStatus });
+        break;
+      }
+      case "setMcpPrefs": {
+        const incomingPrefs = sanitizeMcpPrefs(message.prefs);
+        if (this.chatMcpPrefs) await this.chatMcpPrefs.write(incomingPrefs);
+        this.postMcpPrefs();
         break;
       }
       case "connectMcp": {
@@ -461,6 +488,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  async refresh(chatSandboxStatus?: ChatSandboxStatus, paths?: AppPaths): Promise<void> {
+    if (!this.view) return;
+
+    const resolvedPaths = paths ?? (await this.agent.getPath());
+    const sessionsPromise = this.agent.listSessions();
+    const activeSessionPromise = this.activeSession
+      ? this.agent.getSession(this.activeSession.id)
+      : Promise.resolve(null);
+    const [sessions, refreshedActiveSession, providersData, allProviders, agents, mcpStatus] = await Promise.all([
+      sessionsPromise,
+      activeSessionPromise,
+      this.agent.getProviders(),
+      this.agent.listAllProviders(),
+      this.agent.getAgents(),
+      this.agent.getMcpStatus(),
+    ]);
+
+    if (this.activeSession) {
+      this.activeSession = refreshedActiveSession ?? this.activeSession;
+    }
+
+    let configModel: string | undefined;
+    try {
+      const raw = await fs.readFile(path.join(resolvedPaths.config, "opencode.json"), "utf-8");
+      configModel = JSON.parse(raw).model;
+    } catch {}
+
+    this.postMessage({ type: "sessions", sessions });
+    this.postMessage({ type: "activeSession", session: this.activeSession });
+    if (this.activeSession) {
+      const messages = await this.agent.getMessages(this.activeSession.id);
+      this.postMessage({ type: "messages", sessionId: this.activeSession.id, messages });
+    }
+    this.postMessage({
+      type: "providers",
+      providers: providersData.providers,
+      allProviders,
+      default: providersData.default,
+      configModel,
+    });
+    this.postMessage({ type: "agents", agents });
+    this.postMessage({ type: "mcpStatus", status: mcpStatus });
+    if (chatSandboxStatus) {
+      this.postMessage({ type: "chatSandboxStatus", status: chatSandboxStatus });
+    }
+  }
+
+  publishChatSandboxStatus(status: ChatSandboxStatus): void {
+    this.chatSandboxStatus = status;
+    this.postMessage({ type: "chatSandboxStatus", status });
+  }
+
   /** アクティブなテキストエディタから FileAttachment を生成する。エディタがない場合は null を返す。 */
   private getActiveEditorFile(
     editor: vscode.TextEditor | undefined,
@@ -478,6 +557,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private postMessage(message: HostToUIMessage): void {
     this.view?.webview.postMessage(message);
+  }
+
+  private postMcpPrefs(): void {
+    this.postMessage({
+      type: "mcpPrefs",
+      prefs: this.chatMcpPrefs?.read() ?? {},
+      locked: [],
+    });
   }
 
   private loadSystemPrompt(filename: string): string | null {
@@ -519,4 +606,12 @@ function getNonce(): string {
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
   return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function sanitizeMcpPrefs(value: Record<string, boolean>): ChatMcpPrefs {
+  const prefs: ChatMcpPrefs = {};
+  for (const [server, enabled] of Object.entries(value)) {
+    if (typeof enabled === "boolean") prefs[server] = enabled;
+  }
+  return prefs;
 }

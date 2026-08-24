@@ -531,6 +531,22 @@ export type AppPaths = {
   directory: string;
 };
 
+export type ChatSandboxMode = "inherit" | "on" | "off";
+
+export type ChatSandboxSettings = {
+  mode: ChatSandboxMode;
+  allowNetwork: boolean;
+};
+
+export type ChatSandboxStatus = ChatSandboxSettings & {
+  enabled: boolean;
+  inherited: boolean;
+  applying: boolean;
+  managed: boolean;
+  supported: boolean;
+  error?: string;
+};
+
 // ============================================================
 // Send Message Options
 // ============================================================

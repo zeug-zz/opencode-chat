@@ -109,6 +109,20 @@ export const en = {
   "config.globalConfig": "Global Config",
 
   "config.close": "Close",
+  "config.sandbox": "Sandbox",
+  "config.sandboxChatTools": "Sandbox Chat tools",
+  "config.sandboxInherited": "Inherited from VS Code",
+  "config.sandboxWorkspaceOverride": (mode: string) => `Workspace override: ${mode}`,
+  "config.sandboxReset": "Use VS Code setting",
+  "config.sandboxNetwork": "Allow network access",
+  "config.sandboxNetworkEnabledDescription":
+    "Compatibility mode: filesystem restrictions remain active, but network access is unrestricted for the companion and inherited MCPs. This is not strict outbound-only or credential-confidential protection; the Chat API remains bound to 127.0.0.1.",
+  "config.sandboxLocalOnlyDescription":
+    "Local-only operation: filesystem restrictions remain active and non-loopback network access is denied.",
+  "config.sandboxUnsupported": "Chat sandboxing is not supported on this platform.",
+  "config.sandboxManaged": "Chat sandbox settings are managed and cannot be changed.",
+  "config.sandboxApplying": "Applying sandbox settings…",
+  "config.sandboxError": (error: string) => `Sandbox error: ${error}`,
 
   // Language setting
   "config.language": "Language",

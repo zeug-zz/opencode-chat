@@ -117,6 +117,20 @@ export const ptBr: LocaleSchema = {
   "config.globalConfig": "Configuração global",
 
   "config.close": "Fechar",
+  "config.sandbox": "Sandbox",
+  "config.sandboxChatTools": "Colocar ferramentas do Chat em sandbox",
+  "config.sandboxInherited": "Herdado do VS Code",
+  "config.sandboxWorkspaceOverride": (mode: string) => `Substituição do workspace: ${mode}`,
+  "config.sandboxReset": "Usar configuração do VS Code",
+  "config.sandboxNetwork": "Permitir acesso à rede",
+  "config.sandboxNetworkEnabledDescription":
+    "As restrições do sistema de arquivos permanecem ativas enquanto o acesso de saída à rede está habilitado.",
+  "config.sandboxLocalOnlyDescription":
+    "Operação somente local: as restrições do sistema de arquivos permanecem ativas e o acesso de rede não local é negado.",
+  "config.sandboxUnsupported": "O sandbox do Chat não é compatível com esta plataforma.",
+  "config.sandboxManaged": "As configurações de sandbox do Chat são gerenciadas e não podem ser alteradas.",
+  "config.sandboxApplying": "Aplicando configurações de sandbox…",
+  "config.sandboxError": (error: string) => `Erro de sandbox: ${error}`,
 
   // Language setting
   "config.language": "Idioma",

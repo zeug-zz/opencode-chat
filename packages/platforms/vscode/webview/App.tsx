@@ -1,4 +1,13 @@
-import type { AgentCapabilities, AgentEvent, AgentInfo, ChatSession, SkillInfo, TodoItem } from "@opencode-chat/core";
+import type {
+  AgentCapabilities,
+  AgentEvent,
+  AgentInfo,
+  ChatSandboxSettings,
+  ChatSandboxStatus,
+  ChatSession,
+  SkillInfo,
+  TodoItem,
+} from "@opencode-chat/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState } from "./components/molecules/EmptyState";
 import { FileChangesHeader } from "./components/molecules/FileChangesHeader";
@@ -78,8 +87,18 @@ export function App() {
   } | null>(null);
 
   const [capabilities, setCapabilities] = useState<AgentCapabilities | undefined>(undefined);
+  const [chatSandboxStatus, setChatSandboxStatus] = useState<ChatSandboxStatus | null>(null);
+
+  const handleChatSandboxSettingsChange = useCallback((settings: ChatSandboxSettings) => {
+    const message: Extract<UIToHostMessage, { type: "setChatSandboxSettings" }> = {
+      type: "setChatSandboxSettings",
+      settings,
+    };
+    postMessage(message);
+  }, []);
 
   const mcp = useMcp(capabilities);
+  const { handleMcpPrefs, handleMcpStatus } = mcp;
 
   const [contextMemory, setContextMemory] = useState<string>("");
   const awaitingCompactionContextRef = useRef<string | null>(null);
@@ -325,9 +344,16 @@ export function App() {
           break;
         }
         case "mcpStatus": {
-          mcp.handleMcpStatus(data.status);
+          handleMcpStatus(data.status);
           break;
         }
+        case "mcpPrefs": {
+          handleMcpPrefs(data);
+          break;
+        }
+        case "chatSandboxStatus":
+          setChatSandboxStatus(data.status);
+          break;
       }
     };
     window.addEventListener("message", handler);
@@ -348,6 +374,8 @@ export function App() {
     prov.setSelectedModel,
     session.setActiveSession,
     session.setSessions,
+    handleMcpPrefs,
+    handleMcpStatus,
   ]);
 
   // Cross-cutting action handlers (span multiple hooks)
@@ -592,6 +620,8 @@ export function App() {
     childSessions,
     onNavigateToChild: handleNavigateToChild,
     onNavigateToParent: handleNavigateToParent,
+    chatSandboxStatus,
+    onChatSandboxSettingsChange: handleChatSandboxSettingsChange,
   };
 
   return (
@@ -673,6 +703,8 @@ export function App() {
                   mcpServers={capabilities?.mcp ? mcp.servers : null}
                   onMcpToggle={capabilities?.mcp ? mcp.toggle : undefined}
                   onMcpRefresh={capabilities?.mcp ? mcp.refresh : undefined}
+                  chatSandboxStatus={chatSandboxStatus ?? undefined}
+                  onChatSandboxSettingsChange={handleChatSandboxSettingsChange}
                 />
               )}
             </>

@@ -1,4 +1,12 @@
-import type { McpServerStatus, McpStatus, SoundEventSetting, SoundEventType, SoundSettings } from "@opencode-chat/core";
+import type {
+  ChatSandboxSettings,
+  ChatSandboxStatus,
+  McpServerStatus,
+  McpStatus,
+  SoundEventSetting,
+  SoundEventType,
+  SoundSettings,
+} from "@opencode-chat/core";
 import { useMemo, useState } from "react";
 import type { LocaleSetting } from "../../../locales";
 import { useLocale } from "../../../locales";
@@ -19,6 +27,9 @@ type Props = {
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
   mcpServers?: McpStatus | null;
   onMcpToggle?: (server: string, enabled: boolean) => void;
+  sandboxStatus?: ChatSandboxStatus;
+  onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
+  sandboxControlsDisabled?: boolean;
 };
 
 export function ToolConfigPanel({
@@ -31,6 +42,9 @@ export function ToolConfigPanel({
   onSoundSettingChange,
   mcpServers,
   onMcpToggle,
+  sandboxStatus,
+  onChatSandboxSettingsChange,
+  sandboxControlsDisabled = false,
 }: Props) {
   const t = useLocale();
   const [langMenuOpen, setLangMenuOpen] = useState(false);
@@ -145,6 +159,14 @@ export function ToolConfigPanel({
           </div>
         </div>
 
+        {sandboxStatus && (
+          <SandboxSection
+            status={sandboxStatus}
+            onSettingsChange={onChatSandboxSettingsChange}
+            controlsDisabled={sandboxControlsDisabled}
+          />
+        )}
+
         {/* MCP Setting */}
         {mcpServers != null && (
           <div className={styles.section}>
@@ -187,6 +209,70 @@ export function ToolConfigPanel({
           </LinkButton>
         </div>
       )}
+    </div>
+  );
+}
+
+function SandboxSection({
+  status,
+  onSettingsChange,
+  controlsDisabled,
+}: {
+  status: ChatSandboxStatus;
+  onSettingsChange?: (settings: ChatSandboxSettings) => void;
+  controlsDisabled: boolean;
+}) {
+  const t = useLocale();
+  const canChange = status.supported && !status.managed && !status.applying && !controlsDisabled;
+  const networkDisabled = !status.enabled || !canChange;
+  const stateLabel = status.inherited
+    ? t["config.sandboxInherited"]
+    : t["config.sandboxWorkspaceOverride"](status.mode);
+  const networkDescription = status.allowNetwork
+    ? t["config.sandboxNetworkEnabledDescription"]
+    : t["config.sandboxLocalOnlyDescription"];
+
+  return (
+    <div className={styles.section} data-testid="sandbox-section">
+      <div className={styles.sectionTitle}>{t["config.sandbox"]}</div>
+      <label className={`${styles.toggle} ${styles.sandboxRow}`}>
+        <input
+          data-testid="sandbox-chat-tools"
+          type="checkbox"
+          checked={status.enabled}
+          disabled={!canChange}
+          onChange={(event) =>
+            onSettingsChange?.({ mode: event.target.checked ? "on" : "off", allowNetwork: status.allowNetwork })
+          }
+        />
+        <span className={styles.toolName}>{t["config.sandboxChatTools"]}</span>
+      </label>
+      <div className={styles.sandboxStatus}>{stateLabel}</div>
+      {!status.inherited && (
+        <button
+          type="button"
+          className={styles.sandboxReset}
+          disabled={!canChange}
+          onClick={() => onSettingsChange?.({ mode: "inherit", allowNetwork: status.allowNetwork })}
+        >
+          {t["config.sandboxReset"]}
+        </button>
+      )}
+      <label className={`${styles.toggle} ${styles.sandboxRow} ${styles.sandboxNetworkRow}`}>
+        <input
+          data-testid="sandbox-network-access"
+          type="checkbox"
+          checked={status.allowNetwork}
+          disabled={networkDisabled}
+          onChange={(event) => onSettingsChange?.({ mode: status.mode, allowNetwork: event.target.checked })}
+        />
+        <span className={styles.toolName}>{t["config.sandboxNetwork"]}</span>
+      </label>
+      <div className={styles.sandboxDescription}>{networkDescription}</div>
+      {!status.supported && <div className={styles.sandboxError}>{t["config.sandboxUnsupported"]}</div>}
+      {status.managed && <div className={styles.sandboxError}>{t["config.sandboxManaged"]}</div>}
+      {status.error && <div className={styles.sandboxError}>{t["config.sandboxError"](status.error)}</div>}
+      {status.applying && <div className={styles.sandboxStatus}>{t["config.sandboxApplying"]}</div>}
     </div>
   );
 }

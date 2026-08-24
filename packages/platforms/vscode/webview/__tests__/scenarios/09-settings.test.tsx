@@ -1,3 +1,4 @@
+import type { ChatSandboxStatus } from "@opencode-chat/core";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +24,19 @@ async function setupForSettings() {
   });
 
   vi.mocked(postMessage).mockClear();
+}
+
+function sandboxStatus(overrides: Partial<ChatSandboxStatus> = {}): ChatSandboxStatus {
+  return {
+    mode: "inherit",
+    enabled: true,
+    inherited: true,
+    allowNetwork: true,
+    applying: false,
+    managed: false,
+    supported: true,
+    ...overrides,
+  };
 }
 
 // Settings
@@ -111,6 +125,107 @@ describe("設定", () => {
 
     // ヘッダーの「New chat」が「新しいチャット」になる
     expect(screen.getByTitle("新しいチャット")).toBeInTheDocument();
+  });
+
+  context("Chat sandbox settings", () => {
+    it("inherit が native on では checked、native off では unchecked になること", async () => {
+      await setupForSettings();
+      const user = userEvent.setup();
+      await sendExtMessage({ type: "chatSandboxStatus", status: sandboxStatus({ enabled: true }) });
+      await user.click(screen.getByTitle("Settings"));
+      expect(screen.getByTestId("sandbox-chat-tools")).toBeChecked();
+
+      await sendExtMessage({
+        type: "chatSandboxStatus",
+        status: sandboxStatus({ enabled: false, allowNetwork: false }),
+      });
+      expect(screen.getByTestId("sandbox-chat-tools")).not.toBeChecked();
+    });
+
+    it("workspace enable/disable/reset が typed settings payload を送ること", async () => {
+      await setupForSettings();
+      const user = userEvent.setup();
+      await sendExtMessage({
+        type: "chatSandboxStatus",
+        status: sandboxStatus({ enabled: false, mode: "off", inherited: false, allowNetwork: false }),
+      });
+      await user.click(screen.getByTitle("Settings"));
+
+      await user.click(screen.getByTestId("sandbox-chat-tools"));
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "setChatSandboxSettings",
+        settings: { mode: "on", allowNetwork: false },
+      });
+
+      await sendExtMessage({
+        type: "chatSandboxStatus",
+        status: sandboxStatus({ mode: "on", inherited: false, allowNetwork: false }),
+      });
+      await user.click(screen.getByTestId("sandbox-chat-tools"));
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "setChatSandboxSettings",
+        settings: { mode: "off", allowNetwork: false },
+      });
+
+      await user.click(screen.getByRole("button", { name: "Use VS Code setting" }));
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "setChatSandboxSettings",
+        settings: { mode: "inherit", allowNetwork: false },
+      });
+    });
+
+    it("network-enabled と local-only の説明と network payload を表示すること", async () => {
+      await setupForSettings();
+      const user = userEvent.setup();
+      await sendExtMessage({ type: "chatSandboxStatus", status: sandboxStatus({ allowNetwork: true }) });
+      await user.click(screen.getByTitle("Settings"));
+      expect(screen.getByText(/Compatibility mode: filesystem restrictions remain active/)).toBeInTheDocument();
+      expect(screen.getByTestId("sandbox-network-access")).toBeChecked();
+
+      await user.click(screen.getByTestId("sandbox-network-access"));
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "setChatSandboxSettings",
+        settings: { mode: "inherit", allowNetwork: false },
+      });
+
+      await sendExtMessage({
+        type: "chatSandboxStatus",
+        status: sandboxStatus({ allowNetwork: false }),
+      });
+      expect(screen.getByText(/Local-only operation/)).toBeInTheDocument();
+      expect(screen.getByTestId("sandbox-network-access")).not.toBeChecked();
+    });
+
+    it("applying 中は sandbox controls を無効化し、success/error 後は retry できること", async () => {
+      await setupForSettings();
+      const user = userEvent.setup();
+      await sendExtMessage({ type: "chatSandboxStatus", status: sandboxStatus({ applying: true }) });
+      await user.click(screen.getByTitle("Settings"));
+      expect(screen.getByTestId("sandbox-chat-tools")).toBeDisabled();
+      expect(screen.getByTestId("sandbox-network-access")).toBeDisabled();
+
+      await sendExtMessage({
+        type: "chatSandboxStatus",
+        status: sandboxStatus({ enabled: false, mode: "off", inherited: false }),
+      });
+      expect(screen.getByTestId("sandbox-chat-tools")).toBeEnabled();
+      await user.click(screen.getByTestId("sandbox-chat-tools"));
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "setChatSandboxSettings",
+        settings: { mode: "on", allowNetwork: true },
+      });
+
+      await sendExtMessage({
+        type: "chatSandboxStatus",
+        status: sandboxStatus({ enabled: false, mode: "off", inherited: false, error: "transition failed" }),
+      });
+      expect(screen.getByTestId("sandbox-chat-tools")).toBeEnabled();
+      await user.click(screen.getByTestId("sandbox-chat-tools"));
+      expect(postMessage).toHaveBeenLastCalledWith({
+        type: "setChatSandboxSettings",
+        settings: { mode: "on", allowNetwork: true },
+      });
+    });
   });
 
   // toolConfig message sets paths and shows config links in the panel

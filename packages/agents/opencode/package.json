@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.13",
-    "@opencode-chat/core": "workspace:*"
+    "@opencode-chat/core": "workspace:*",
+    "@vscode/sandbox-runtime": "0.0.1"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

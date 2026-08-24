@@ -1,7 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { postMessage } from "../../vscode-api";
+import { getPersistedState, postMessage, setPersistedState } from "../../vscode-api";
 import { createMessage, createSession, createTextPart } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
@@ -16,6 +16,64 @@ async function setupActiveSession() {
 
 // Messaging
 describe("メッセージング", () => {
+  it("mcpPrefs を受信すると保存された設定で mcpStatus を再適用すること", async () => {
+    const persistedState = { mcpEnabledByServer: {} } as NonNullable<ReturnType<typeof getPersistedState>>;
+    vi.mocked(getPersistedState).mockReturnValue(persistedState);
+    vi.mocked(setPersistedState).mockImplementation((state) => Object.assign(persistedState, state));
+
+    renderApp();
+    vi.mocked(postMessage).mockClear();
+
+    await sendExtMessage({
+      type: "mcpPrefs",
+      prefs: { filesystem: true, locked: true } as Record<string, boolean>,
+      locked: ["locked"],
+    });
+    await sendExtMessage({
+      type: "mcpStatus",
+      status: {
+        filesystem: { connected: false, status: "disabled" },
+        locked: { connected: false, status: "disabled" },
+      },
+    });
+
+    expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "filesystem" });
+    expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "locked" });
+  });
+
+  it("failed status does not auto-connect and an identical disabled echo is suppressed", async () => {
+    const persistedState = { mcpEnabledByServer: { filesystem: true } } as NonNullable<
+      ReturnType<typeof getPersistedState>
+    >;
+    vi.mocked(getPersistedState).mockReturnValue(persistedState);
+    vi.mocked(setPersistedState).mockImplementation((state) => Object.assign(persistedState, state));
+    renderApp();
+    vi.mocked(postMessage).mockClear();
+
+    await sendExtMessage({ type: "mcpStatus", status: { filesystem: { connected: false, status: "failed" } } });
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "connectMcp", server: "filesystem" });
+    await sendExtMessage({ type: "mcpStatus", status: { filesystem: { connected: false, status: "disabled" } } });
+    await sendExtMessage({ type: "mcpStatus", status: { filesystem: { connected: false, status: "disabled" } } });
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "filesystem" });
+  });
+
+  it("reapplies once after fresh host preferences and suppresses the next echo", async () => {
+    const persistedState = { mcpEnabledByServer: { filesystem: true } } as NonNullable<
+      ReturnType<typeof getPersistedState>
+    >;
+    vi.mocked(getPersistedState).mockReturnValue(persistedState);
+    vi.mocked(setPersistedState).mockImplementation((state) => Object.assign(persistedState, state));
+    renderApp();
+    vi.mocked(postMessage).mockClear();
+    const status = { filesystem: { connected: false, status: "disabled" as const } };
+    await sendExtMessage({ type: "mcpStatus", status });
+    await sendExtMessage({ type: "mcpPrefs", prefs: { filesystem: true }, locked: [] });
+    await sendExtMessage({ type: "mcpStatus", status });
+    await sendExtMessage({ type: "mcpStatus", status });
+    expect(postMessage).toHaveBeenCalledTimes(2);
+  });
+
   // Text input + Enter sends sendMessage
   it("テキスト入力 + Enter で sendMessage が送信されること", async () => {
     const session = await setupActiveSession();

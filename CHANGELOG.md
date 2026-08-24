@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Product direction clarified: OpenCode Chat is a **chat, research, and report-writing harness**, not a replacement for the OpenCode coding TUI or another sidebar coding loop
+- User-facing `write` mode is now explicitly Build-backed report writing: it uses a dedicated writing prompt and is limited to read, workspace search, web research, and edit capabilities; agent Bash and task/subagent execution are denied
+- Scout remains the default user-facing **chat** mode with its separate read-only research prompt
+- Companion shell mode and `!` command dispatch removed; the independent **Hand off to TUI** flow is the only supported escape hatch for serious coding and shell work
+- Write mode is preserved through normal sends and edit/resend while retaining internal `primaryAgent: "build"` compatibility
+- README positioning expanded to document the project's divergence from the original `opencode-gui` fork and its research/writing-first product boundary
+
+### Security
+
+- Companion Write permissions are enforced in the in-memory server configuration without modifying the user's global `opencode.json`
+- Companion MCP controls remain process-scoped, with explicit trust guidance for user-installed MCP servers
+
 ## [0.7.0] - 2026-07-13
 
 ### Added
@@ -203,7 +217,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.5.3...v0.6.0
+[0.5.3]: https://github.com/zeug-zz/opencode-chat/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/zeug-zz/opencode-chat/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.4.2...v0.5.0
 [0.4.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.3.0...v0.4.0

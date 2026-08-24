@@ -116,6 +116,18 @@ export const zhCn: LocaleSchema = {
   "config.globalConfig": "全局配置",
 
   "config.close": "关闭",
+  "config.sandbox": "沙箱",
+  "config.sandboxChatTools": "将聊天工具置于沙箱中",
+  "config.sandboxInherited": "继承自 VS Code",
+  "config.sandboxWorkspaceOverride": (mode: string) => `工作区覆盖：${mode}`,
+  "config.sandboxReset": "使用 VS Code 设置",
+  "config.sandboxNetwork": "允许网络访问",
+  "config.sandboxNetworkEnabledDescription": "文件系统限制仍然有效，同时允许出站网络访问。",
+  "config.sandboxLocalOnlyDescription": "仅限本地操作：文件系统限制仍然有效，并拒绝非环回网络访问。",
+  "config.sandboxUnsupported": "此平台不支持聊天沙箱。",
+  "config.sandboxManaged": "聊天沙箱设置由管理员管理，无法更改。",
+  "config.sandboxApplying": "正在应用沙箱设置…",
+  "config.sandboxError": (error: string) => `沙箱错误：${error}`,
 
   // Language setting
   "config.language": "语言",

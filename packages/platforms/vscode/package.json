@@ -56,6 +56,28 @@
           "name": "Chat"
         }
       ]
+    },
+    "configuration": {
+      "title": "OpenCode Chat",
+      "properties": {
+        "opencode-chat.chatSandbox.mode": {
+          "type": "string",
+          "enum": [
+            "inherit",
+            "on",
+            "off"
+          ],
+          "default": "inherit",
+          "scope": "window",
+          "description": "Controls sandboxing for OpenCode Chat tools."
+        },
+        "opencode-chat.chatSandbox.allowNetwork": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Allows network access for sandboxed OpenCode Chat tools."
+        }
+      }
     }
   },
   "scripts": {

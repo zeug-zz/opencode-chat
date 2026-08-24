@@ -18,6 +18,12 @@ OpenCode Chat SHALL inject the chat companion system prompt only when sending a 
 - **THEN** the extension host SHALL forward the Write report-authoring prompt to the agent send call
 - **AND** the extension host SHALL NOT inject the chat companion system prompt
 
+#### Scenario: Write message does not use chat companion prompt
+
+- **WHEN** the webview sends a chat message with `primaryAgent: "build"`
+- **AND** the message does not include an explicit `system` override
+- **THEN** the extension host SHALL NOT inject the chat companion system prompt
+
 #### Scenario: Explicit system override remains authoritative
 
 - **WHEN** the webview sends a message with an explicit `system` override

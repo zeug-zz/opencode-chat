@@ -116,6 +116,19 @@ export const ko: LocaleSchema = {
   "config.globalConfig": "전역 설정",
 
   "config.close": "닫기",
+  "config.sandbox": "샌드박스",
+  "config.sandboxChatTools": "채팅 도구 샌드박스 처리",
+  "config.sandboxInherited": "VS Code에서 상속됨",
+  "config.sandboxWorkspaceOverride": (mode: string) => `작업 영역 재정의: ${mode}`,
+  "config.sandboxReset": "VS Code 설정 사용",
+  "config.sandboxNetwork": "네트워크 액세스 허용",
+  "config.sandboxNetworkEnabledDescription": "파일 시스템 제한을 유지하면서 아웃바운드 네트워크 액세스를 허용합니다.",
+  "config.sandboxLocalOnlyDescription":
+    "로컬 전용 작업: 파일 시스템 제한을 유지하고 루프백이 아닌 네트워크 액세스를 거부합니다.",
+  "config.sandboxUnsupported": "이 플랫폼에서는 채팅 샌드박스를 지원하지 않습니다.",
+  "config.sandboxManaged": "채팅 샌드박스 설정은 관리되므로 변경할 수 없습니다.",
+  "config.sandboxApplying": "샌드박스 설정 적용 중…",
+  "config.sandboxError": (error: string) => `샌드박스 오류: ${error}`,
 
   // Language setting
   "config.language": "언어",
