@@ -80,17 +80,17 @@
     "@types/node": "^26.1.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "^1.134.0",
     "@vitejs/plugin-react": "^6.0.3",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "jsdom": "^29.1.1",
     "marked": "^18.0.6",
     "react": "^19.2.7",
     "react-dom": "^19.0.0",
     "typescript": "^6.0.3",
-    "vite": "^8.1.5",
-    "vitest": "^4.1.10"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@opencode-chat/agent-opencode": "workspace:*",
