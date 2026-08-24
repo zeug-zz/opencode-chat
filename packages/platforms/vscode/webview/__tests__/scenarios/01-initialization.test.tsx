@@ -1,9 +1,24 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import React, { type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppContextValue } from "../../contexts/AppContext";
 import { postMessage } from "../../vscode-api";
 import { createAllProvidersData, createProvider, createSession } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
+
+const contextCapture = vi.hoisted(() => ({ value: null as AppContextValue | null }));
+
+vi.mock("../../contexts/AppContext", async () => {
+  const actual = await vi.importActual<typeof import("../../contexts/AppContext")>("../../contexts/AppContext");
+  return {
+    ...actual,
+    AppContextProvider: ({ value, children }: { value: AppContextValue; children: ReactNode }) => {
+      contextCapture.value = value;
+      return React.createElement(actual.AppContextProvider, { value }, children);
+    },
+  };
+});
 
 /**
  * Primary-agent initialization fixture set.
@@ -137,6 +152,48 @@ describe("初期化", () => {
       renderApp();
 
       expect(postMessage).toHaveBeenCalledWith({ type: "getSkills" });
+    });
+  });
+
+  context("chatSandboxStatus メッセージを受信した場合", () => {
+    const status = {
+      mode: "inherit" as const,
+      allowNetwork: true,
+      enabled: true,
+      inherited: true,
+      applying: false,
+      managed: false,
+      supported: true,
+    };
+
+    it("activation status を context に保持し、後続 status で置き換えること", async () => {
+      renderApp();
+      await sendExtMessage({ type: "chatSandboxStatus", status });
+
+      expect(contextCapture.value?.chatSandboxStatus).toEqual(status);
+
+      const applyingStatus = { ...status, applying: true };
+      await sendExtMessage({ type: "chatSandboxStatus", status: applyingStatus });
+      expect(contextCapture.value?.chatSandboxStatus).toEqual(applyingStatus);
+
+      const errorStatus = { ...status, error: "sandbox unavailable" };
+      await sendExtMessage({ type: "chatSandboxStatus", status: errorStatus });
+      expect(contextCapture.value?.chatSandboxStatus).toEqual(errorStatus);
+
+      const successStatus = { ...status, enabled: false, inherited: false, mode: "off" as const };
+      await sendExtMessage({ type: "chatSandboxStatus", status: successStatus });
+      expect(contextCapture.value?.chatSandboxStatus).toEqual(successStatus);
+    });
+
+    it("status update で ready を再送せず webview を remount しないこと", async () => {
+      renderApp();
+      const readyCalls = vi.mocked(postMessage).mock.calls.filter(([message]) => message.type === "ready");
+      await sendExtMessage({ type: "chatSandboxStatus", status });
+
+      expect(vi.mocked(postMessage).mock.calls.filter(([message]) => message.type === "ready")).toHaveLength(
+        readyCalls.length,
+      );
+      expect(contextCapture.value?.chatSandboxStatus).toEqual(status);
     });
   });
 

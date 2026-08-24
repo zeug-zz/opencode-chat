@@ -108,12 +108,14 @@
 }
 
 .mcpLifecycle {
-  flex-shrink: 0;
+  min-width: 0;
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
   line-height: 1.2;
   opacity: 0.85;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .mcpEmpty {
@@ -129,6 +131,46 @@
   padding: 4px 12px 6px;
   line-height: 1.3;
   opacity: 0.8;
+}
+
+.sandboxRow {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.sandboxNetworkRow {
+  margin-top: 2px;
+}
+
+.sandboxStatus,
+.sandboxDescription,
+.sandboxError {
+  padding: 1px 12px 3px 32px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sandboxDescription {
+  padding-bottom: 5px;
+}
+
+.sandboxError {
+  color: var(--vscode-errorForeground);
+}
+
+.sandboxReset {
+  margin: 0 12px 3px 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.sandboxReset:hover {
+  text-decoration: underline;
 }
 
 .langMenu {

@@ -15,17 +15,24 @@ function shellQuote(value: string): string {
   return JSON.stringify(value);
 }
 
-function resolveOpencodeBinary(): string {
+export function resolveOpencodeBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const pathDelimiter = platform === "win32" ? ";" : ":";
+  const executableName = platform === "win32" ? "opencode.exe" : "opencode";
   const candidates = [
-    process.env.OPENCODE_BIN,
-    "/opt/homebrew/bin/opencode",
-    "/usr/local/bin/opencode",
-    path.join(process.env.HOME ?? "", ".opencode", "bin", "opencode"),
-    "opencode",
+    env.OPENCODE_BIN,
+    ...(platform === "win32" ? [] : ["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode"]),
+    pathApi.join(env.HOME ?? env.USERPROFILE ?? "", ".opencode", "bin", executableName),
+    ...(env.PATH ?? "")
+      .split(pathDelimiter)
+      .filter(Boolean)
+      .map((directory) => pathApi.join(directory, executableName)),
   ].filter((v): v is string => Boolean(v));
 
   for (const candidate of candidates) {
-    if (candidate === "opencode") return candidate;
     try {
       accessSync(candidate, fsConstants.X_OK);
       return candidate;

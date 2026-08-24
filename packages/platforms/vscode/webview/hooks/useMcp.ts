@@ -16,7 +16,7 @@ export function computeReapplyActions(prefs: Record<string, boolean>, status: Mc
   for (const [server, serverStatus] of Object.entries(status)) {
     const pref = prefs[server];
     if (pref === undefined) continue;
-    if (pref && !serverStatus.connected) {
+    if (pref && !serverStatus.connected && (serverStatus.status === "disabled" || serverStatus.status === "unknown")) {
       actions.push({ server, action: "connect" });
     } else if (!pref && serverStatus.connected) {
       actions.push({ server, action: "disconnect" });
@@ -34,7 +34,20 @@ export function computeReapplyActions(prefs: Record<string, boolean>, status: Mc
 export function useMcp(capabilities?: { mcp?: boolean }) {
   const [prefs, setPrefsState] = useState<Record<string, boolean>>(() => getPersistedState()?.mcpEnabledByServer ?? {});
   const [servers, setServers] = useState<McpStatus>({});
-  const reappliedRef = useRef(false);
+  const lastNotifiedPrefsRef = useRef<Record<string, boolean> | null>(null);
+  const lastProcessedActionsRef = useRef<
+    Record<string, { status: McpStatus[string]["status"]; action: ReapplyAction["action"] }>
+  >({});
+
+  useEffect(() => {
+    if (lastNotifiedPrefsRef.current === null) {
+      lastNotifiedPrefsRef.current = prefs;
+      return;
+    }
+    if (arePrefsEqual(lastNotifiedPrefsRef.current, prefs)) return;
+    postMessage({ type: "setMcpPrefs", prefs });
+    lastNotifiedPrefsRef.current = prefs;
+  }, [prefs]);
 
   // Request initial status once when MCP capability is present.
   useEffect(() => {
@@ -45,24 +58,39 @@ export function useMcp(capabilities?: { mcp?: boolean }) {
 
   /**
    * Called by App.tsx's message handler when a `mcpStatus` message arrives.
-   * Updates live server state and runs the reapply policy on first invocation.
+   * Updates live server state and reapplies persisted preferences. Reapplying on
+   * every status snapshot makes a reconnect after a companion transition
+   * converge without requiring the webview to be recreated.
    */
   const handleMcpStatus = useCallback((status: McpStatus) => {
     setServers(status);
 
-    if (!reappliedRef.current) {
-      reappliedRef.current = true;
-      const currentPrefs = getPersistedState()?.mcpEnabledByServer ?? {};
-      if (Object.keys(currentPrefs).length > 0) {
-        const actions = computeReapplyActions(currentPrefs, status);
-        for (const { server, action } of actions) {
-          postMessage({
-            type: action === "connect" ? "connectMcp" : "disconnectMcp",
-            server,
-          });
-        }
+    const currentPrefs = getPersistedState()?.mcpEnabledByServer ?? {};
+    if (Object.keys(currentPrefs).length > 0) {
+      const actions = computeReapplyActions(currentPrefs, status);
+      for (const { server, action } of actions) {
+        const previous = lastProcessedActionsRef.current[server];
+        if (previous?.status === status[server].status && previous.action === action) continue;
+        postMessage({
+          type: action === "connect" ? "connectMcp" : "disconnectMcp",
+          server,
+        });
+        lastProcessedActionsRef.current[server] = { status: status[server].status, action };
       }
     }
+
+    for (const [server, previous] of Object.entries(lastProcessedActionsRef.current)) {
+      if (status[server]?.status !== previous.status) delete lastProcessedActionsRef.current[server];
+    }
+  }, []);
+
+  const handleMcpPrefs = useCallback((message: { prefs: Record<string, boolean>; locked: string[] }) => {
+    const nextPrefs = message.prefs;
+    const adoptedPrefs = { ...nextPrefs };
+    lastProcessedActionsRef.current = {};
+    lastNotifiedPrefsRef.current = adoptedPrefs;
+    setPrefsState(adoptedPrefs);
+    setPersistedState({ ...getPersistedState(), mcpEnabledByServer: adoptedPrefs });
   }, []);
 
   /**
@@ -90,5 +118,12 @@ export function useMcp(capabilities?: { mcp?: boolean }) {
     toggle,
     refresh,
     handleMcpStatus,
+    handleMcpPrefs,
   } as const;
+}
+
+function arePrefsEqual(left: Record<string, boolean>, right: Record<string, boolean>): boolean {
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  return leftKeys.every((key) => left[key] === right[key]);
 }

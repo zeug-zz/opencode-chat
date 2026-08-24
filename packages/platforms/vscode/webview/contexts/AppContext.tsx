@@ -1,4 +1,6 @@
 import type {
+  ChatSandboxSettings,
+  ChatSandboxStatus,
   ChatSession,
   FileDiff,
   Permission,
@@ -69,6 +71,8 @@ export type AppContextValue = {
   onLocaleSettingChange: (setting: LocaleSetting) => void;
   soundSettings: SoundSettings;
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
+  chatSandboxStatus: ChatSandboxStatus | null;
+  onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
 
   // Child Sessions
   childSessions: ChatSession[];

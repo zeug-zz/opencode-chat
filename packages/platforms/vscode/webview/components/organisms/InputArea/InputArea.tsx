@@ -1,5 +1,7 @@
 import type {
   AgentInfo,
+  ChatSandboxSettings,
+  ChatSandboxStatus,
   McpStatus,
   ModelVariantRef,
   ProviderInfo,
@@ -79,6 +81,8 @@ type Props = {
   mcpServers?: McpStatus | null;
   onMcpToggle?: (server: string, enabled: boolean) => void;
   onMcpRefresh?: () => void;
+  chatSandboxStatus?: ChatSandboxStatus;
+  onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
 };
 
 export function InputArea({
@@ -113,6 +117,8 @@ export function InputArea({
   mcpServers,
   onMcpToggle,
   onMcpRefresh,
+  chatSandboxStatus,
+  onChatSandboxSettingsChange,
 }: Props) {
   const t = useLocale();
   const [text, setText] = useState("");
@@ -796,6 +802,9 @@ export function InputArea({
                     onSoundSettingChange={onSoundSettingChange}
                     mcpServers={mcpServers}
                     onMcpToggle={onMcpToggle}
+                    sandboxStatus={chatSandboxStatus}
+                    onChatSandboxSettingsChange={onChatSandboxSettingsChange}
+                    sandboxControlsDisabled={isBusy}
                   />
                 )}
               />

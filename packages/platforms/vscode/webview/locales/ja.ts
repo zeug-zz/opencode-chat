@@ -117,6 +117,20 @@ export const ja: LocaleSchema = {
   "config.globalConfig": "グローバル設定",
 
   "config.close": "閉じる",
+  "config.sandbox": "サンドボックス",
+  "config.sandboxChatTools": "チャットツールをサンドボックス化",
+  "config.sandboxInherited": "VS Code から継承",
+  "config.sandboxWorkspaceOverride": (mode: string) => `ワークスペースの上書き: ${mode}`,
+  "config.sandboxReset": "VS Code の設定を使用",
+  "config.sandboxNetwork": "ネットワークアクセスを許可",
+  "config.sandboxNetworkEnabledDescription":
+    "ファイルシステムの制限を維持したまま、外部ネットワークアクセスを有効にします。",
+  "config.sandboxLocalOnlyDescription":
+    "ローカルのみ: ファイルシステムの制限を維持し、ループバック以外のネットワークアクセスを拒否します。",
+  "config.sandboxUnsupported": "このプラットフォームではチャットのサンドボックス化はサポートされていません。",
+  "config.sandboxManaged": "チャットのサンドボックス設定は管理されているため変更できません。",
+  "config.sandboxApplying": "サンドボックス設定を適用中…",
+  "config.sandboxError": (error: string) => `サンドボックスエラー: ${error}`,
 
   // Language setting
   "config.language": "言語",

@@ -8,6 +8,7 @@
  * adapted to the IAgent contract with SDK→domain type conversion via mappers.
  */
 
+import { type ChildProcess, spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -34,6 +35,8 @@ import type {
   TodoItem,
   ToolListItem,
 } from "@opencode-chat/core";
+import { SandboxManager, type SandboxRuntimeConfig } from "@vscode/sandbox-runtime";
+import type { OpenCodeLaunchConfiguration } from "./launch-config";
 import {
   mapAgents,
   mapAllProvidersData,
@@ -53,12 +56,264 @@ import {
 
 type EventHandler = (event: AgentEvent) => void;
 
+const SANDBOX_STARTUP_TIMEOUT_MS = 10_000;
+const DIAGNOSTIC_TAIL_LENGTH = 4_096;
+const SANDBOX_TERMINATION_GRACE_MS = 1_000;
+const SANDBOX_TERMINATION_ESCALATION_MS = 1_000;
+
+const CHAT_AGENT_OVERLAY = {
+  agent: {
+    scout: {
+      mode: "all",
+      description: "Read-only chat and research companion.",
+      permission: {
+        edit: "deny",
+        bash: "deny",
+        task: "deny",
+        read: "allow",
+        glob: "allow",
+        grep: "allow",
+        list: "allow",
+        webfetch: "allow",
+        websearch: "allow",
+        question: "allow",
+      },
+    },
+    build: {
+      permission: {
+        "*": "deny",
+        read: "allow",
+        glob: "allow",
+        grep: "allow",
+        list: "allow",
+        webfetch: "allow",
+        websearch: "allow",
+        edit: "allow",
+      },
+    },
+  },
+} as const;
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+type BoundedOutput = {
+  stdout: string;
+  stderr: string;
+};
+
+type SandboxChildExit = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+};
+
+function appendDiagnosticTail(current: string, chunk: string): string {
+  const value = current + chunk;
+  return value.length > DIAGNOSTIC_TAIL_LENGTH ? value.slice(-DIAGNOSTIC_TAIL_LENGTH) : value;
+}
+
+function redactDiagnostic(value: string): string {
+  return value
+    .replace(/(\b(?:config|configuration|settings|payload)\b\s*[:=]\s*)\{[^\r\n]*/gi, "$1{[redacted]}")
+    .replace(/OPENCODE_CONFIG_CONTENT\b[^\r\n]*/gi, "OPENCODE_CONFIG_CONTENT=[redacted]")
+    .replace(
+      /(["'](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret)["']\s*:\s*)["'][^"']*["']/gi,
+      '$1"[redacted]"',
+    )
+    .replace(
+      /((?:[A-Za-z_][A-Za-z0-9_]*_)?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|authorization|bearer))\b(\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|bearer\s+\S+|[^\s,;}"']+)/gi,
+      "$1$2[redacted]",
+    )
+    .replace(
+      /\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret)\b\s*[:=]\s*)[^\s,;]+/gi,
+      "$1[redacted]",
+    )
+    .replace(/\b(?:authorization|bearer)\s*[:=]?\s*(?:bearer\s+)?[^\s,;]+/gi, "authorization=[redacted]")
+    .replace(/([?&](?:token|key|password|secret|api[_-]?key)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/(https?:\/\/)[^/\s:@]+:[^@\s]+@/gi, "$1[redacted]@");
+}
+
+function formatOutput(output: BoundedOutput, command?: string): string {
+  const stderr = command ? SandboxManager.annotateStderrWithSandboxFailures(command, output.stderr) : output.stderr;
+  const parts = [
+    output.stdout && `stdout:\n${redactDiagnostic(output.stdout)}`,
+    stderr && `stderr:\n${redactDiagnostic(stderr)}`,
+  ].filter(Boolean);
+  return parts.length ? `\nCaptured sandboxed OpenCode output:\n${parts.join("\n")}` : "";
+}
+
+function formatSandboxViolations(command?: string): string {
+  const store = SandboxManager.getSandboxViolationStore();
+  const exactViolations = command ? store.getViolationsForCommand(command) : [];
+  const violations = exactViolations.length ? exactViolations : store.getViolations(8);
+  if (!violations.length) return "";
+  const details = violations
+    .slice(-8)
+    .map((violation) => `${violation.timestamp.toISOString()}: ${redactDiagnostic(violation.line)}`)
+    .join("\n");
+  return `\nSandbox violations (recent):\n${details}`;
+}
+
+function sandboxChildHasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null && child.exitCode !== undefined;
+}
+
+function waitForSandboxChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (sandboxChildHasExited(child)) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener?.("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timeout = setTimeout(() => finish(sandboxChildHasExited(child)), timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+function isSafeSandboxProcessGroupPid(pid: number | undefined): pid is number {
+  return process.platform !== "win32" && Number.isInteger(pid) && pid > 1 && pid !== process.pid;
+}
+
+async function terminateSandboxChild(child: ChildProcess | undefined): Promise<void> {
+  if (!child) return;
+
+  if (!isSafeSandboxProcessGroupPid(child.pid)) {
+    child.kill();
+    return;
+  }
+
+  if (sandboxChildHasExited(child)) return;
+
+  let termDelivered = false;
+  try {
+    process.kill(-child.pid, "SIGTERM");
+    termDelivered = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+  }
+
+  if (!termDelivered || (await waitForSandboxChildExit(child, SANDBOX_TERMINATION_GRACE_MS))) return;
+  if (sandboxChildHasExited(child)) return;
+
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+  }
+  await waitForSandboxChildExit(child, SANDBOX_TERMINATION_ESCALATION_MS);
+}
+
+function inferMcpOperation(error?: string): string {
+  if (!error) return "startup/readiness";
+  if (/network|connect|dns|tls|http|fetch|socket|timeout/i.test(error)) return "network request/startup";
+  if (/write|mkdir|rename|unlink|permission denied|read-only/i.test(error)) return "write operation";
+  return "startup/readiness";
+}
+
+function formatMcpDiagnostic(
+  server: string,
+  error: string | undefined,
+  readiness: "ready" | "not-ready",
+  exit: SandboxChildExit | undefined,
+  output: string,
+  violations: string,
+  transport: "stdio" | "http" | "sdk" | "unknown" = "unknown",
+): string {
+  const attribution =
+    transport === "stdio"
+      ? `MCP child="${server}"`
+      : transport === "http"
+        ? "MCP remote HTTP operation"
+        : transport === "sdk"
+          ? "MCP in-process SDK operation"
+          : "MCP transport=unknown (not attributed to a child)";
+  const context = [
+    attribution,
+    `operation=${inferMcpOperation(error)}`,
+    `readiness=${readiness}`,
+    exit ? `companion-exit=code=${exit.code}, signal=${exit.signal ?? "none"}` : "companion-exit=not-observed",
+  ].join(", ");
+  const details = [
+    error && `SDK error: ${redactDiagnostic(error)}`,
+    output && `Companion process context (aggregate; server attribution unavailable):${output}`,
+    transport === "stdio" && violations && `Sandbox violation context (recent child/companion records):${violations}`,
+  ].filter(Boolean);
+  return `MCP server "${server}" failed (${context}).${details.length ? `\n${details.join("\n")}` : ""}`;
+}
+
+function waitForLoopbackUrl(
+  child: ChildProcess,
+  workspacePath: string,
+  output: BoundedOutput,
+  command: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const startupError = (reason: string) =>
+      new Error(
+        `Sandboxed OpenCode startup failed while waiting for loopback readiness at 127.0.0.1 ` +
+          `(workspace=${workspacePath}, readiness=not-ready): ${reason}${formatOutput(output, command)}${formatSandboxViolations(command)}`,
+      );
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    };
+    const onStdout = (chunk: Buffer) => {
+      output.stdout = appendDiagnosticTail(output.stdout, redactDiagnostic(chunk.toString()));
+      const match = `${output.stdout}\n${output.stderr}`.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/);
+      if (match) finish(() => resolve(match[0]));
+    };
+    const onStderr = (chunk: Buffer) => {
+      output.stderr = appendDiagnosticTail(output.stderr, redactDiagnostic(chunk.toString()));
+      const match = `${output.stdout}\n${output.stderr}`.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/);
+      if (match) finish(() => resolve(match[0]));
+    };
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+    child.once("error", (error) => finish(() => reject(startupError(`child error: ${error.message}`))));
+    child.once("exit", (code, signal) => {
+      finish(() => reject(startupError(`child exited before readiness (code=${code}, signal=${signal})`)));
+    });
+    const timeout = setTimeout(
+      () => finish(() => reject(startupError(`timed out after ${SANDBOX_STARTUP_TIMEOUT_MS}ms`))),
+      SANDBOX_STARTUP_TIMEOUT_MS,
+    );
+  });
+}
+
 export class OpenCodeAgent implements IAgent {
+  public launchConfiguration: OpenCodeLaunchConfiguration | undefined;
   private client: OpencodeClient | undefined;
   private server: { url: string; close(): void } | undefined;
+  private sandboxedChild: ChildProcess | undefined;
+  private sandboxRuntimeInitialized = false;
+  private cleanupPromise: Promise<void> | undefined;
   private sseAbortController: AbortController | undefined;
   private listeners: Set<EventHandler> = new Set();
   public workspaceFolder: string | undefined;
+  public onAvailabilityError: ((error: Error) => void) | undefined;
+  private sandboxedChildStopping = false;
+  private sandboxDiagnosticOutput: BoundedOutput = { stdout: "", stderr: "" };
+  private sandboxCommand: string | undefined;
+  private sandboxChildReady = false;
+  private sandboxChildExit: SandboxChildExit | undefined;
+
+  constructor(launchConfiguration?: OpenCodeLaunchConfiguration) {
+    this.launchConfiguration = launchConfiguration;
+  }
+
+  updateLaunchConfiguration(launchConfiguration: OpenCodeLaunchConfiguration): void {
+    this.launchConfiguration = launchConfiguration;
+  }
 
   // --- Capability declaration ---
 
@@ -84,41 +339,17 @@ export class OpenCodeAgent implements IAgent {
   // --- Lifecycle ---
 
   async connect(): Promise<void> {
+    if (this.launchConfiguration?.sandbox.enabled && SandboxManager.isSupportedPlatform()) {
+      await this.connectSandboxed();
+      return;
+    }
     // Port 0: let OS assign a free port to avoid conflicts
     // In-memory Scout overlay scoped to this child process via OPENCODE_CONFIG_CONTENT.
     const server = await createOpencodeServer({
       port: 0,
       config: {
-        agent: {
-          scout: {
-            mode: "all",
-            description: "Read-only chat and research companion.",
-            permission: {
-              edit: "deny",
-              bash: "deny",
-              task: "deny",
-              read: "allow",
-              glob: "allow",
-              grep: "allow",
-              list: "allow",
-              webfetch: "allow",
-              websearch: "allow",
-              question: "allow",
-            },
-          },
-          build: {
-            permission: {
-              "*": "deny",
-              read: "allow",
-              glob: "allow",
-              grep: "allow",
-              list: "allow",
-              webfetch: "allow",
-              websearch: "allow",
-              edit: "allow",
-            },
-          },
-        },
+        ...CHAT_AGENT_OVERLAY,
+        ...this.launchConfiguration?.mcpOverlay,
       },
     });
     this.server = server;
@@ -128,13 +359,159 @@ export class OpenCodeAgent implements IAgent {
     this.subscribeToEvents();
   }
 
+  private async connectSandboxed(): Promise<void> {
+    const configuration = this.launchConfiguration;
+    if (!configuration) {
+      throw new Error("Sandboxed OpenCode launch requires a launch configuration.");
+    }
+
+    const networkPolicy = configuration.sandbox.networkPolicy;
+    const runtimeConfig: SandboxRuntimeConfig = {
+      network: {
+        enabled: networkPolicy?.enabled ?? !configuration.sandbox.allowNetwork,
+        allowedDomains: [
+          ...(networkPolicy?.allowedDomains ?? (configuration.sandbox.allowNetwork ? [] : ["localhost", "127.0.0.1"])),
+        ],
+        deniedDomains: [...(networkPolicy?.deniedDomains ?? [])],
+        allowLocalBinding: true,
+        ...(networkPolicy?.allowMachLookup ? { allowMachLookup: [...networkPolicy.allowMachLookup] } : {}),
+      },
+      filesystem: {
+        denyRead: [...(configuration.sandbox.filesystemPolicy.denyReadPaths ?? [])],
+        allowRead: [
+          ...configuration.sandbox.filesystemPolicy.readOnlyPaths,
+          ...configuration.sandbox.filesystemPolicy.readWritePaths,
+        ],
+        allowWrite: [...configuration.sandbox.filesystemPolicy.readWritePaths],
+        denyWrite: [],
+      },
+    };
+
+    try {
+      this.sandboxRuntimeInitialized = true;
+      const violationStore = SandboxManager.getSandboxViolationStore();
+      violationStore.clear();
+      await SandboxManager.initialize(runtimeConfig, undefined, true);
+      const command = [
+        configuration.executable.path,
+        ...(configuration.executable.args ?? []),
+        "serve",
+        "--hostname",
+        "127.0.0.1",
+        "--port",
+        "0",
+      ]
+        .map(shellQuote)
+        .join(" ");
+      const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
+      const output: BoundedOutput = { stdout: "", stderr: "" };
+      this.sandboxDiagnosticOutput = output;
+      this.sandboxCommand = command;
+      this.sandboxChildReady = false;
+      this.sandboxChildExit = undefined;
+      const child = spawn(wrappedCommand, {
+        cwd: configuration.workspacePath,
+        env: {
+          ...process.env,
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            ...CHAT_AGENT_OVERLAY,
+            ...configuration.mcpOverlay,
+          }),
+        },
+        detached: true,
+        shell: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      this.sandboxedChild = child;
+      this.sandboxedChildStopping = false;
+      const url = await waitForLoopbackUrl(child, configuration.workspacePath, output, command);
+      this.sandboxChildReady = true;
+      this.server = {
+        url,
+        close: () => undefined,
+      };
+      this.client = createOpencodeClient({ baseUrl: url });
+      this.subscribeToEvents();
+      child.once("exit", (code, signal) => {
+        if (this.sandboxedChild !== child) return;
+        this.sandboxChildExit = { code, signal };
+        const expected = this.sandboxedChildStopping;
+        this.client = undefined;
+        this.server = undefined;
+        this.sseAbortController?.abort();
+        this.sseAbortController = undefined;
+        if (!expected) {
+          this.onAvailabilityError?.(
+            new Error(
+              `Sandboxed OpenCode companion exited unexpectedly after readiness (companion, code=${code}, signal=${signal ?? "none"}); ` +
+                `Chat is unavailable.${formatOutput(output, command)}${formatSandboxViolations(command)}`,
+            ),
+          );
+        }
+        void this.cleanupSandboxResources(child);
+      });
+    } catch (error) {
+      await this.cleanupSandboxResources();
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Sandboxed OpenCode startup failed; no unsandboxed fallback was started: ${redactDiagnostic(message)}`,
+      );
+    }
+  }
+
   disconnect(): void {
+    this.stopConnection(true);
+  }
+
+  async reconnect(): Promise<void> {
+    await this.stopForReconnect();
+    await this.connect();
+  }
+
+  async stopForReconnect(): Promise<void> {
+    this.stopConnection(false);
+    await this.cleanupPromise;
+  }
+
+  private stopConnection(clearListeners: boolean): void {
     this.sseAbortController?.abort();
     this.sseAbortController = undefined;
-    this.server?.close();
+    const server = this.server;
     this.server = undefined;
     this.client = undefined;
-    this.listeners.clear();
+    if (!this.sandboxedChild) server?.close();
+    void this.cleanupSandboxResources();
+    if (clearListeners) this.listeners.clear();
+  }
+
+  private cleanupSandboxResources(child?: ChildProcess): Promise<void> {
+    if (this.cleanupPromise) return this.cleanupPromise;
+
+    const childToKill = child ?? this.sandboxedChild;
+    const childAlreadyExited =
+      childToKill !== undefined && (sandboxChildHasExited(childToKill) || this.sandboxChildExit !== undefined);
+    if (childToKill === this.sandboxedChild) this.sandboxedChildStopping = true;
+    this.sandboxedChild = undefined;
+    const shouldResetRuntime = this.sandboxRuntimeInitialized;
+    this.sandboxRuntimeInitialized = false;
+    this.cleanupPromise = (async () => {
+      try {
+        if (childToKill && isSafeSandboxProcessGroupPid(childToKill.pid) && !childAlreadyExited) {
+          await terminateSandboxChild(childToKill);
+        } else if (childToKill && !isSafeSandboxProcessGroupPid(childToKill.pid)) {
+          childToKill?.kill();
+        }
+      } finally {
+        if (shouldResetRuntime) {
+          try {
+            await SandboxManager.reset();
+          } catch {}
+        }
+      }
+    })().finally(() => {
+      this.cleanupPromise = undefined;
+    });
+    return this.cleanupPromise;
   }
 
   // --- Event subscription ---
@@ -456,7 +833,25 @@ export class OpenCodeAgent implements IAgent {
   async getMcpStatus(): Promise<McpStatus> {
     const client = this.requireClient();
     const response = await client.mcp.status();
-    return mapMcpStatus(response.data!);
+    const mapped = mapMcpStatus(response.data!);
+    if (!this.launchConfiguration?.sandbox.enabled || !SandboxManager.isSupportedPlatform()) return mapped;
+    const output = formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand);
+    const violations = formatSandboxViolations(this.sandboxCommand);
+    const transports = this.launchConfiguration?.mcpTransport ?? {};
+    for (const [server, status] of Object.entries(mapped)) {
+      if (!status.connected && status.status !== "disabled") {
+        status.error = formatMcpDiagnostic(
+          server,
+          status.error,
+          this.sandboxChildReady ? "ready" : "not-ready",
+          this.sandboxChildExit,
+          output,
+          transports[server] === "stdio" ? violations : "",
+          transports[server] ?? "unknown",
+        );
+      }
+    }
+    return mapped;
   }
 
   async connectMcp(server: string): Promise<void> {

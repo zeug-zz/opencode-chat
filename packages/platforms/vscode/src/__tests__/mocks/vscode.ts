@@ -8,6 +8,17 @@ import { vi } from "vitest";
 // --- workspace ---
 export const workspace = {
   workspaceFolders: [{ uri: { fsPath: "/workspace", scheme: "file" } }],
+  getConfiguration: vi.fn((section: string) => ({
+    get: vi.fn((key: string) => {
+      if (section === "opencode-chat" && key === "chatSandbox.mode") return "inherit";
+      if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+      if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+      return undefined;
+    }),
+    inspect: vi.fn(() => undefined),
+    update: vi.fn().mockResolvedValue(undefined),
+  })),
+  onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
   findFiles: vi.fn().mockResolvedValue([]),
   registerTextDocumentContentProvider: vi.fn(() => ({ dispose: vi.fn() })),
   openTextDocument: vi.fn().mockResolvedValue({}),
@@ -79,6 +90,12 @@ export const Uri = {
       toString: () => s,
     };
   }),
+};
+
+export const ConfigurationTarget = {
+  Global: 1,
+  Workspace: 2,
+  WorkspaceFolder: 3,
 };
 
 // --- Disposable ---

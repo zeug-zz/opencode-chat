@@ -118,6 +118,20 @@ export const es: LocaleSchema = {
   "config.globalConfig": "Configuración global",
 
   "config.close": "Cerrar",
+  "config.sandbox": "Aislamiento",
+  "config.sandboxChatTools": "Aislar las herramientas de Chat",
+  "config.sandboxInherited": "Heredado de VS Code",
+  "config.sandboxWorkspaceOverride": (mode: string) => `Anulación del espacio de trabajo: ${mode}`,
+  "config.sandboxReset": "Usar configuración de VS Code",
+  "config.sandboxNetwork": "Permitir acceso a la red",
+  "config.sandboxNetworkEnabledDescription":
+    "Las restricciones del sistema de archivos siguen activas mientras se permite el acceso de red saliente.",
+  "config.sandboxLocalOnlyDescription":
+    "Solo local: las restricciones del sistema de archivos siguen activas y se deniega el acceso de red no local.",
+  "config.sandboxUnsupported": "El aislamiento de Chat no es compatible con esta plataforma.",
+  "config.sandboxManaged": "La configuración de aislamiento de Chat está administrada y no se puede cambiar.",
+  "config.sandboxApplying": "Aplicando configuración de aislamiento…",
+  "config.sandboxError": (error: string) => `Error de aislamiento: ${error}`,
 
   // Language setting
   "config.language": "Idioma",

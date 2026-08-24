@@ -33,6 +33,22 @@ describe("computeReapplyActions", () => {
       const status = { "my-server": { connected: true, status: "connected" } };
       expect(computeReapplyActions(prefs, status)).toEqual([]);
     });
+
+    it.each([
+      "failed",
+      "needs_auth",
+      "needs_client_registration",
+    ] as const)("does not connect a server in %s lifecycle", (lifecycle) => {
+      expect(
+        computeReapplyActions({ "my-server": true }, { "my-server": { connected: false, status: lifecycle } }),
+      ).toEqual([]);
+    });
+
+    it("connects a server in the unknown lifecycle", () => {
+      expect(
+        computeReapplyActions({ "my-server": true }, { "my-server": { connected: false, status: "unknown" } }),
+      ).toEqual([{ server: "my-server", action: "connect" }]);
+    });
   });
 
   context("re-apply disconnect", () => {
@@ -101,6 +117,18 @@ describe("computeReapplyActions", () => {
       expect(computeReapplyActions(prefs, status)).toEqual([{ server: "my-server", action: "connect" }]);
     });
   });
+
+  it("re-applies selected servers regardless of the compatibility locked list", () => {
+    const prefs = { locked: true, available: true };
+    const status = {
+      locked: { connected: false, status: "disabled" },
+      available: { connected: false, status: "disabled" },
+    };
+    expect(computeReapplyActions(prefs, status)).toEqual([
+      { server: "locked", action: "connect" },
+      { server: "available", action: "connect" },
+    ]);
+  });
 });
 
 describe("useMcp", () => {
@@ -161,6 +189,20 @@ describe("useMcp", () => {
         result.current.handleMcpStatus({ "server-b": { connected: false, status: "disabled" } });
       });
       expect(result.current.servers).toEqual({ "server-b": { connected: false, status: "disabled" } });
+    });
+  });
+
+  context("host preference adoption", () => {
+    it("adopts host prefs into local and persisted state without echoing", () => {
+      const { result } = renderHook(() => useMcp());
+      act(() => {
+        result.current.handleMcpPrefs({ prefs: { "my-server": true }, locked: ["locked-server"] });
+      });
+      expect(result.current.prefs).toEqual({ "my-server": true });
+      expect(setPersistedState).toHaveBeenCalledWith(
+        expect.objectContaining({ mcpEnabledByServer: { "my-server": true } }),
+      );
+      expect(postMessage).not.toHaveBeenCalledWith({ type: "setMcpPrefs", prefs: { "my-server": true } });
     });
   });
 
@@ -230,10 +272,10 @@ describe("useMcp", () => {
   });
 
   // ==========================================================
-  // Reapply only runs once
+  // Reapply after companion transitions
   // ==========================================================
-  context("reapply runs only once", () => {
-    it("does not reapply on subsequent handleMcpStatus calls", () => {
+  context("reapply after companion transitions", () => {
+    it("suppresses an identical status echo", () => {
       vi.mocked(getPersistedState).mockReturnValue({
         mcpEnabledByServer: { "my-server": true },
       });
@@ -247,10 +289,44 @@ describe("useMcp", () => {
 
       vi.mocked(postMessage).mockClear();
 
-      // Second call: should NOT reapply again
       act(() => {
         result.current.handleMcpStatus({ "my-server": { connected: false, status: "disabled" } });
       });
+      expect(postMessage).not.toHaveBeenCalledWith({ type: "connectMcp", server: "my-server" });
+    });
+
+    it("reapplies after a failed-to-disabled status transition", () => {
+      vi.mocked(getPersistedState).mockReturnValue({ mcpEnabledByServer: { "my-server": true } });
+      const { result } = renderHook(() => useMcp());
+      act(() => result.current.handleMcpStatus({ "my-server": { connected: false, status: "failed" } }));
+      act(() => result.current.handleMcpStatus({ "my-server": { connected: false, status: "disabled" } }));
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "my-server" });
+    });
+
+    it("resets the action guard when host preferences arrive", () => {
+      vi.mocked(getPersistedState).mockReturnValue({ mcpEnabledByServer: { "my-server": true } });
+      const { result } = renderHook(() => useMcp());
+      const status = { "my-server": { connected: false, status: "disabled" as const } };
+      act(() => result.current.handleMcpStatus(status));
+      act(() => result.current.handleMcpPrefs({ prefs: { "my-server": true }, locked: [] }));
+      act(() => result.current.handleMcpStatus(status));
+      act(() => result.current.handleMcpStatus(status));
+      expect(postMessage).toHaveBeenCalledTimes(2);
+      expect(postMessage).toHaveBeenNthCalledWith(1, { type: "connectMcp", server: "my-server" });
+      expect(postMessage).toHaveBeenNthCalledWith(2, { type: "connectMcp", server: "my-server" });
+    });
+  });
+
+  context("terminal lifecycle status", () => {
+    it.each([
+      "failed",
+      "needs_auth",
+      "needs_client_registration",
+    ] as const)("does not automatically connect %s", (lifecycle) => {
+      vi.mocked(getPersistedState).mockReturnValue({ mcpEnabledByServer: { "my-server": true } });
+      const { result } = renderHook(() => useMcp());
+      act(() => result.current.handleMcpStatus({ "my-server": { connected: false, status: lifecycle } }));
       expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "connectMcp" }));
     });
   });
@@ -293,6 +369,20 @@ describe("useMcp", () => {
       const { result } = renderHook(() => useMcp());
       act(() => result.current.toggle("my-server", true));
       expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "my-server" });
+    });
+
+    it("posts connectMcp for an explicitly toggled failed server", () => {
+      const { result } = renderHook(() => useMcp());
+      act(() => result.current.handleMcpStatus({ "my-server": { connected: false, status: "failed" } }));
+      vi.mocked(postMessage).mockClear();
+      act(() => result.current.toggle("my-server", true));
+      expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "my-server" });
+    });
+
+    it("posts setMcpPrefs when the preference map changes", () => {
+      const { result } = renderHook(() => useMcp());
+      act(() => result.current.toggle("my-server", true));
+      expect(postMessage).toHaveBeenCalledWith({ type: "setMcpPrefs", prefs: { "my-server": true } });
     });
 
     it("posts disconnectMcp when enabled is false", () => {

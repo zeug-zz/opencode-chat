@@ -117,6 +117,20 @@ export const ru: LocaleSchema = {
   "config.globalConfig": "Глобальные настройки",
 
   "config.close": "Закрыть",
+  "config.sandbox": "Песочница",
+  "config.sandboxChatTools": "Изолировать инструменты Chat в песочнице",
+  "config.sandboxInherited": "Унаследовано из VS Code",
+  "config.sandboxWorkspaceOverride": (mode: string) => `Переопределение рабочей области: ${mode}`,
+  "config.sandboxReset": "Использовать настройку VS Code",
+  "config.sandboxNetwork": "Разрешить сетевой доступ",
+  "config.sandboxNetworkEnabledDescription":
+    "Ограничения файловой системы сохраняются, а исходящий сетевой доступ разрешён.",
+  "config.sandboxLocalOnlyDescription":
+    "Только локальная работа: ограничения файловой системы сохраняются, а сетевой доступ вне loopback запрещён.",
+  "config.sandboxUnsupported": "Песочница Chat не поддерживается на этой платформе.",
+  "config.sandboxManaged": "Настройки песочницы Chat управляются и не могут быть изменены.",
+  "config.sandboxApplying": "Применение настроек песочницы…",
+  "config.sandboxError": (error: string) => `Ошибка песочницы: ${error}`,
 
   // Language setting
   "config.language": "Язык",
