@@ -29,6 +29,11 @@ describe("SessionList", () => {
       const { container } = render(<SessionList {...defaultProps} />);
       expect(container.querySelector(".item.active")).toBeInTheDocument();
     });
+
+    it("ヘッダー領域をバックドロップで覆わないこと", () => {
+      const { container } = render(<SessionList {...defaultProps} />);
+      expect(container.querySelector(".backdrop")).toHaveStyle("top: 36px");
+    });
   });
 
   // when a session is clicked
@@ -39,6 +44,15 @@ describe("SessionList", () => {
       const { container } = render(<SessionList {...defaultProps} onSelect={onSelect} />);
       fireEvent.click(container.querySelectorAll(".item")[1]!);
       expect(onSelect).toHaveBeenCalledWith("s2");
+    });
+  });
+
+  context("リスト外をクリックした場合", () => {
+    it("onClose が呼ばれること", () => {
+      const onClose = vi.fn();
+      const { container } = render(<SessionList {...defaultProps} onClose={onClose} />);
+      fireEvent.click(container.querySelector(".backdrop")!);
+      expect(onClose).toHaveBeenCalledOnce();
     });
   });
 

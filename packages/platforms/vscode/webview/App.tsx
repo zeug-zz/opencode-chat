@@ -227,6 +227,9 @@ export function App() {
     ],
   );
 
+  const handleEventRef = useRef(handleEvent);
+  handleEventRef.current = handleEvent;
+
   // Extension Host → Webview message listener
   useEffect(() => {
     const handler = (e: MessageEvent<HostToUIMessage>) => {
@@ -236,26 +239,44 @@ export function App() {
           session.setSessions(data.sessions);
           break;
         case "messages":
-          if (data.sessionId === session.activeSession?.id) {
+          if (data.sessionId === activeSessionRef.current?.id) {
             msg.setMessages(data.messages);
           }
           break;
-        case "activeSession":
+        case "activeSession": {
+          const previousSessionId = activeSessionRef.current?.id;
+          const nextSessionId = data.session?.id;
+          const changedNonNullSession =
+            previousSessionId !== undefined && nextSessionId !== undefined && previousSessionId !== nextSessionId;
+          activeSessionRef.current = data.session;
+          if (changedNonNullSession) {
+            msg.clearSessionState();
+            fileChanges.clearDiffs();
+            perm.clearPermissions();
+            quest.clearQuestions();
+            session.clearSessionState();
+            setTodos([]);
+            setChildSessions([]);
+            setContextMemory("");
+          }
           session.setActiveSession(data.session);
           if (data.session) {
-            postMessage({ type: "getMessages", sessionId: data.session.id });
             postMessage({ type: "getSessionDiff", sessionId: data.session.id });
             postMessage({ type: "getSessionTodos", sessionId: data.session.id });
             postMessage({ type: "getChildSessions", sessionId: data.session.id });
           } else {
-            msg.setMessages([]);
+            msg.clearSessionState();
             fileChanges.clearDiffs();
+            perm.clearPermissions();
+            quest.clearQuestions();
+            session.clearSessionState();
             setTodos([]);
             setChildSessions([]);
           }
           break;
+        }
         case "event":
-          handleEvent(data.event);
+          handleEventRef.current(data.event);
           break;
         case "providers": {
           prov.setProviders(data.providers);
@@ -305,19 +326,19 @@ export function App() {
           break;
         }
         case "sessionDiff": {
-          if (data.sessionId === session.activeSession?.id) {
+          if (data.sessionId === activeSessionRef.current?.id) {
             fileChanges.setDiffs(data.diffs);
           }
           break;
         }
         case "sessionTodos": {
-          if (data.sessionId === session.activeSession?.id) {
+          if (data.sessionId === activeSessionRef.current?.id) {
             setTodos(data.todos);
           }
           break;
         }
         case "childSessions": {
-          if (data.sessionId === session.activeSession?.id) {
+          if (data.sessionId === activeSessionRef.current?.id) {
             setChildSessions(data.children);
           }
           break;
@@ -363,8 +384,6 @@ export function App() {
     postMessage({ type: "getSkills" });
     return () => window.removeEventListener("message", handler);
   }, [
-    session.activeSession?.id,
-    handleEvent,
     locale.setVscodeLanguage,
     msg.setMessages,
     fileChanges.setDiffs,
@@ -376,6 +395,11 @@ export function App() {
     session.setSessions,
     handleMcpPrefs,
     handleMcpStatus,
+    activeSessionRef,
+    msg.clearSessionState,
+    perm.clearPermissions,
+    quest.clearQuestions,
+    session.clearSessionState,
   ]);
 
   // Cross-cutting action handlers (span multiple hooks)

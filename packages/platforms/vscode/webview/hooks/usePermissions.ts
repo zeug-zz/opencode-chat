@@ -27,6 +27,10 @@ export function usePermissions(activeSessionRef: RefObject<ChatSession | null>) 
     });
   }, []);
 
+  const clearPermissions = useCallback(() => {
+    setPermissions(new Map());
+  }, []);
+
   const handlePermissionEvent = useCallback(
     (event: AgentEvent) => {
       const activeId = activeSessionRef.current?.id;
@@ -46,6 +50,7 @@ export function usePermissions(activeSessionRef: RefObject<ChatSession | null>) 
 
   return {
     permissions,
+    clearPermissions,
     handlePermissionEvent,
   } as const;
 }

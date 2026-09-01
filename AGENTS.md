@@ -89,6 +89,23 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-09-01: Session navigation race hardening (archived: `2026-09-01-fix-session-navigation-races`)
+
+Session create/select/refresh and session-scoped responses now use host-side
+latest-intent guards. The host publishes one guarded active-session message
+snapshot; the webview avoids redundant ready handshakes and clears stale
+session state. The session-list backdrop no longer covers the ChatHeader.
+
+**Main spec**: `openspec/specs/session-navigation/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-01-fix-session-navigation-races/`
+
+**Implementation**: `packages/platforms/vscode/src/chat-view-provider.ts`,
+`packages/platforms/vscode/webview/App.tsx`, and the session hooks/list.
+
+**Verified**: 1,988 tests passed, Biome check, build, strict OpenSpec
+validation, and VSIX packaging passed.
+
 ### 2026-09-01: Chat sandbox static read-deny baseline (archived: `2026-09-01-add-chat-sandbox-read-baseline`)
 
 Chat sandboxing now applies a static platform-aware deny-read baseline on

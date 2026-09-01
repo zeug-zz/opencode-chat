@@ -26,6 +26,10 @@ export function useSession(activeSessionRef: RefObject<ChatSession | null>) {
     setShowSessionList((s) => !s);
   }, []);
 
+  const clearSessionState = useCallback(() => {
+    setSessionBusy(false);
+  }, []);
+
   // SSE event handler for session-related events
   const handleSessionEvent = useCallback(
     (event: AgentEvent) => {
@@ -64,6 +68,7 @@ export function useSession(activeSessionRef: RefObject<ChatSession | null>) {
     sessionBusy,
     showSessionList,
     toggleSessionList,
+    clearSessionState,
     handleNewSession,
     handleSelectSession,
     handleDeleteSession,
