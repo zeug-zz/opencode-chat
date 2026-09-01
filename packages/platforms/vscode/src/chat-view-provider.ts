@@ -22,6 +22,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // OpenCode サーバーには「現在アクティブなセッション」を保持する API がないため、
   // UI クライアント側で管理する（TUI も同様の設計）。
   private activeSession: ChatSession | null = null;
+  private sessionOperationGeneration = 0;
+  private sessionListRequestGeneration = 0;
   private chatSandboxStatus: ChatSandboxStatus | undefined;
   private readonly chatSystemPrompt: string | null;
   private readonly writeSystemPrompt: string | null;
@@ -83,20 +85,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         (event.type === "session.compacted" || event.type === "session.next.compaction.ended") &&
         event.properties.sessionID === this.activeSession?.id
       ) {
+        const operationGeneration = this.sessionOperationGeneration;
+        const sessionId = event.properties.sessionID;
         this.agent
-          .getSession(event.properties.sessionID)
-          .then((session) => {
-            this.activeSession = session;
-            this.postMessage({ type: "activeSession", session });
-            return this.agent.getMessages(event.properties.sessionID);
-          })
-          .then((messages) => {
-            this.postMessage({
-              type: "messages",
-              sessionId: event.properties.sessionID,
-              messages,
-            });
-          })
+          .getSession(sessionId)
+          .then((session) => this.publishActiveSession(session, operationGeneration, sessionId))
           .catch((err) => console.error("[OpenCode] Failed to refresh after compaction:", err));
       }
     });
@@ -152,38 +145,73 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "createSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        const listRequestGeneration = ++this.sessionListRequestGeneration;
         const session = await this.agent.createSession(message.title);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
+        if (operationGeneration !== this.sessionOperationGeneration) break;
+        await this.publishActiveSession(session, operationGeneration, session.id);
+        if (operationGeneration !== this.sessionOperationGeneration) break;
         const sessions = await this.agent.listSessions();
+        if (
+          operationGeneration !== this.sessionOperationGeneration ||
+          listRequestGeneration !== this.sessionListRequestGeneration
+        ) {
+          break;
+        }
         this.postMessage({ type: "sessions", sessions });
         break;
       }
       case "listSessions": {
+        const operationGeneration = this.sessionOperationGeneration;
+        const listRequestGeneration = ++this.sessionListRequestGeneration;
         const sessions = await this.agent.listSessions();
+        if (
+          operationGeneration !== this.sessionOperationGeneration ||
+          listRequestGeneration !== this.sessionListRequestGeneration
+        ) {
+          break;
+        }
         this.postMessage({ type: "sessions", sessions });
         break;
       }
       case "selectSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         const session = await this.agent.getSession(message.sessionId);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
-        const messages = await this.agent.getMessages(message.sessionId);
-        this.postMessage({ type: "messages", sessionId: message.sessionId, messages });
+        if (operationGeneration !== this.sessionOperationGeneration || !session) break;
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         break;
       }
       case "deleteSession": {
+        const deletesActiveSession = this.activeSession?.id === message.sessionId;
+        const operationGeneration = deletesActiveSession
+          ? ++this.sessionOperationGeneration
+          : this.sessionOperationGeneration;
+        const listRequestGeneration = ++this.sessionListRequestGeneration;
         await this.agent.deleteSession(message.sessionId);
-        if (this.activeSession?.id === message.sessionId) {
-          this.activeSession = null;
-          this.postMessage({ type: "activeSession", session: null });
+        if (deletesActiveSession && this.activeSession?.id === message.sessionId) {
+          await this.publishActiveSession(null, operationGeneration, undefined);
         }
         const sessions = await this.agent.listSessions();
-        this.postMessage({ type: "sessions", sessions });
+        if (
+          listRequestGeneration === this.sessionListRequestGeneration &&
+          (!deletesActiveSession || operationGeneration === this.sessionOperationGeneration)
+        ) {
+          this.postMessage({ type: "sessions", sessions });
+        }
         break;
       }
       case "getMessages": {
+        const operationGeneration = this.sessionOperationGeneration;
+        const activeSessionId = this.activeSession?.id;
         const messages = await this.agent.getMessages(message.sessionId);
+        if (
+          operationGeneration !== this.sessionOperationGeneration ||
+          (this.activeSession && this.activeSession.id !== message.sessionId) ||
+          (activeSessionId !== undefined && activeSessionId !== message.sessionId)
+        ) {
+          break;
+        }
         this.postMessage({ type: "messages", sessionId: message.sessionId, messages });
         break;
       }
@@ -237,31 +265,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "compressSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         await this.agent.summarizeSession(message.sessionId, message.model);
+        if (operationGeneration !== this.sessionOperationGeneration) break;
         const session = await this.agent.getSession(message.sessionId);
-        if (session) {
-          this.activeSession = session;
-          this.postMessage({ type: "activeSession", session });
-        }
-        const msgs = await this.agent.getMessages(message.sessionId);
-        this.postMessage({ type: "messages", sessionId: message.sessionId, messages: msgs });
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         break;
       }
       case "revertToMessage": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         const session = await this.agent.revertSession(message.sessionId, message.messageId);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
-        const messages = await this.agent.getMessages(message.sessionId);
-        this.postMessage({ type: "messages", sessionId: message.sessionId, messages });
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         break;
       }
       case "editAndResend": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         // 1. 指定メッセージまで巻き戻す（そのメッセージ以降を削除）
         const session = await this.agent.revertSession(message.sessionId, message.messageId);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
-        const msgs = await this.agent.getMessages(message.sessionId);
-        this.postMessage({ type: "messages", sessionId: message.sessionId, messages: msgs });
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         // 2. 編集後のテキストを送信
         await this.agent.sendMessage(message.sessionId, message.text, {
           model: message.model,
@@ -357,11 +381,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "forkSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        const listRequestGeneration = ++this.sessionListRequestGeneration;
         // Fork で新しいセッションを作成し、アクティブセッションを切り替える
         const forkedSession = await this.agent.forkSession(message.sessionId, message.messageId);
-        this.activeSession = forkedSession;
-        this.postMessage({ type: "activeSession", session: forkedSession });
+        await this.publishActiveSession(forkedSession, operationGeneration, forkedSession.id);
+        if (operationGeneration !== this.sessionOperationGeneration) break;
         const forkedSessions = await this.agent.listSessions();
+        if (
+          operationGeneration !== this.sessionOperationGeneration ||
+          listRequestGeneration !== this.sessionListRequestGeneration
+        ) {
+          break;
+        }
         this.postMessage({ type: "sessions", sessions: forkedSessions });
         break;
       }
@@ -415,9 +447,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "shareSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         const session = await this.agent.shareSession(message.sessionId);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         // 共有 URL をクリップボードにコピーする
         if (session.share?.url) {
           await this.platformServices.copyToClipboard(session.share.url);
@@ -425,9 +458,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "unshareSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         const session = await this.agent.unshareSession(message.sessionId);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         break;
       }
       case "copyToClipboard": {
@@ -435,19 +469,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "undoSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         const session = await this.agent.revertSession(message.sessionId, message.messageId);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
-        const messages = await this.agent.getMessages(message.sessionId);
-        this.postMessage({ type: "messages", sessionId: message.sessionId, messages });
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         break;
       }
       case "redoSession": {
+        const operationGeneration = ++this.sessionOperationGeneration;
+        ++this.sessionListRequestGeneration;
         const session = await this.agent.unrevertSession(message.sessionId);
-        this.activeSession = session;
-        this.postMessage({ type: "activeSession", session });
-        const messages = await this.agent.getMessages(message.sessionId);
-        this.postMessage({ type: "messages", sessionId: message.sessionId, messages });
+        await this.publishActiveSession(session, operationGeneration, message.sessionId);
         break;
       }
       case "openDiffEditor": {
@@ -491,11 +523,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   async refresh(chatSandboxStatus?: ChatSandboxStatus, paths?: AppPaths): Promise<void> {
     if (!this.view) return;
 
+    const operationGeneration = this.sessionOperationGeneration;
+    const activeSessionId = this.activeSession?.id;
+    const listRequestGeneration = ++this.sessionListRequestGeneration;
     const resolvedPaths = paths ?? (await this.agent.getPath());
     const sessionsPromise = this.agent.listSessions();
-    const activeSessionPromise = this.activeSession
-      ? this.agent.getSession(this.activeSession.id)
-      : Promise.resolve(null);
+    const activeSessionPromise = activeSessionId ? this.agent.getSession(activeSessionId) : Promise.resolve(null);
     const [sessions, refreshedActiveSession, providersData, allProviders, agents, mcpStatus] = await Promise.all([
       sessionsPromise,
       activeSessionPromise,
@@ -505,7 +538,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.agent.getMcpStatus(),
     ]);
 
-    if (this.activeSession) {
+    const sessionOperationIsCurrent = operationGeneration === this.sessionOperationGeneration;
+    const listRequestIsCurrent = listRequestGeneration === this.sessionListRequestGeneration;
+    if (sessionOperationIsCurrent && this.activeSession?.id === activeSessionId && this.activeSession) {
       this.activeSession = refreshedActiveSession ?? this.activeSession;
     }
 
@@ -515,11 +550,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       configModel = JSON.parse(raw).model;
     } catch {}
 
-    this.postMessage({ type: "sessions", sessions });
-    this.postMessage({ type: "activeSession", session: this.activeSession });
-    if (this.activeSession) {
-      const messages = await this.agent.getMessages(this.activeSession.id);
-      this.postMessage({ type: "messages", sessionId: this.activeSession.id, messages });
+    if (sessionOperationIsCurrent && listRequestIsCurrent) {
+      this.postMessage({ type: "sessions", sessions });
+    }
+    if (sessionOperationIsCurrent && this.activeSession?.id === activeSessionId) {
+      await this.publishActiveSession(this.activeSession, operationGeneration, activeSessionId);
     }
     this.postMessage({
       type: "providers",
@@ -538,6 +573,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   publishChatSandboxStatus(status: ChatSandboxStatus): void {
     this.chatSandboxStatus = status;
     this.postMessage({ type: "chatSandboxStatus", status });
+  }
+
+  private async publishActiveSession(
+    session: ChatSession | null,
+    operationGeneration: number,
+    expectedSessionId: string | undefined,
+  ): Promise<boolean> {
+    if (
+      operationGeneration !== this.sessionOperationGeneration ||
+      (session && session.id !== expectedSessionId) ||
+      (!session && expectedSessionId !== undefined)
+    ) {
+      return false;
+    }
+
+    this.activeSession = session;
+    this.postMessage({ type: "activeSession", session });
+    if (!session) return true;
+
+    const messages = await this.agent.getMessages(session.id);
+    if (operationGeneration !== this.sessionOperationGeneration || this.activeSession?.id !== session.id) {
+      return false;
+    }
+    this.postMessage({ type: "messages", sessionId: session.id, messages });
+    return true;
   }
 
   /** アクティブなテキストエディタから FileAttachment を生成する。エディタがない場合は null を返す。 */

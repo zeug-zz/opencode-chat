@@ -174,9 +174,43 @@ transfers all security responsibility to users. The intended claim is narrower:
 the extension meaningfully reduces unauthenticated local API abuse and limits
 the blast radius of a compromised companion process.
 
+## Validated Prerequisites
+
+The following work is complete, validated, archived, and is the baseline for
+this plan. The hardening change must extend these capabilities rather than
+recreate their prompts, profile identifiers, sandbox lifecycle, or MCP behavior:
+
+- `openspec/changes/archive/2026-08-24-add-chat-agent-sandbox/` establishes the
+  Chat-specific sandbox settings, process-tree boundary, network policy, and
+  fail-closed startup behavior.
+- `openspec/changes/archive/2026-08-24-chat-sandbox-compatibility-layer/`
+  establishes the compatibility filesystem policy, runtime/cache coverage,
+  local/remote MCP behavior, and complete companion teardown requirements.
+- `openspec/changes/archive/2026-08-24-chat-mcp-startup-persistence/`
+  establishes persisted Chat MCP preferences and companion-only startup
+  filtering.
+- `openspec/changes/archive/2026-08-24-add-report-writing-mode/` establishes
+  the user-facing `write` profile backed by internal OpenCode `build`, the
+  packaged `WRITE_SYSTEM.md` prompt, read/search/web/edit permissions, denied
+  Bash and task/subagent execution, removal of Chat shell mode, and independent
+  TUI handoff.
+- The synchronized main specifications are authoritative in
+  `openspec/specs/chat-agent-sandbox/`,
+  `openspec/specs/chat-mcp-settings/`, and
+  `openspec/specs/primary-agent-selection/`. The report-writing capability is
+  represented by the archived delta and its synchronized primary-agent
+  requirements.
+
+The completed sandbox currently preserves the validated `inherit` behavior and
+the compatibility network default. Changing the effective Chat default to
+secure sandboxing, adding server authentication, adding agent-scoped MCP/plugin
+gating, and removing any authenticated-server attach fallback remain future
+hardening work in this plan. They must not be described as already delivered by
+the archived changes.
+
 ## Current Baseline
 
-The implementation and existing OpenSpec changes establish these boundaries:
+The validated implementation establishes these boundaries:
 
 - The unsandboxed path uses the SDK `createOpencodeServer()` helper with port
   `0`, then creates an SDK client with only `baseUrl`.
@@ -196,9 +230,12 @@ The implementation and existing OpenSpec changes establish these boundaries:
   intentionally coarse and permits provider, remote MCP, local MCP, and
   descendant network traffic.
 - The existing Scout and Write prompts already distinguish research from report
-  authoring, but the MCP overlay currently controls server enablement rather
-  than agent-specific MCP tool exposure. An enabled MCP server must not imply
-  that every tool it provides is available to every Chat agent.
+  authoring. The archived report-writing profile is the initial Write contract;
+  future report artifact capabilities and agent-specific MCP/plugin gating must
+  extend it rather than replace it.
+- The MCP overlay currently controls server enablement rather than
+  agent-specific MCP tool exposure. An enabled MCP server must not imply that
+  every tool it provides is available to every Chat agent.
 - Sandbox startup is currently fail-closed. A failed sandbox must not be
   replaced automatically by an unsandboxed companion.
 - The current setting default is `inherit`, which normally resolves to the
@@ -695,16 +732,18 @@ sandbox setting in a release build.
 
 ## Recommended Rollout Order
 
-1. Confirm the exact upstream vulnerability and supported authentication
+1. Start from the validated archived sandbox, MCP persistence, compatibility,
+   and report-writing baseline; do not recreate those changes.
+2. Confirm the exact upstream vulnerability and supported authentication
    behavior.
-2. Implement the common authenticated launcher and fail-closed probe while
+3. Implement the common authenticated launcher and fail-closed probe while
    leaving the current sandbox default unchanged.
-3. Verify normal and sandboxed launches, MCP compatibility, reconnects, and
+4. Verify normal and sandboxed launches, MCP compatibility, reconnects, and
    terminal handoff.
-4. Add the explicit degraded-mode UI and structured errors.
-5. Change the Chat default to sandbox `on` on supported platforms.
-6. Run the full release and live verification gates.
-7. Publish the narrower security claim and residual-risk documentation.
+5. Add the explicit degraded-mode UI and structured errors.
+6. Change the Chat default to sandbox `on` on supported platforms.
+7. Run the full release and live verification gates.
+8. Publish the narrower security claim and residual-risk documentation.
 
 If a known vulnerable OpenCode version cannot enforce authentication, block it
 before launch. Do not use the explicit unsandboxed recovery action to bypass an
@@ -718,6 +757,24 @@ The change should be separate from the existing sandbox compatibility change so
 that authentication, default policy, and degraded-mode UX have an independent
 verification boundary. It may depend on the compatibility-layer implementation
 and should not rewrite its already-established MCP path policy.
+
+The implementation dependency chain is:
+
+1. Use the archived `2026-08-24-add-chat-agent-sandbox` and
+   `2026-08-24-chat-sandbox-compatibility-layer` changes as the sandbox baseline.
+2. Preserve the archived `2026-08-24-chat-mcp-startup-persistence` preference
+   and startup behavior.
+3. Extend the archived `2026-08-24-add-report-writing-mode` profile rather than
+   creating a second Write/Build prompt or changing the internal `build`
+   identifier.
+4. Implement authentication, secure-default policy, agent-scoped tool/plugin
+   gating, report artifact extensions, status UX, and export/import-only handoff
+   as the new hardening delta.
+
+The hardening change must not reopen or duplicate the archived report-writing
+shell-removal work. Its handoff requirement changes only the post-authentication
+fallback behavior: Chat credentials remain private and the supported transition
+is export/import to an independent TUI.
 
 ### `proposal.md`
 

@@ -55,6 +55,23 @@ For serious coding or shell work, use the existing terminal handoff to open the 
 in an independent OpenCode TUI process. The companion remains available, but terminal handoff
 is the supported coding escape hatch rather than an unrestricted command runner in the chat UI.
 
+## Chat Sandbox Filesystem Baseline
+
+When Chat sandboxing is active on macOS or Linux, the companion process tree uses a static,
+versioned protected-read baseline covering common credential stores, shell history and
+configuration, browser data, and platform-specific keychain and private application data.
+Reads outside that baseline remain broad to support local MCPs and installed runtimes and
+dependencies. Writes remain constrained to the documented workspace, OpenCode, runtime, and
+temporary paths.
+
+This is targeted defense-in-depth, not strict confidentiality. Broad compatibility reads remain,
+and network-enabled sandbox mode can allow a readable local MCP or other process to transmit data
+it can read. The baseline does not promise protection against a malicious process.
+
+Windows does not enforce this read baseline. Chat reports sandboxing as unsupported and uses the
+existing unsandboxed path there; the Windows path must not be treated as providing sandbox
+read-deny protection.
+
 ## Accepted Risks
 
 | Date       | Finding | Severity | Rationale |

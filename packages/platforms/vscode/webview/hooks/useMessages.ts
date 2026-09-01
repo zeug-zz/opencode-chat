@@ -423,6 +423,31 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
     setPrefillText("");
   }, []);
 
+  const clearSessionState = useCallback(() => {
+    if (pendingFlush.current != null) {
+      cancelAnimationFrame(pendingFlush.current);
+      pendingFlush.current = null;
+    }
+    if (reasoningPending.current != null) {
+      cancelAnimationFrame(reasoningPending.current);
+      reasoningPending.current = null;
+    }
+    pendingShell.current = false;
+    reasoningBuffers.current.clear();
+    deltaBuffers.current.clear();
+    reasoningMessageKeys.current.clear();
+    reasoningIdsByMessageKey.current.clear();
+    reasoningPartIdByMessageKey.current.clear();
+    reasoningIdToPartId.current.clear();
+    activeReasoningMessageKeys.current.clear();
+    reasoningSnapshotProtectUntil.current.clear();
+    cotTextLengthByPartId.current.clear();
+    missingSnapshotLoggedKeys.current.clear();
+    setShellMessageIds(new Set());
+    setPrefillText("");
+    setMessages([]);
+  }, []);
+
   // SSE event handler for message-related events
   // activeSessionRef を介して現在のアクティブセッション ID を参照し、
   // 別セッション（サブエージェントの子セッションなど）のイベントを無視する。
@@ -691,5 +716,6 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
     handleMessageEvent,
     markPendingShell,
     isShellMessage,
+    clearSessionState,
   } as const;
 }

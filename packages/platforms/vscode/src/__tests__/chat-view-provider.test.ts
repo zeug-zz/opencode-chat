@@ -28,6 +28,16 @@ import type { DiffReviewManager } from "../diff-review-manager";
 
 // --- Helper: IAgent のモック ---
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function createMockAgent(): {
   [K in keyof IAgent]: IAgent[K] extends (...args: never[]) => unknown ? ReturnType<typeof vi.fn> : IAgent[K];
 } {
@@ -546,6 +556,62 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  describe("session navigation ordering", () => {
+    it("keeps the later selection active when session lookups complete out of order", async () => {
+      const firstLookup = deferred<{ id: string }>();
+      const secondLookup = deferred<{ id: string }>();
+      mockAgent.getSession.mockReturnValueOnce(firstLookup.promise).mockReturnValueOnce(secondLookup.promise);
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+
+      const firstSelection = sendMessage({ type: "selectSession", sessionId: "session-a" });
+      const secondSelection = sendMessage({ type: "selectSession", sessionId: "session-b" });
+
+      secondLookup.resolve({ id: "session-b" });
+      await secondSelection;
+      firstLookup.resolve({ id: "session-a" });
+      await firstSelection;
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "activeSession", session: { id: "session-b" } });
+      expect(postMessage).not.toHaveBeenCalledWith({ type: "activeSession", session: { id: "session-a" } });
+      expect(postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "messages", sessionId: "session-a" }),
+      );
+    });
+
+    it("does not let a refresh restore the previous session after creation", async () => {
+      const previousSession = { id: "session-a", title: "Previous" };
+      mockAgent.createSession.mockResolvedValueOnce(previousSession);
+      mockAgent.listSessions.mockResolvedValueOnce([previousSession]);
+      const { provider, postMessage, sendMessage } = setupProvider(mockAgent);
+      await sendMessage({ type: "createSession" });
+      postMessage.mockClear();
+
+      const refreshedPreviousSession = deferred<{ id: string; title: string }>();
+      const staleSessionList = deferred<Array<{ id: string; title: string }>>();
+      mockAgent.getSession.mockReturnValueOnce(refreshedPreviousSession.promise);
+      mockAgent.listSessions.mockReturnValueOnce(staleSessionList.promise);
+      const refresh = provider.refresh();
+
+      const newSession = { id: "session-b", title: "New" };
+      mockAgent.createSession.mockResolvedValueOnce(newSession);
+      mockAgent.listSessions.mockReturnValueOnce(Promise.resolve([previousSession, newSession]));
+      await sendMessage({ type: "createSession" });
+      refreshedPreviousSession.resolve({ id: "session-a", title: "Refreshed Previous" });
+      staleSessionList.resolve([previousSession]);
+      await refresh;
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "activeSession", session: newSession });
+      expect(postMessage).not.toHaveBeenCalledWith({
+        type: "activeSession",
+        session: { id: "session-a", title: "Refreshed Previous" },
+      });
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "sessions",
+        sessions: [previousSession, newSession],
+      });
+    });
+  });
+
   // ============================================================
   // listSessions
   // ============================================================
@@ -578,6 +644,7 @@ describe("ChatViewProvider", () => {
 
       expect(mockAgent.getSession).toHaveBeenCalledWith("sess-1");
       expect(mockAgent.getMessages).toHaveBeenCalledWith("sess-1");
+      expect(mockAgent.getMessages).toHaveBeenCalledTimes(1);
       expect(postMessage).toHaveBeenCalledWith({ type: "activeSession", session });
       expect(postMessage).toHaveBeenCalledWith({
         type: "messages",
@@ -975,6 +1042,26 @@ describe("ChatViewProvider", () => {
         sessionId: "sess-1",
         messages,
       });
+    });
+  });
+
+  describe("session mutation ordering", () => {
+    it("does not publish a stale mutation after a newer selection", async () => {
+      const staleMutation = deferred<{ id: string }>();
+      mockAgent.revertSession.mockReturnValueOnce(staleMutation.promise);
+      mockAgent.getSession.mockResolvedValue({ id: "session-b" });
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+
+      const mutation = sendMessage({ type: "revertToMessage", sessionId: "session-a", messageId: "msg-1" });
+      const selection = sendMessage({ type: "selectSession", sessionId: "session-b" });
+      await selection;
+
+      staleMutation.resolve({ id: "session-a" });
+      await mutation;
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "activeSession", session: { id: "session-b" } });
+      expect(postMessage).not.toHaveBeenCalledWith({ type: "activeSession", session: { id: "session-a" } });
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: "session-a" }));
     });
   });
 

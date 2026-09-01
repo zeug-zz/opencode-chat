@@ -12,7 +12,8 @@ import type { FileAttachment, IPlatformServices } from "@opencode-chat/core";
 import * as vscode from "vscode";
 
 function shellQuote(value: string): string {
-  return JSON.stringify(value);
+  if (process.platform === "win32") return JSON.stringify(value);
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export function resolveOpencodeBinary(
@@ -87,12 +88,11 @@ export class VscodePlatformServices implements IPlatformServices {
   }
 
   async openTerminal(serverUrl: string, sessionId?: string): Promise<void> {
-    const bin = resolveOpencodeBinary();
     const args = ["attach", serverUrl];
     if (sessionId) {
       args.push("--session", sessionId);
     }
-    const command = `${shellQuote(bin)} ${args.map((a) => shellQuote(a)).join(" ")}`;
+    const command = `opencode ${args.map((a) => shellQuote(a)).join(" ")}`;
     await runInTerminal(command, "OpenCode (chat server)");
   }
 
@@ -118,7 +118,7 @@ export class VscodePlatformServices implements IPlatformServices {
       );
     });
 
-    const command = `${shellQuote(bin)} --continue`;
+    const command = "opencode --continue";
     await runInTerminal(command, "OpenCode TUI");
   }
 

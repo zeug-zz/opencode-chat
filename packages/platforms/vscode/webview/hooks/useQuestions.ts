@@ -27,6 +27,10 @@ export function useQuestions(activeSessionRef: RefObject<ChatSession | null>) {
     });
   }, []);
 
+  const clearQuestions = useCallback(() => {
+    setQuestions(new Map());
+  }, []);
+
   const handleQuestionEvent = useCallback(
     (event: AgentEvent) => {
       const activeId = activeSessionRef.current?.id;
@@ -49,6 +53,7 @@ export function useQuestions(activeSessionRef: RefObject<ChatSession | null>) {
 
   return {
     questions,
+    clearQuestions,
     handleQuestionEvent,
   } as const;
 }

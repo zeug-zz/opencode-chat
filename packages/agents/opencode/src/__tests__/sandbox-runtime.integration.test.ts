@@ -111,18 +111,21 @@ describe.sequential.skipIf(!canRun)(
     beforeAll(async () => {
       root = path.resolve("tmp", `sandbox-runtime-integration-${process.pid}`);
       workspacePath = path.join(root, "workspace");
-      deniedPath = path.join(root, "outside-policy");
+      deniedPath = path.join(root, "home", ".ssh");
       await fs.mkdir(workspacePath, { recursive: true });
       await fs.mkdir(deniedPath, { recursive: true });
       await fs.writeFile(path.join(deniedPath, "secret.txt"), "not available to the sandbox\n");
     });
 
     afterAll(async () => {
-      await SandboxManager.reset();
-      await fs.rm(root, { recursive: true, force: true });
+      try {
+        await SandboxManager.reset();
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
     });
 
-    it("allows active-workspace reads and writes while denying an outside-policy path", async () => {
+    it("allows active-workspace reads and writes while denying an existing protected baseline path", async () => {
       const workspaceFile = path.join(workspacePath, "allowed.txt");
       const deniedFile = path.join(deniedPath, "secret.txt");
       const script = [
@@ -194,12 +197,17 @@ describe.sequential.skipIf(!canRun)(
       timeoutMs,
     );
 
-    it("passes the denied filesystem and network boundary to a nested local-MCP-like child", async () => {
+    it("passes the protected-read and network boundary to a nested local-MCP-like child", async () => {
       const deniedFile = path.join(deniedPath, "secret.txt");
+      const childWorkspaceFile = path.join(workspacePath, "child-allowed.txt");
       const childScript = [
         "const fs = require('node:fs');",
+        `fs.writeFileSync(${JSON.stringify(childWorkspaceFile)}, 'child-workspace-ok');`,
+        `if (fs.readFileSync(${JSON.stringify(childWorkspaceFile)}, 'utf8') !== 'child-workspace-ok') process.exit(2);`,
         `try { fs.readFileSync(${JSON.stringify(deniedFile)}, 'utf8'); process.exit(2); } catch {}`,
-        "fetch('http://example.com').then(() => process.exit(3)).catch(() => process.stdout.write('child-boundary-inherited'));",
+        "const http = require('node:http');",
+        "const server = http.createServer((_request, response) => response.end('loopback-ok'));",
+        "server.listen(0, '127.0.0.1', () => { const port = server.address().port; http.get('http://127.0.0.1:' + port, response => { let body = ''; response.on('data', chunk => body += chunk); response.on('end', () => { server.close(); if (body !== 'loopback-ok') process.exit(3); fetch('http://example.com').then(() => process.exit(4)).catch(() => process.stdout.write('child-boundary-inherited')); }); }).on('error', () => { server.close(); process.exit(5); }); });",
       ].join(" ");
       const parentScript = [
         "const { spawn } = require('node:child_process');",
@@ -214,6 +222,7 @@ describe.sequential.skipIf(!canRun)(
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("child-boundary-inherited");
+      await expect(fs.readFile(childWorkspaceFile, "utf8")).resolves.toBe("child-workspace-ok");
     });
 
     it(

@@ -40,7 +40,7 @@ The current product is intentionally focused on **chat + research + writing**, n
 - **Separate companion prompts** — Chat and Write have distinct system prompts so research conversation and report production remain deliberate and predictable.
 - **Companion-owned OpenCode server** — The extension starts its own `opencode serve` process and injects companion behavior in memory. It does not rewrite global `opencode.json`; the independent TUI keeps its normal config and agents.
 - **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across Chat companion, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit sticky Gear selection may enable that inventoried server through the companion-only in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
-- **Compatibility Chat sandbox** — The optional Chat sandbox applies one inherited process boundary to the companion, local MCPs, remote MCP traffic, and descendants. The same startup MCP filtering applies to sandboxed and unsandboxed Chat launches. It constrains writes while allowing ordinary installed MCP runtimes and dependencies to start without MCP-specific path setup.
+- **Compatibility Chat sandbox** — The optional Chat sandbox applies one inherited process boundary to the companion, local MCPs, remote MCP traffic, and descendants. On macOS and Linux, it also applies a static, versioned protected-read baseline for common credentials, shell history/configuration, browser data, and platform-specific keychain/private data. Reads outside that baseline remain broad for compatibility with local MCPs and installed runtimes/dependencies, while writes stay constrained to documented workspace, OpenCode, runtime, and temporary paths. Windows is unsupported: Chat reports the unsupported status and uses its existing unsandboxed path.
 - **Hand off to full TUI** — Export the session and open an independent OpenCode TUI while chat **stays running**. The TUI is the only supported path for serious coding, shell work, and unrestricted Build workflows.
 - **Thinking models that actually stream** — Stable CoT / reasoning display for thinking models (no blanking/flicker mid-stream).
 - **Research-grade message surface** — Markdown with KaTeX math, Mermaid, syntax-highlighted code, and **copy as Markdown** on replies.
@@ -58,20 +58,24 @@ Enable Chat sandboxing from the gear settings in the Chat panel. The existing
 `inherit`, `on`, and `off` modes control the companion, while **Allow network
 access** applies to the entire companion process tree.
 
-This is a compatibility-first sandbox rather than strict filesystem
-confidentiality:
+This is a compatibility-first, targeted defense-in-depth sandbox rather than
+strict filesystem confidentiality:
 
 - Local MCPs inherit the sandbox automatically. No server-specific path setup
   is required for installed Node, Python, uv, Bun, or other runtimes.
-- Reads needed by MCP runtimes and dependencies are permitted so ordinary MCP
-  configurations can start.
+- On macOS and Linux, reads in the static protected baseline are denied. Reads
+  outside it remain broad so ordinary MCP configurations and installed runtime
+  dependencies can start.
 - Writes remain constrained to the active workspace and required OpenCode,
   cache, and temporary paths.
 - Disabling network access prevents remote provider and MCP requests inside the
   sandbox. Enabling it permits network use for the companion and its MCP
   descendants.
 - Network-enabled compatibility mode does not protect readable credentials
-  from a local MCP or prevent a readable process from transmitting data.
+  from a local MCP or prevent a readable process from transmitting data. It
+  does not promise protection against a malicious process.
+- Windows does not enforce this read baseline. Chat reports sandboxing as
+  unsupported there and uses the existing unsandboxed path.
 
 Stronger read isolation and advanced MCP grants are intentionally deferred to a
 future strict-sandbox mode.

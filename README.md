@@ -45,7 +45,7 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 - **Research-oriented prompts** — Chat and Write have separate system prompts so a read-only research companion is not mixed with a report-writing agent or a coding-agent persona.
 - **Companion-owned OpenCode server** — The extension owns its `opencode serve` process and injects companion behavior in memory. It does **not** rewrite your global `opencode.json`; the independent TUI keeps its normal agents and configuration.
 - **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across Chat companion, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit sticky Gear selection may enable that inventoried server through the companion-only in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
-- **Compatibility Chat sandbox** — The optional Chat sandbox applies one process boundary to the companion, local MCPs, remote MCP traffic, and their descendants. The same startup MCP filtering applies to sandboxed and unsandboxed Chat launches. It keeps writes constrained while allowing installed MCP runtimes and dependencies to work without server-specific path setup.
+- **Compatibility Chat sandbox** — The optional Chat sandbox applies one process boundary to the companion, local MCPs, remote MCP traffic, and their descendants. On macOS and Linux, it also applies a static, versioned protected-read baseline for common credentials, shell history/configuration, browser data, and platform-specific keychain/private data. Reads outside that baseline remain broad for compatibility with local MCPs and installed runtimes/dependencies, while writes stay constrained to documented workspace, OpenCode, runtime, and temporary paths. Windows is unsupported: Chat reports the unsupported status and uses its existing unsandboxed path.
 - **Report output with controlled scope** — Write is for drafting and saving sourced reports, separating evidence from inference, and updating requested files without turning the chat panel into a general-purpose coding shell.
 - **Hand off to full TUI** — Export the session to an independent OpenCode TUI while **chat keeps running**. The TUI is the supported path for serious coding, shell work, and unrestricted Build workflows.
 - **Stable thinking / CoT stream** — Reasoning display for thinking models without mid-stream blanking.
@@ -67,21 +67,25 @@ existing `inherit`, `on`, and `off` modes determine whether the Chat companion
 is sandboxed, and **Allow network access** applies to the complete companion
 process tree.
 
-The compatibility sandbox is intentionally weaker than a strict filesystem
-sandbox:
+The compatibility sandbox is targeted defense-in-depth, not strict filesystem
+confidentiality:
 
 - Local MCPs inherit the sandbox automatically. No MCP-specific path allowlist
   is required for Node, Python, uv, Bun, or other installed runtimes.
-- Reads needed by the companion and local MCP dependencies are permitted so
-  ordinary MCP configurations can start.
+- On macOS and Linux, reads in the static protected baseline are denied. Reads
+  outside it remain broad so ordinary MCP configurations and installed runtime
+  dependencies can start.
 - Writes remain constrained to the active workspace and required OpenCode,
   cache, and temporary paths.
 - With network access disabled, remote providers and MCPs fail inside the
   sandbox. With network access enabled, the companion tree can use provider and
   MCP network services.
 - Network-enabled compatibility mode is not a credential-confidentiality
-  boundary. A readable local MCP can read user files, and a network-enabled
-  process may transmit data it can read.
+  boundary: a readable local MCP or other process may still read data outside
+  the baseline and transmit data it can read. It does not promise protection
+  against a malicious process.
+- Windows does not enforce this read baseline. Chat reports sandboxing as
+  unsupported there and uses the existing unsandboxed path.
 
 Users who need stronger read isolation should wait for the future advanced
 strict-sandbox mode rather than adding ad hoc MCP exceptions.

@@ -89,6 +89,58 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-09-01: Session navigation race hardening (archived: `2026-09-01-fix-session-navigation-races`)
+
+Session create/select/refresh and session-scoped responses now use host-side
+latest-intent guards. The host publishes one guarded active-session message
+snapshot; the webview avoids redundant ready handshakes and clears stale
+session state. The session-list backdrop no longer covers the ChatHeader.
+
+**Main spec**: `openspec/specs/session-navigation/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-01-fix-session-navigation-races/`
+
+**Implementation**: `packages/platforms/vscode/src/chat-view-provider.ts`,
+`packages/platforms/vscode/webview/App.tsx`, and the session hooks/list.
+
+**Verified**: 1,988 tests passed, Biome check, build, strict OpenSpec
+validation, and VSIX packaging passed.
+
+### 2026-09-01: Chat sandbox static read-deny baseline (archived: `2026-09-01-add-chat-sandbox-read-baseline`)
+
+Chat sandboxing now applies a static platform-aware deny-read baseline on
+macOS/Linux for common credential stores, browser data, keychains/private data,
+and shell history/configuration while preserving broad compatibility reads
+outside protected paths and constrained writes. Required read-grant overlap
+fails closed; Windows remains unsupported and unsandboxed.
+
+**Main spec**: `openspec/specs/chat-agent-sandbox/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-01-add-chat-sandbox-read-baseline/`
+
+**Packaging**: VS Code engine metadata is aligned with the installed API types
+at `^1.134.0` so the VSIX packager accepts the extension.
+
+**Verified**: focused VS Code policy/settings and agent tests, normal
+integration skip-safe behavior, Biome, build, strict OpenSpec validation, and
+final diff review. Opt-in runtime enforcement was not executable under the
+enclosing nono sandbox because nested macOS Seatbelt returned
+`sandbox_apply: Operation not permitted`.
+
+### 2026-09-01: Shell-resolved TUI handoff (archived: `2026-09-01-fix-tui-handoff-shell-resolution`)
+
+Chat's independent TUI continuation and attach fallback now send the literal
+`opencode` command through the VS Code integrated terminal instead of a
+resolved absolute path. User shell aliases, functions, and hooks can therefore
+wrap the handoff with local policy such as nono; POSIX dynamic arguments use
+safe single-quote escaping while the direct extension-host import preflight
+retains resolved binary lookup.
+
+**Main spec**: `openspec/specs/session-tui-handoff/spec.md`
+
+**Verified**: 185 extension-host tests, 1795 webview tests, Biome, build, and
+strict OpenSpec validation.
+
 ### 2026-07-13: Session handoff to independent TUI (archived: `2026-07-13-handoff-session-to-tui`)
 
 Gear **Hand off to TUI** exports the active companion session (`{info,messages}`) via companion client, runs independent `opencode import` + `opencode --continue` without stopping chat. On failure (e.g. `database is locked`), offers attach fallback to the companion session (no fork). Absolute `opencode` path + shell-ready terminal send.

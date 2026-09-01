@@ -31,7 +31,7 @@ export function SessionList({ sessions, activeSessionId, onSelect, onDelete, onC
   return (
     <>
       {/* Backdrop to close session list on outside click */}
-      <div style={{ position: "fixed", inset: 0, zIndex: 9 }} onClick={onClose} />
+      <div className={styles.backdrop} style={{ top: "36px" }} onClick={onClose} />
       <div className={styles.root}>
         {sessions.length === 0 ? (
           <div style={{ padding: "12px", fontSize: 12, color: "var(--vscode-descriptionForeground)" }}>

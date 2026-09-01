@@ -52,15 +52,45 @@ describe("セッションライフサイクル", () => {
     expect(screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)")).toBeInTheDocument();
   });
 
-  // Automatically sends getMessages on activeSession
-  it("activeSession 受信時に getMessages が自動送信されること", async () => {
+  // The host owns the transition message snapshot load.
+  it("activeSession 受信時に getMessages を自動送信しないこと", async () => {
     renderApp();
     vi.mocked(postMessage).mockClear();
 
     const session = createSession();
     await sendExtMessage({ type: "activeSession", session });
 
-    expect(postMessage).toHaveBeenCalledWith({ type: "getMessages", sessionId: session.id });
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "getMessages", sessionId: session.id });
+  });
+
+  it("セッション切り替えで ready を再送せず、旧メッセージをクリアすること", async () => {
+    renderApp();
+    const sessionA = createSession({ id: "session-a", title: "Session A" });
+    const sessionB = createSession({ id: "session-b", title: "Session B" });
+    const message = createMessage({ id: "message-a", sessionID: sessionA.id, role: "assistant" });
+    const part = createTextPart("Old session response", { messageID: message.id });
+
+    await sendExtMessage({ type: "activeSession", session: sessionA });
+    await sendExtMessage({
+      type: "messages",
+      sessionId: sessionA.id,
+      messages: [{ info: message, parts: [part] }],
+    });
+    expect(screen.getByText("Old session response")).toBeInTheDocument();
+
+    vi.mocked(postMessage).mockClear();
+    await sendExtMessage({ type: "activeSession", session: sessionB });
+
+    expect(screen.queryByText("Old session response")).not.toBeInTheDocument();
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "ready" });
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "getMessages", sessionId: sessionB.id });
+
+    await sendExtMessage({
+      type: "messages",
+      sessionId: sessionA.id,
+      messages: [{ info: message, parts: [part] }],
+    });
+    expect(screen.queryByText("Old session response")).not.toBeInTheDocument();
   });
 
   // Displays session title in the header
@@ -139,6 +169,29 @@ describe("セッションライフサイクル", () => {
     it("リストが閉じること", () => {
       expect(screen.queryByText("Target Session")).not.toBeInTheDocument();
     });
+  });
+
+  it("リスト表示中もヘッダーの New Chat で createSession が送信され、リストが閉じること", async () => {
+    await setupWithSessions([createSession({ title: "Existing Session" })]);
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("Sessions"));
+    expect(screen.getByText("Existing Session")).toBeInTheDocument();
+
+    vi.mocked(postMessage).mockClear();
+    await user.click(screen.getByTitle("New chat"));
+
+    expect(postMessage).toHaveBeenCalledWith({ type: "createSession" });
+    expect(screen.queryByText("Existing Session")).not.toBeInTheDocument();
+  });
+
+  it("ヘッダー下のリスト外クリックでリストが閉じること", async () => {
+    await setupWithSessions([createSession({ title: "Outside Click Session" })]);
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("Sessions"));
+
+    await user.click(document.querySelector(".backdrop")!);
+
+    expect(screen.queryByText("Outside Click Session")).not.toBeInTheDocument();
   });
 
   // Deleting a session sends deleteSession

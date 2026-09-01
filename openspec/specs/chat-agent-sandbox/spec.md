@@ -147,10 +147,11 @@ sandbox.
 When Chat sandboxing is enabled, the companion SHALL use a compatibility-first
 filesystem policy. The policy SHALL permit read access required by the
 companion, configured local MCPs, and their installed runtimes without
-requiring MCP-specific path grants. The policy SHALL constrain writes to the
-active workspace and the OpenCode state, runtime-cache, and temporary paths
-required for Chat operation. The sandboxed Chat MUST be able to write the
-narrow OpenCode lock/state directory derived from `XDG_STATE_HOME/opencode` or
+requiring MCP-specific path grants, except for the protected read baseline
+specified below. The policy SHALL constrain writes to the active workspace and
+the OpenCode state, runtime-cache, and temporary paths required for Chat
+operation. The sandboxed Chat MUST be able to write the narrow OpenCode
+lock/state directory derived from `XDG_STATE_HOME/opencode` or
 `~/.local/state/opencode`, and the narrow context-mode sessions directory
 derived from `XDG_CONFIG_HOME/opencode/context-mode/sessions` or
 `~/.config/opencode/context-mode/sessions`. The policy SHALL NOT grant
@@ -158,6 +159,49 @@ arbitrary home-directory write access or silently fall back to an unsandboxed
 process. For runtime-created temporary children, the policy SHALL derive the
 per-user macOS temporary root from the configured `<tempRoot>/opencode` path
 and preserve equivalent platform-safe behavior on non-macOS platforms.
+
+When the effective platform sandbox is macOS or Linux, the policy SHALL also
+apply a static read-deny baseline to the companion and its descendants. The
+cross-platform baseline SHALL deny these paths relative to the effective home
+directory: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.config/gcloud`, `.gcloud`,
+`.kube`, `.docker`, `.git-credentials`, `.netrc`, `.npmrc`, `.bunfig.toml`,
+`.config/bun/bunfig.toml`, `.vault-token`, `.credentials`, `.secrets`, `.keys`,
+`.pki`, `.terraform.d`, `.config/op`, `.bash_history`, `.zsh_history`,
+`.history`, `.python_history`, `.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`,
+`.zlogout`, `.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`,
+`.profile`, `.config/fish`, `.env`, and `.envrc`.
+
+On macOS, the baseline SHALL additionally deny `~/Library/Keychains`,
+`/Library/Keychains`, `~/.password-store`, `~/.1password`,
+`~/Library/Group Containers/2BUA8C4S2C.com.1password`,
+`~/Library/Application Support/1Password`,
+`~/Library/Containers/com.1password.1password`,
+`~/Library/Application Support/Google/Chrome`,
+`~/Library/Application Support/Chromium`,
+`~/Library/Application Support/Firefox`,
+`~/Library/Application Support/Microsoft Edge`,
+`~/Library/Application Support/Arc`,
+`~/Library/Application Support/BraveSoftware`,
+`~/Library/Application Support/Vivaldi`,
+`~/Library/Application Support/com.operasoftware.Opera`, `~/Library/Safari`,
+`~/Library/Messages`, `~/Library/Mail`, `~/Library/Cookies`,
+`~/Library/Containers/com.apple.Safari`, and
+`~/Library/Application Support/MobileSync`.
+
+On Linux, the baseline SHALL additionally deny `~/.password-store`,
+`~/.1password`, `~/.op`, `~/.local/share/keyrings`,
+`~/.config/google-chrome`, `~/.config/chromium`, `~/.mozilla/firefox`,
+`~/.config/microsoft-edge`, `~/.config/BraveSoftware`,
+`~/.config/vivaldi`, and `~/.config/opera`.
+
+The baseline SHALL be derived from the effective home directory, normalized,
+deduplicated, and applied deterministically. It SHALL not require nono to be
+installed or inspect user-specific nono profiles. Required workspace,
+executable, OpenCode, cache, and temporary read grants SHALL not overlap a
+protected deny path; if such an overlap exists, policy construction SHALL fail
+before launch with an actionable error rather than re-allowing the protected
+path. Unsupported platforms, including Windows, SHALL not claim that this
+baseline is enforced.
 
 #### Scenario: Workspace access is preserved
 
@@ -171,9 +215,35 @@ and preserve equivalent platform-safe behavior on non-macOS platforms.
 
 - **WHEN** a configured local MCP requires an installed executable, language
   runtime, package, cache, or configuration file to start
+- **AND** the required path is not within the protected read baseline
 - **THEN** the MCP SHALL be able to read the required path under the
   compatibility policy without a server-specific filesystem exception
 - **AND** the MCP process SHALL remain a child of the sandboxed companion
+
+#### Scenario: Protected baseline reads are denied
+
+- **WHEN** a sandboxed companion, shell, or local MCP attempts to read a path in
+  the platform-appropriate protected read baseline
+- **THEN** the read SHALL fail at the sandbox boundary
+- **AND** the failure SHALL be inherited by descendants of the companion
+- **AND** the extension SHALL not broaden read or write access automatically
+
+#### Scenario: Protected baseline is platform-aware
+
+- **WHEN** Chat sandboxing is enabled on macOS or Linux
+- **THEN** the companion SHALL receive the corresponding static platform-aware
+  deny paths
+- **AND** macOS-only paths SHALL not be emitted on Linux
+- **AND** Linux-only paths SHALL not be emitted on macOS
+- **AND** the deny paths SHALL be resolved from the configured home directory
+
+#### Scenario: Deny and required grants cannot overlap
+
+- **WHEN** the active workspace or a required executable, OpenCode, cache, or
+  temporary path is within or contains a protected deny path
+- **THEN** filesystem policy construction SHALL fail before the companion starts
+- **AND** the failure SHALL identify the conflicting policy boundary
+- **AND** the extension SHALL not replace the conflict with a broad home grant
 
 #### Scenario: Outside filesystem access is denied
 
@@ -182,9 +252,9 @@ and preserve equivalent platform-safe behavior on non-macOS platforms.
 - **THEN** the operation SHALL fail at the sandbox boundary
 - **AND** the extension SHALL surface the failure without broadening write
   access automatically
-- **AND** reads required by an installed runtime or dependency SHALL not fail
-  solely because the path is absent from a strict home-directory read
-  allowlist
+- **AND** reads required by an installed runtime or dependency outside the
+  protected baseline SHALL not fail solely because the path is absent from a
+  strict home-directory read allowlist
 
 #### Scenario: Required runtime paths are unavailable
 

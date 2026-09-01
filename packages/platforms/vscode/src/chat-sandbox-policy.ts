@@ -71,6 +71,84 @@ export type RuntimeCacheEnvironment = Pick<
 
 const CREDENTIAL_STORE_SEGMENTS = new Set([".ssh", ".aws", ".gnupg", "keychains"]);
 
+const CROSS_PLATFORM_DENY_READ_PATHS = [
+  ".ssh",
+  ".gnupg",
+  ".aws",
+  ".azure",
+  ".config/gcloud",
+  ".gcloud",
+  ".kube",
+  ".docker",
+  ".git-credentials",
+  ".netrc",
+  ".npmrc",
+  ".bunfig.toml",
+  ".config/bun/bunfig.toml",
+  ".vault-token",
+  ".credentials",
+  ".secrets",
+  ".keys",
+  ".pki",
+  ".terraform.d",
+  ".config/op",
+  ".bash_history",
+  ".zsh_history",
+  ".history",
+  ".python_history",
+  ".zshrc",
+  ".zprofile",
+  ".zshenv",
+  ".zlogin",
+  ".zlogout",
+  ".bashrc",
+  ".bash_profile",
+  ".bash_login",
+  ".bash_logout",
+  ".profile",
+  ".config/fish",
+  ".env",
+  ".envrc",
+] as const;
+
+const MACOS_DENY_READ_PATHS = [
+  "Library/Keychains",
+  "/Library/Keychains",
+  ".password-store",
+  ".1password",
+  "Library/Group Containers/2BUA8C4S2C.com.1password",
+  "Library/Application Support/1Password",
+  "Library/Containers/com.1password.1password",
+  "Library/Application Support/Google/Chrome",
+  "Library/Application Support/Chromium",
+  "Library/Application Support/Firefox",
+  "Library/Application Support/Microsoft Edge",
+  "Library/Application Support/Arc",
+  "Library/Application Support/BraveSoftware",
+  "Library/Application Support/Vivaldi",
+  "Library/Application Support/com.operasoftware.Opera",
+  "Library/Safari",
+  "Library/Messages",
+  "Library/Mail",
+  "Library/Cookies",
+  "Library/Containers/com.apple.Safari",
+  "Library/Application Support/MobileSync",
+] as const;
+
+const LINUX_DENY_READ_PATHS = [
+  ".password-store",
+  ".1password",
+  ".op",
+  ".local/share/keyrings",
+  ".config/google-chrome",
+  ".config/chromium",
+  ".mozilla/firefox",
+  ".config/microsoft-edge",
+  ".config/BraveSoftware",
+  ".config/vivaldi",
+  ".config/opera",
+] as const;
+
 function normalizePath(value: string, label: string, platform = process.platform): string {
   if (!value.trim()) {
     throw new Error(`${label} must not be empty`);
@@ -125,6 +203,30 @@ function collectPaths(
 
 function uniqueSorted(paths: readonly string[]): string[] {
   return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
+}
+
+function resolveStaticDenyReadPaths(homePath: string, platform: NodeJS.Platform): string[] {
+  if (platform !== "darwin" && platform !== "linux") return [];
+  const platformPaths = platform === "darwin" ? MACOS_DENY_READ_PATHS : LINUX_DENY_READ_PATHS;
+  return uniqueSorted(
+    [...CROSS_PLATFORM_DENY_READ_PATHS, ...platformPaths].map((value) =>
+      normalizePath(value.startsWith("/") ? value : path.posix.join(homePath, value), "deny-read path", platform),
+    ),
+  );
+}
+
+function assertNoDenyReadOverlap(
+  denyReadPaths: readonly string[],
+  grants: readonly { path: string; label: string }[],
+  platform: NodeJS.Platform,
+): void {
+  for (const denyReadPath of denyReadPaths) {
+    for (const grant of grants) {
+      if (isWithin(denyReadPath, grant.path, platform) || isWithin(grant.path, denyReadPath, platform)) {
+        throw new Error(`deny-read path "${denyReadPath}" overlaps required ${grant.label} read grant "${grant.path}"`);
+      }
+    }
+  }
 }
 
 function resolveSafeTemporaryRoot(temporaryPath: string | undefined, platform: NodeJS.Platform): string | undefined {
@@ -281,10 +383,19 @@ export function buildChatSandboxFilesystemPolicy(input: ChatSandboxPolicyInput):
     platform,
   );
   const readOnlySet = new Set(readOnlyPaths);
+  const denyReadPaths = resolveStaticDenyReadPaths(homePath, platform);
+  assertNoDenyReadOverlap(
+    denyReadPaths,
+    [
+      ...readOnlyPaths.map((path) => ({ path, label: "read-only filesystem policy path" })),
+      ...readWritePaths.map((path) => ({ path, label: "filesystem policy path" })),
+    ],
+    platform,
+  );
   return {
     readWritePaths: uniqueSorted(readWritePaths.filter((value) => !readOnlySet.has(value))),
     readOnlyPaths: uniqueSorted(readOnlyPaths),
-    denyReadPaths: [],
+    denyReadPaths,
     loopback: {
       host: "127.0.0.1",
       port: 0,
