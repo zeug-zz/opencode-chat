@@ -36,20 +36,22 @@ The OpenCode Chat extension launches a companion OpenCode server with a read-onl
 (`packages/agents/opencode/src/opencode-agent.ts`). The Scout config overlay denies edit, bash,
 and task permissions. However:
 
-- **User-installed MCP servers are not sandboxed.** If you connect MCP servers with command
-  execution capabilities (e.g., aws-mcp-server), the agent may invoke tools on those servers.
-  The July 2026 threat landscape includes active command injection CVEs in MCP tooling (CVSS 9.8).
+- **MCP servers remain untrusted.** Local MCP processes launched by the sandboxed companion
+  inherit its process, filesystem, and network restrictions; remote MCPs follow the network
+  policy. If you connect MCP servers with command execution capabilities (e.g., aws-mcp-server),
+  the agent may invoke tools on those servers. The July 2026 threat landscape includes active
+  command injection CVEs in MCP tooling (CVSS 9.8).
 - **Treat MCP server input as untrusted.** Verify tool permissions on all connected MCP servers.
 - **The Scout read-only overlay is defense-in-depth**, not a sandbox. It limits the companion
   agent itself; downstream tool execution through MCP servers is the user's responsibility.
 
 ## Companion Write Boundary and Coding Handoff
 
-The companion's user-facing Write mode is backed by OpenCode's `build` agent, but its
-companion permissions are limited to reading files, searching the workspace, configured web
-research, and editing requested report files. Write does not receive agent-level Bash or
-task/subagent execution. This boundary applies to the companion process and does not change
-the independent OpenCode TUI's normal Build behavior.
+The companion's user-facing Write mode is backed by OpenCode's `build` agent, with behavioral
+guidance to produce requested artifacts. Its broad workspace-scoped edit capability is not a
+technical report-only path boundary. Write does not receive agent-level Bash or task/subagent
+execution. This boundary applies to the companion process and does not change the independent
+OpenCode TUI's normal Build behavior.
 
 For serious coding or shell work, use the existing terminal handoff to open the active session
 in an independent OpenCode TUI process. The companion remains available, but terminal handoff
@@ -63,6 +65,48 @@ configuration, browser data, and platform-specific keychain and private applicat
 Reads outside that baseline remain broad to support local MCPs and installed runtimes and
 dependencies. Writes remain constrained to the documented workspace, OpenCode, runtime, and
 temporary paths.
+
+The current versioned, reviewed expansion adds narrow leaves rather than broad
+parent denies. The selected additions are:
+
+- Cross-platform credential/config: `.config/gh/hosts.yml`,
+  `.config/glab-cli/config.yml`, `.config/rclone/rclone.conf`,
+  `.config/containers/auth.json`, `.pypirc`, `.cargo/credentials`,
+  `.cargo/credentials.toml`, `.config/sops/age/keys.txt`, and
+  `.config/age/keys.txt`.
+- Cross-platform shell data: `.local/share/fish/fish_history`, `.config/atuin`,
+  `.config/nushell`, `.local/share/nushell`, `.zsh_sessions`, and
+  `.bash_sessions`.
+- macOS: `Library/Application Support/Google/Chrome Beta`,
+  `Library/Application Support/Google/Chrome Canary`,
+  `Library/Application Support/Microsoft Edge Beta`,
+  `Library/Application Support/Microsoft Edge Canary`,
+  `Library/Application Support/com.operasoftware.Opera GX`,
+  `Library/Application Support/Orion`, `Library/Application Support/LibreWolf`,
+  `Library/Application Support/Waterfox`,
+  `Library/Application Support/Bitwarden`,
+  `Library/Application Support/Proton Pass`,
+  `Library/Application Support/KeePassXC`, `Library/Calendars`,
+  `Library/AddressBook`, `Library/Notes`, `Library/Accounts`,
+  `Library/IdentityServices`, `Library/Application Support/Signal`, and
+  `Library/Thunderbird`.
+- Linux: `.config/google-chrome-beta`, `.config/google-chrome-unstable`,
+  `.config/chromium-browser`, `.config/ungoogled-chromium`,
+  `.config/librewolf`, `.config/waterfox`, `.config/qutebrowser`,
+  `.config/falkon`, `.config/tor`, `.config/kwalletd`, `.config/keepassxc`,
+  `.config/Signal`, `.config/Nextcloud`, `.thunderbird`, and
+  `.config/evolution`.
+
+The inventory is intentionally not exhaustive and is subject to later review.
+Required read grants that exactly overlap, contain, or are contained by a
+protected path fail closed before launch; the deny is not removed, the grant is
+not broadened, and no unsandboxed retry occurs. The complete companion process
+tree, including local MCP descendants, inherits the baseline, so an MCP that
+intentionally reads a newly protected path may be affected.
+
+Outside the protected leaves, existing compatibility behavior remains: reads
+stay broad, while writes remain available for permitted workspace, OpenCode,
+runtime-cache, and temporary paths.
 
 This is targeted defense-in-depth, not strict confidentiality. Broad compatibility reads remain,
 and network-enabled sandbox mode can allow a readable local MCP or other process to transmit data

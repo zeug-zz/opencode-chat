@@ -212,7 +212,7 @@ describe("OpenCodeAgent", () => {
           mode: "on",
           enabled: true,
           allowNetwork: true,
-          filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [] },
+          filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [], denyReadPaths: [] },
         },
         executable: { path: "opencode" },
       });
@@ -222,8 +222,31 @@ describe("OpenCodeAgent", () => {
       expect(createOpencodeServer).toHaveBeenCalled();
       expect(mockSandboxManager.initialize).not.toHaveBeenCalled();
       expect(mockSandboxManager.wrapWithSandbox).not.toHaveBeenCalled();
+      expect(mockSandboxManager.reset).not.toHaveBeenCalled();
       expect(spawn).not.toHaveBeenCalled();
       unsupportedAgent.disconnect();
+    });
+
+    it("surfaces supported-platform sandbox construction failures without fallback", async () => {
+      const failure = new Error("sandbox policy construction failed");
+      mockSandboxManager.initialize.mockRejectedValueOnce(failure);
+      const sandboxedAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "on",
+          enabled: true,
+          allowNetwork: true,
+          filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [], denyReadPaths: [] },
+        },
+        executable: { path: "opencode" },
+      });
+
+      await expect(sandboxedAgent.connect()).rejects.toThrow(
+        "Sandboxed OpenCode startup failed; no unsandboxed fallback was started",
+      );
+      expect(createOpencodeServer).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+      expect(mockSandboxManager.reset).toHaveBeenCalledTimes(1);
     });
 
     it("should keep the default startup path unsandboxed", async () => {
@@ -523,12 +546,18 @@ describe("OpenCodeAgent", () => {
       sandboxedAgent.disconnect();
     });
 
-    it("passes the generated deny-read baseline alongside existing filesystem grants", async () => {
+    it("passes the computed deny-read baseline unchanged to the inherited sandbox runtime", async () => {
       const { child, stdout } = createSandboxChild();
       vi.mocked(spawn).mockImplementationOnce(() => {
         queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
         return child as never;
       });
+      const denyReadPaths = [
+        "/Users/test/.ssh",
+        "/Users/test/.config/gh/hosts.yml",
+        "/Users/test/Library/Application Support/Google/Chrome",
+        "/Users/test/Library/Calendars",
+      ];
       const sandboxedAgent = new OpenCodeAgent({
         workspacePath: "/workspace/project",
         sandbox: {
@@ -538,7 +567,7 @@ describe("OpenCodeAgent", () => {
           filesystemPolicy: {
             readWritePaths: ["/workspace/project", "/workspace/state"],
             readOnlyPaths: ["/workspace/config"],
-            denyReadPaths: ["/Users/test/.ssh", "/Users/test/.aws"],
+            denyReadPaths,
           },
         },
         executable: { path: "/usr/local/bin/opencode" },
@@ -549,7 +578,7 @@ describe("OpenCodeAgent", () => {
       expect(mockSandboxManager.initialize).toHaveBeenCalledWith(
         expect.objectContaining({
           filesystem: {
-            denyRead: ["/Users/test/.ssh", "/Users/test/.aws"],
+            denyRead: denyReadPaths,
             allowRead: ["/workspace/config", "/workspace/project", "/workspace/state"],
             allowWrite: ["/workspace/project", "/workspace/state"],
             denyWrite: [],
@@ -559,6 +588,15 @@ describe("OpenCodeAgent", () => {
         true,
       );
       expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
+      expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledWith(expect.stringContaining("'serve'"));
+      expect(spawn).toHaveBeenCalledWith(
+        "sandboxed-command",
+        expect.objectContaining({
+          cwd: "/workspace/project",
+          detached: true,
+          shell: true,
+        }),
+      );
       sandboxedAgent.disconnect();
     });
 

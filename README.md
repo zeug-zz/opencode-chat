@@ -41,7 +41,7 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 #### What makes this different
 
 - **Chat is the product** — The default **Scout** agent appears as **chat**: a clean, read-oriented mode for conversation, workspace reading, reasoning, and research. It does not edit or run shell commands.
-- **Write means reports, not coding loops** — The **write** mode is backed by OpenCode **Build** internally, but uses a dedicated report-authoring prompt. It can read, search, use web research, and edit report files; agent Bash and task/subagent execution are denied.
+- **Write means requested artifacts, not coding loops** — The **write** mode is backed by OpenCode **Build** internally, but uses a dedicated report-authoring prompt. It can read, search, use web research, and edit within its broad workspace-scoped capability; requested-artifact guidance is behavioral, while agent Bash and task/subagent execution are denied.
 - **Research-oriented prompts** — Chat and Write have separate system prompts so a read-only research companion is not mixed with a report-writing agent or a coding-agent persona.
 - **Companion-owned OpenCode server** — The extension owns its `opencode serve` process and injects companion behavior in memory. It does **not** rewrite your global `opencode.json`; the independent TUI keeps its normal agents and configuration.
 - **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across Chat companion, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit sticky Gear selection may enable that inventoried server through the companion-only in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
@@ -86,6 +86,49 @@ confidentiality:
   against a malicious process.
 - Windows does not enforce this read baseline. Chat reports sandboxing as
   unsupported there and uses the existing unsandboxed path.
+
+The protected list is a versioned, reviewed first-pass inventory rather than an
+exhaustive protection promise. It retains the existing cross-platform leaves
+and adds these selected narrow paths from the current review:
+
+- Cross-platform credential/config: `.config/gh/hosts.yml`,
+  `.config/glab-cli/config.yml`, `.config/rclone/rclone.conf`,
+  `.config/containers/auth.json`, `.pypirc`, `.cargo/credentials`,
+  `.cargo/credentials.toml`, `.config/sops/age/keys.txt`, and
+  `.config/age/keys.txt`.
+- Cross-platform shell data: `.local/share/fish/fish_history`, `.config/atuin`,
+  `.config/nushell`, `.local/share/nushell`, `.zsh_sessions`, and
+  `.bash_sessions`.
+- macOS variants/private stores: `Library/Application Support/Google/Chrome Beta`,
+  `Library/Application Support/Google/Chrome Canary`,
+  `Library/Application Support/Microsoft Edge Beta`,
+  `Library/Application Support/Microsoft Edge Canary`,
+  `Library/Application Support/com.operasoftware.Opera GX`,
+  `Library/Application Support/Orion`, `Library/Application Support/LibreWolf`,
+  `Library/Application Support/Waterfox`,
+  `Library/Application Support/Bitwarden`,
+  `Library/Application Support/Proton Pass`,
+  `Library/Application Support/KeePassXC`, `Library/Calendars`,
+  `Library/AddressBook`, `Library/Notes`, `Library/Accounts`,
+  `Library/IdentityServices`, `Library/Application Support/Signal`, and
+  `Library/Thunderbird`.
+- Linux variants/private stores: `.config/google-chrome-beta`,
+  `.config/google-chrome-unstable`, `.config/chromium-browser`,
+  `.config/ungoogled-chromium`, `.config/librewolf`, `.config/waterfox`,
+  `.config/qutebrowser`, `.config/falkon`, `.config/tor`, `.config/kwalletd`,
+  `.config/keepassxc`, `.config/Signal`, `.config/Nextcloud`, `.thunderbird`,
+  and `.config/evolution`.
+
+Outside the protected leaves, existing compatibility behavior remains: reads
+stay broad, while writes remain available for permitted workspace, OpenCode,
+runtime-cache, and temporary paths.
+
+If a required read grant exactly overlaps, contains, or is contained by a
+protected path, policy construction fails closed before launch with an
+actionable error. It does not remove the deny, broaden the grant, or retry
+unsandboxed. A configured MCP that intentionally reads a newly protected path
+may therefore be affected; there is no MCP-specific exception. The complete
+companion process tree, including MCP descendants, inherits the baseline.
 
 Users who need stronger read isolation should wait for the future advanced
 strict-sandbox mode rather than adding ad hoc MCP exceptions.

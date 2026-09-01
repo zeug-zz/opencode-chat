@@ -36,7 +36,7 @@ The current product is intentionally focused on **chat + research + writing**, n
 #### What makes this different
 
 - **Scout-first chat** — Default primary agent is OpenCode **Scout** (shown as **chat**): read, reason, and research with edit and shell access denied.
-- **Write for reports** — The user-facing **write** mode is backed by OpenCode Build internally, but has a report-authoring prompt and a constrained read/search/web/edit tool boundary. It is not a coding-agent mode.
+- **Write for requested artifacts** — The user-facing **write** mode is backed by OpenCode Build internally, but has a report-authoring prompt and behavioral requested-artifact guidance within its broad workspace-scoped edit capability. It is not a coding-agent mode.
 - **Separate companion prompts** — Chat and Write have distinct system prompts so research conversation and report production remain deliberate and predictable.
 - **Companion-owned OpenCode server** — The extension starts its own `opencode serve` process and injects companion behavior in memory. It does not rewrite global `opencode.json`; the independent TUI keeps its normal config and agents.
 - **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across Chat companion, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit sticky Gear selection may enable that inventoried server through the companion-only in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
@@ -76,6 +76,49 @@ strict filesystem confidentiality:
   does not promise protection against a malicious process.
 - Windows does not enforce this read baseline. Chat reports sandboxing as
   unsupported there and uses the existing unsandboxed path.
+
+The protected list is versioned and reviewed as a conservative first-pass
+inventory, not an exhaustive protection promise. In addition to the existing
+cross-platform leaves, the current expansion selects these narrow paths:
+
+- Cross-platform credential/config: `.config/gh/hosts.yml`,
+  `.config/glab-cli/config.yml`, `.config/rclone/rclone.conf`,
+  `.config/containers/auth.json`, `.pypirc`, `.cargo/credentials`,
+  `.cargo/credentials.toml`, `.config/sops/age/keys.txt`, and
+  `.config/age/keys.txt`.
+- Cross-platform shell data: `.local/share/fish/fish_history`, `.config/atuin`,
+  `.config/nushell`, `.local/share/nushell`, `.zsh_sessions`, and
+  `.bash_sessions`.
+- macOS variants/private stores: `Library/Application Support/Google/Chrome Beta`,
+  `Library/Application Support/Google/Chrome Canary`,
+  `Library/Application Support/Microsoft Edge Beta`,
+  `Library/Application Support/Microsoft Edge Canary`,
+  `Library/Application Support/com.operasoftware.Opera GX`,
+  `Library/Application Support/Orion`, `Library/Application Support/LibreWolf`,
+  `Library/Application Support/Waterfox`,
+  `Library/Application Support/Bitwarden`,
+  `Library/Application Support/Proton Pass`,
+  `Library/Application Support/KeePassXC`, `Library/Calendars`,
+  `Library/AddressBook`, `Library/Notes`, `Library/Accounts`,
+  `Library/IdentityServices`, `Library/Application Support/Signal`, and
+  `Library/Thunderbird`.
+- Linux variants/private stores: `.config/google-chrome-beta`,
+  `.config/google-chrome-unstable`, `.config/chromium-browser`,
+  `.config/ungoogled-chromium`, `.config/librewolf`, `.config/waterfox`,
+  `.config/qutebrowser`, `.config/falkon`, `.config/tor`, `.config/kwalletd`,
+  `.config/keepassxc`, `.config/Signal`, `.config/Nextcloud`, `.thunderbird`,
+  and `.config/evolution`.
+
+Outside the protected leaves, existing compatibility behavior remains: reads
+stay broad, while writes remain available for permitted workspace, OpenCode,
+runtime-cache, and temporary paths.
+
+Required read grants that exactly overlap, contain, or are contained by a
+protected path fail closed before launch with an actionable error. The deny is
+not removed, the grant is not broadened, and Chat does not retry unsandboxed.
+Because the complete companion process tree inherits the policy, including
+local MCP descendants, an MCP that intentionally reads a newly protected path
+may be affected; no MCP-specific exception is added.
 
 Stronger read isolation and advanced MCP grants are intentionally deferred to a
 future strict-sandbox mode.

@@ -12,7 +12,9 @@ const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockDisconnect = vi.fn();
 const mockStopForReconnect = vi.fn().mockResolvedValue(undefined);
 const mockUpdateLaunchConfiguration = vi.fn();
+const mockSandboxSupported = vi.hoisted(() => vi.fn().mockReturnValue(true));
 const mockAgentLaunchConfigurations: unknown[] = [];
+const mockPublishedSandboxStatuses: unknown[] = [];
 const mockResolveMcpInventory = vi.fn(() => ({
   servers: {
     selected: { explicitlyDisabled: false },
@@ -66,7 +68,7 @@ function createMockChatViewProviderClass() {
   return Object.assign(
     class MockChatViewProvider {
       refresh = vi.fn().mockResolvedValue(undefined);
-      publishChatSandboxStatus = vi.fn();
+      publishChatSandboxStatus = vi.fn((status: unknown) => mockPublishedSandboxStatuses.push(status));
     },
     { viewType: "opencode-chat.chatView" },
   );
@@ -84,7 +86,9 @@ describe("extension", () => {
     configurationListenerDispose.mockClear();
     mockConnect.mockResolvedValue(undefined);
     mockStopForReconnect.mockResolvedValue(undefined);
+    mockSandboxSupported.mockReturnValue(true);
     mockAgentLaunchConfigurations.length = 0;
+    mockPublishedSandboxStatuses.length = 0;
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {
       configurationListener = listener as typeof configurationListener;
       return { dispose: configurationListenerDispose } as never;
@@ -127,6 +131,9 @@ describe("extension", () => {
       OpenCodeAgent: createMockAgentClass(),
       resolveMcpInventory: mockResolveMcpInventory,
       buildMcpOverlay: vi.fn(() => mockMcpOverlay),
+    }));
+    vi.doMock("@vscode/sandbox-runtime", () => ({
+      SandboxManager: { isSupportedPlatform: mockSandboxSupported },
     }));
     vi.doMock("../chat-mcp-prefs", () => ({
       VscodeChatMcpPrefsStore: class MockChatMcpPrefsStore {
@@ -187,6 +194,32 @@ describe("extension", () => {
 
       // subscriptions に push された (webview provider + 2 diff providers + Disposable for disconnect)
       expect(subscriptions.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("keeps requested sandboxing unsupported and unsandboxed without an enforcement claim", async () => {
+      mockSandboxSupported.mockReturnValue(false);
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(mockConnect).toHaveBeenCalledTimes(1);
+      expect(latestLaunchConfiguration()).toMatchObject({ sandbox: { mode: "off", enabled: false } });
+      expect(latestLaunchConfiguration()).not.toMatchObject({ sandbox: { enabled: true } });
+      expect(mockPublishedSandboxStatuses).toContainEqual(
+        expect.objectContaining({ supported: false, enabled: false, error: expect.stringContaining("unsupported") }),
+      );
     });
 
     it("should change cwd to workspace folder and restore it", async () => {

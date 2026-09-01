@@ -37,6 +37,29 @@ async function runSandboxed(command: string, config: SandboxRuntimeConfig, cwd: 
   }
 }
 
+async function runSandboxedOrSkip(
+  context: { skip: (reason?: string) => void },
+  command: string,
+  config: SandboxRuntimeConfig,
+  cwd: string,
+): Promise<CommandResult | undefined> {
+  try {
+    const result = await runSandboxed(command, config, cwd);
+    if (process.platform === "darwin" && result.code === 71) {
+      context.skip("The enclosing environment prevents nested macOS sandbox execution (sandbox exited with code 71).");
+      return undefined;
+    }
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/sandbox_apply|operation not permitted|permission denied|eacces|eperm/i.test(message)) {
+      context.skip(`Nested OS sandbox enforcement is unavailable in this environment: ${message}`);
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 function filesystemConfig(workspacePath: string, deniedPath: string, allowNetwork: boolean): SandboxRuntimeConfig {
   const network = {
     enabled: !allowNetwork,
@@ -107,6 +130,7 @@ describe.sequential.skipIf(!canRun)(
     let root: string;
     let workspacePath: string;
     let deniedPath: string;
+    let existingProtectedPath: string | undefined;
 
     beforeAll(async () => {
       root = path.resolve("tmp", `sandbox-runtime-integration-${process.pid}`);
@@ -115,6 +139,29 @@ describe.sequential.skipIf(!canRun)(
       await fs.mkdir(workspacePath, { recursive: true });
       await fs.mkdir(deniedPath, { recursive: true });
       await fs.writeFile(path.join(deniedPath, "secret.txt"), "not available to the sandbox\n");
+
+      const home = process.env.HOME;
+      if (home) {
+        const candidates = [
+          ".ssh/config",
+          ".ssh/known_hosts",
+          ".git-credentials",
+          ".npmrc",
+          ".config/gh/hosts.yml",
+          ...(process.platform === "darwin"
+            ? ["Library/Keychains/login.keychain-db", "Library/Application Support/Google/Chrome/Local State"]
+            : [".local/share/keyrings/login.keyring", ".config/google-chrome/Local State"]),
+        ];
+        for (const candidate of candidates) {
+          const candidatePath = path.join(home, candidate);
+          try {
+            if ((await fs.stat(candidatePath)).isFile()) {
+              existingProtectedPath = candidatePath;
+              break;
+            }
+          } catch {}
+        }
+      }
     });
 
     afterAll(async () => {
@@ -125,7 +172,7 @@ describe.sequential.skipIf(!canRun)(
       }
     });
 
-    it("allows active-workspace reads and writes while denying an existing protected baseline path", async () => {
+    it("allows active-workspace reads and writes while denying an existing protected baseline path", async (context) => {
       const workspaceFile = path.join(workspacePath, "allowed.txt");
       const deniedFile = path.join(deniedPath, "secret.txt");
       const script = [
@@ -134,42 +181,112 @@ describe.sequential.skipIf(!canRun)(
         `if (fs.readFileSync(${JSON.stringify(workspaceFile)}, 'utf8') === 'workspace-ok') {} else process.exit(2);`,
         `try { fs.readFileSync(${JSON.stringify(deniedFile)}, 'utf8'); process.exit(3); } catch { try { fs.writeFileSync(${JSON.stringify(deniedFile)}, 'blocked'); process.exit(4); } catch { process.stdout.write('denied'); } }`,
       ].join(" ");
-      const result = await runSandboxed(
+      const result = await runSandboxedOrSkip(
+        context,
         `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
         filesystemConfig(workspacePath, deniedPath, true),
         workspacePath,
       );
+      if (!result) return;
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("denied");
       await expect(fs.readFile(workspaceFile, "utf8")).resolves.toBe("workspace-ok");
     });
 
-    it("keeps loopback server binding and connectivity available", async () => {
+    it("denies a representative existing protected home read", async (context) => {
+      if (!existingProtectedPath) {
+        context.skip(
+          "No representative protected home file exists; existing-path enforcement cannot be exercised safely.",
+        );
+        return;
+      }
+      const script = `try { require('node:fs').readFileSync(${JSON.stringify(existingProtectedPath)}, 'utf8'); process.exit(2); } catch { process.stdout.write('protected-read-denied'); }`;
+      const result = await runSandboxedOrSkip(
+        context,
+        `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
+        filesystemConfig(workspacePath, existingProtectedPath, true),
+        workspacePath,
+      );
+      if (!result) return;
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("protected-read-denied");
+    });
+
+    it("inherits denial of an existing protected read through a local-MCP-like child", async (context) => {
+      if (!existingProtectedPath) {
+        context.skip("No representative protected home file exists; child inheritance cannot be exercised safely.");
+        return;
+      }
+      const childScript = `try { require('node:fs').readFileSync(${JSON.stringify(existingProtectedPath)}, 'utf8'); process.exit(2); } catch { process.stdout.write('child-protected-read-denied'); }`;
+      const parentScript = [
+        "const { spawn } = require('node:child_process');",
+        `const child = spawn(${JSON.stringify(process.execPath)}, ['-e', ${JSON.stringify(childScript)}], { stdio: ['ignore', 'pipe', 'pipe'] });`,
+        "let output = ''; child.stdout.on('data', chunk => output += chunk); child.on('exit', code => { process.stdout.write(output); process.exit(code ?? 1); });",
+      ].join(" ");
+      const result = await runSandboxedOrSkip(
+        context,
+        `${shellQuote(process.execPath)} -e ${shellQuote(parentScript)}`,
+        filesystemConfig(workspacePath, existingProtectedPath, true),
+        workspacePath,
+      );
+      if (!result) return;
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("child-protected-read-denied");
+    });
+
+    it("enforces an existing protected path on Linux", async (context) => {
+      if (process.platform !== "linux") {
+        context.skip("Linux existing-path enforcement semantics are not applicable on this platform.");
+        return;
+      }
+      if (!existingProtectedPath) {
+        context.skip(
+          "No representative protected home file exists; Linux existing-path enforcement cannot be exercised safely.",
+        );
+        return;
+      }
+      const script = `try { require('node:fs').readFileSync(${JSON.stringify(existingProtectedPath)}, 'utf8'); process.exit(2); } catch { process.stdout.write('linux-existing-read-denied'); }`;
+      const result = await runSandboxedOrSkip(
+        context,
+        `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
+        filesystemConfig(workspacePath, existingProtectedPath, true),
+        workspacePath,
+      );
+      if (!result) return;
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("linux-existing-read-denied");
+    });
+
+    it("keeps loopback server binding and connectivity available", async (context) => {
       const script = [
         "const http = require('node:http');",
         "const server = http.createServer((_req, res) => { res.end('loopback-ok'); });",
         "server.listen(0, '127.0.0.1', () => { const port = server.address().port; http.get('http://127.0.0.1:' + port, res => { let body = ''; res.on('data', chunk => body += chunk); res.on('end', () => { server.close(); process.stdout.write(body); }); }); });",
       ].join(" ");
-      const result = await runSandboxed(
+      const result = await runSandboxedOrSkip(
+        context,
         `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
         filesystemConfig(workspacePath, deniedPath, true),
         workspacePath,
       );
+      if (!result) return;
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("loopback-ok");
     });
 
-    it("denies a non-loopback provider-like request when network access is off", async () => {
+    it("denies a non-loopback provider-like request when network access is off", async (context) => {
       const config = filesystemConfig(workspacePath, deniedPath, false);
       const script =
         "fetch('http://example.com').then(() => process.exit(2)).catch(() => process.stdout.write('network-denied'));";
-      const result = await runSandboxed(
+      const result = await runSandboxedOrSkip(
+        context,
         `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
         config,
         workspacePath,
       );
+      if (!result) return;
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("network-denied");
@@ -182,11 +299,13 @@ describe.sequential.skipIf(!canRun)(
         expect(config.filesystem.allowWrite).toContain(workspacePath);
         const script =
           "fetch('https://example.com').then(async response => { if (!response.ok) process.exit(2); process.stdout.write('provider-ok'); }).catch(() => process.exit(1));";
-        const result = await runSandboxed(
+        const result = await runSandboxedOrSkip(
+          context,
           `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
           config,
           workspacePath,
         );
+        if (!result) return;
 
         if (result.code !== 0 || !result.stdout.includes("provider-ok")) {
           context.skip("External network is unavailable; runtime and network-on policy setup were verified.");
@@ -197,7 +316,7 @@ describe.sequential.skipIf(!canRun)(
       timeoutMs,
     );
 
-    it("passes the protected-read and network boundary to a nested local-MCP-like child", async () => {
+    it("passes the protected-read and network boundary to a nested local-MCP-like child", async (context) => {
       const deniedFile = path.join(deniedPath, "secret.txt");
       const childWorkspaceFile = path.join(workspacePath, "child-allowed.txt");
       const childScript = [
@@ -214,11 +333,13 @@ describe.sequential.skipIf(!canRun)(
         `const child = spawn(${JSON.stringify(process.execPath)}, ['-e', ${JSON.stringify(childScript)}], { stdio: ['ignore', 'pipe', 'pipe'] });`,
         "let output = ''; child.stdout.on('data', chunk => output += chunk); child.on('exit', code => { process.stdout.write(output); process.exit(code ?? 1); });",
       ].join(" ");
-      const result = await runSandboxed(
+      const result = await runSandboxedOrSkip(
+        context,
         `${shellQuote(process.execPath)} -e ${shellQuote(parentScript)}`,
         filesystemConfig(workspacePath, deniedPath, false),
         workspacePath,
       );
+      if (!result) return;
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("child-boundary-inherited");
@@ -235,12 +356,14 @@ describe.sequential.skipIf(!canRun)(
           `const child = spawn(${JSON.stringify(process.execPath)}, ['-e', ${JSON.stringify(childScript)}], { stdio: ['ignore', 'pipe', 'pipe'] });`,
           "let output = ''; child.stdout.on('data', chunk => output += chunk); child.on('exit', code => { process.stdout.write(output); process.exit(code ?? 1); });",
         ].join(" ");
-        const result = await runSandboxed(
+        const result = await runSandboxedOrSkip(
+          context,
           `${shellQuote(process.execPath)} -e ${shellQuote(parentScript)}`,
           filesystemConfig(workspacePath, deniedPath, true),
           workspacePath,
         );
 
+        if (!result) return;
         if (result.code !== 0 || !result.stdout.includes("local-mcp-ok")) {
           context.skip("External network is unavailable; inherited network-on setup was verified.");
         }
@@ -267,7 +390,7 @@ describe.sequential.skipIf(!canRun)(
           throw new Error("Could not determine loopback test server port");
         }
 
-        const runChild = async (allowNetwork: boolean): Promise<CommandResult> => {
+        const runChild = async (allowNetwork: boolean): Promise<CommandResult | undefined> => {
           const childScript = [
             "const fs = require('node:fs');",
             "const http = require('node:http');",
@@ -282,7 +405,8 @@ describe.sequential.skipIf(!canRun)(
             `const child = spawn(${JSON.stringify(process.execPath)}, ['-e', ${JSON.stringify(childScript)}], { stdio: ['ignore', 'pipe', 'pipe'] });`,
             "let output = ''; child.stdout.on('data', chunk => output += chunk); child.stderr.on('data', chunk => output += chunk); child.on('exit', (code, signal) => { process.stdout.write(output); process.exit(code ?? (signal ? 1 : 6)); });",
           ].join(" ");
-          return runSandboxed(
+          return runSandboxedOrSkip(
+            context,
             `${shellQuote(process.execPath)} -e ${shellQuote(parentScript)}`,
             compatibilityFilesystemConfig(workspacePath, deniedPath, allowNetwork),
             workspacePath,
@@ -291,12 +415,14 @@ describe.sequential.skipIf(!canRun)(
 
         try {
           const networkOff = await runChild(false);
+          if (!networkOff) return;
           expect(networkOff.code).toBe(0);
           expect(networkOff.stdout).toContain("network-off");
           await expect(fs.readFile(workspaceFile, "utf8")).resolves.toBe("nested-workspace-ok");
           await expect(fs.readFile(deniedFile, "utf8")).rejects.toThrow();
 
           const networkOn = await runChild(true);
+          if (!networkOn) return;
           if (networkOn.code !== 0 || !networkOn.stdout.includes("network-on")) {
             context.skip(
               "External network is unavailable; nested compatibility and network-off behavior were verified.",

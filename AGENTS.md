@@ -89,6 +89,33 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-09-02: Conservative sandbox deny-read expansion (archived: `2026-09-02-expand-chat-sandbox-deny-read-baseline`)
+
+The Chat sandbox static deny-read baseline now includes a reviewed set of
+narrow credential, shell-history, browser, keychain, password-store, and
+private-application leaves on macOS/Linux. Required workspace, OpenCode,
+runtime/cache, executable/PATH, and temporary grants remain available when
+non-conflicting; deny/read-grant overlaps fail closed before launch with no
+unsandboxed fallback. Newly protected paths can affect local MCPs that
+intentionally read them, and Windows remains unsupported/unsandboxed.
+
+Write remains broad workspace-scoped Build editing with behavioral
+requested-artifact guidance. This change does not add a reports-directory
+convention, exact report-path enforcement, a staging writer, MCP-specific
+filesystem allowlists, or agent permission changes.
+
+**Main spec**: `openspec/specs/chat-agent-sandbox/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-02-expand-chat-sandbox-deny-read-baseline/`
+
+**Implementation**: `packages/platforms/vscode/src/chat-sandbox-policy.ts`,
+the sandbox policy/launch/integration tests, and security documentation.
+
+**Verified**: strict OpenSpec change validation, 1,800 webview tests, 205
+extension tests, focused policy and agent tests, Biome check, build, and VSIX
+packaging. Opt-in sandbox runtime enforcement remained skipped because nested
+macOS sandboxing is blocked by the enclosing environment.
+
 ### 2026-09-01: Session navigation race hardening (archived: `2026-09-01-fix-session-navigation-races`)
 
 Session create/select/refresh and session-scoped responses now use host-side
