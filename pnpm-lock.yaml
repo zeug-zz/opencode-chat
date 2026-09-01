@@ -79,8 +79,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0
       marked-katex-extension:
-        specifier: ^5.1.10
-        version: 5.1.10(katex@0.17.0)(marked@18.0.9)
+        specifier: ^5.1.12
+        version: 5.1.12(katex@0.17.0)(marked@18.0.9)
       mermaid:
         specifier: ^11.16.1
         version: 11.16.1
@@ -1844,10 +1844,10 @@ packages:
     resolution: {integrity: sha512-RCEsPjR+sr0x+AuYp601tKTkgFG4YEPLCzHST3cQ/fhlJkqAkz1L2/Qbp1j9qw5SBwQHFBoW8+hoN5xssOF0Tw==}
     hasBin: true
 
-  marked-katex-extension@5.1.10:
-    resolution: {integrity: sha512-TuqrzguLeXXm6iBaf16leL3+dVmMj8KrBdunMVVzxMS/bwcjtQ0YG0sNytl1j7uUo8yClsXJqBbVjH1yOPurwQ==}
+  marked-katex-extension@5.1.12:
+    resolution: {integrity: sha512-DgfH0CFrOuVwVEXNJ+rTtYOtZZECpHhA0bu7xBiACAJI4geeaCZfDq+hiJ1yJx780fDh2HWHlr+NySxuc2DD1w==}
     peerDependencies:
-      katex: '>=0.16 <0.18'
+      katex: '>=0.16 <0.19'
       marked: '>=4 <19'
 
   marked@16.4.2:
@@ -4267,7 +4267,7 @@ snapshots:
       punycode.js: 2.3.1
       uc.micro: 2.1.0
 
-  marked-katex-extension@5.1.10(katex@0.17.0)(marked@18.0.9):
+  marked-katex-extension@5.1.12(katex@0.17.0)(marked@18.0.9):
     dependencies:
       katex: 0.17.0
       marked: 18.0.9
