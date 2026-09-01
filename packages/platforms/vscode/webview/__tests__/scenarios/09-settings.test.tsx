@@ -97,7 +97,7 @@ describe("設定", () => {
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "openConfigFile",
-      filePath: "/workspace/opencode.json",
+      filePath: "/workspace/.opencode/opencode.json",
     });
   });
 
