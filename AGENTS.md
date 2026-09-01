@@ -89,6 +89,20 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-09-01: Shell-resolved TUI handoff (archived: `2026-09-01-fix-tui-handoff-shell-resolution`)
+
+Chat's independent TUI continuation and attach fallback now send the literal
+`opencode` command through the VS Code integrated terminal instead of a
+resolved absolute path. User shell aliases, functions, and hooks can therefore
+wrap the handoff with local policy such as nono; POSIX dynamic arguments use
+safe single-quote escaping while the direct extension-host import preflight
+retains resolved binary lookup.
+
+**Main spec**: `openspec/specs/session-tui-handoff/spec.md`
+
+**Verified**: 185 extension-host tests, 1795 webview tests, Biome, build, and
+strict OpenSpec validation.
+
 ### 2026-07-13: Session handoff to independent TUI (archived: `2026-07-13-handoff-session-to-tui`)
 
 Gear **Hand off to TUI** exports the active companion session (`{info,messages}`) via companion client, runs independent `opencode import` + `opencode --continue` without stopping chat. On failure (e.g. `database is locked`), offers attach fallback to the companion session (no fork). Absolute `opencode` path + shell-ready terminal send.
