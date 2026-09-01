@@ -199,7 +199,7 @@ export function ToolConfigPanel({
 
       {paths && (
         <div className={styles.footer}>
-          <LinkButton onClick={() => onOpenConfigFile(`${paths.directory}/opencode.json`)}>
+          <LinkButton onClick={() => onOpenConfigFile(`${paths.directory}/.opencode/opencode.json`)}>
             <FileIcon />
             {t["config.projectConfig"]}
           </LinkButton>
