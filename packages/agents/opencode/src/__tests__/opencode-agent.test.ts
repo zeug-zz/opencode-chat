@@ -523,6 +523,45 @@ describe("OpenCodeAgent", () => {
       sandboxedAgent.disconnect();
     });
 
+    it("passes the generated deny-read baseline alongside existing filesystem grants", async () => {
+      const { child, stdout } = createSandboxChild();
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
+        return child as never;
+      });
+      const sandboxedAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "on",
+          enabled: true,
+          allowNetwork: true,
+          filesystemPolicy: {
+            readWritePaths: ["/workspace/project", "/workspace/state"],
+            readOnlyPaths: ["/workspace/config"],
+            denyReadPaths: ["/Users/test/.ssh", "/Users/test/.aws"],
+          },
+        },
+        executable: { path: "/usr/local/bin/opencode" },
+      });
+
+      await sandboxedAgent.connect();
+
+      expect(mockSandboxManager.initialize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filesystem: {
+            denyRead: ["/Users/test/.ssh", "/Users/test/.aws"],
+            allowRead: ["/workspace/config", "/workspace/project", "/workspace/state"],
+            allowWrite: ["/workspace/project", "/workspace/state"],
+            denyWrite: [],
+          },
+        }),
+        undefined,
+        true,
+      );
+      expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
+      sandboxedAgent.disconnect();
+    });
+
     it("uses one inherited unrestricted network policy for the companion tree when enabled", async () => {
       const { child, stdout } = createSandboxChild();
       vi.mocked(spawn).mockImplementationOnce(() => {

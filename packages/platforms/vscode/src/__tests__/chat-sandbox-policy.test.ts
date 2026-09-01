@@ -87,7 +87,7 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readOnlyPaths).not.toContain("/home/tester");
     expect(policy.readWritePaths).not.toContain("/home/tester/.ssh");
     expect(policy.readOnlyPaths).not.toContain("/home/tester/.ssh");
-    expect(policy.denyReadPaths).toEqual([]);
+    expect(policy.denyReadPaths).toContain("/home/tester/.ssh");
   });
 
   it("keeps compatibility policy global without MCP-specific filesystem paths", () => {
@@ -102,7 +102,7 @@ describe("buildChatSandboxFilesystemPolicy", () => {
       expect.arrayContaining(["/workspace/project", paths.state, paths.cache, paths.temp]),
     );
     expect(policy.readWritePaths).not.toContain("/home/tester");
-    expect(policy.denyReadPaths).toEqual([]);
+    expect(policy.denyReadPaths).toContain("/home/tester/.aws");
     expect(policy.readWritePaths).not.toContain("/workspace/project/.mcp/local-server");
     expect(policy.readOnlyPaths).not.toContain("/workspace/project/.mcp/local-server");
     expect(() =>
@@ -127,7 +127,7 @@ describe("buildChatSandboxFilesystemPolicy", () => {
       homePath: "/home/tester",
     });
 
-    expect(policy.denyReadPaths).toEqual([]);
+    expect(policy.denyReadPaths).toContain("/home/tester/.gnupg");
     expect(policy.readOnlyPaths).toEqual([]);
     expect(policy.readWritePaths).toEqual(["/workspace/project"]);
     expect(policy.readWritePaths).not.toContain("/home/tester");
@@ -171,6 +171,38 @@ describe("buildChatSandboxFilesystemPolicy", () => {
         temporaryPaths: [`/home/tester/${store}/write-target`],
       }),
     ).toThrow(/credential-store/);
+  });
+
+  it("rejects an exact protected deny/read-grant match", () => {
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: "/Users/tester",
+        executablePath: "/Library/Keychains",
+        platform: "darwin",
+      }),
+    ).toThrow(/deny-read path.*read-only.*\/Library\/Keychains/);
+  });
+
+  it("rejects a required read grant beneath a protected deny path", () => {
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: "/Users/tester",
+        executablePath: "/Library/Keychains/login.keychain-db",
+        platform: "darwin",
+      }),
+    ).toThrow(/deny-read path.*read-only.*\/Library\/Keychains/);
+  });
+
+  it("rejects a required read grant containing a protected deny path", () => {
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/Library",
+        homePath: "/Users/tester",
+        platform: "darwin",
+      }),
+    ).toThrow(/deny-read path.*filesystem policy path.*\/Library/);
   });
 
   it("allows context-mode children beneath the derived macOS per-user temporary root", () => {
@@ -263,6 +295,50 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readOnlyPaths).toEqual(["C:\\Users\\tester\\AppData\\Roaming\\opencode"]);
     expect(policy.denyReadPaths).toEqual([]);
     expect(policy.readWritePaths).not.toContain("C:\\Users\\tester");
+  });
+
+  it("constructs the normalized macOS static read-deny baseline", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath: "/Users/tester/./",
+      platform: "darwin",
+    });
+
+    expect(policy.denyReadPaths).toEqual([...policy.denyReadPaths].sort((left, right) => left.localeCompare(right)));
+    expect(new Set(policy.denyReadPaths).size).toBe(policy.denyReadPaths.length);
+    expect(policy.denyReadPaths).toEqual(
+      expect.arrayContaining([
+        "/Users/tester/.ssh",
+        "/Users/tester/.config/gcloud",
+        "/Users/tester/.zsh_history",
+        "/Users/tester/Library/Keychains",
+        "/Library/Keychains",
+        "/Users/tester/Library/Application Support/Google/Chrome",
+        "/Users/tester/Library/Messages",
+      ]),
+    );
+    expect(policy.denyReadPaths).not.toContain("/Users/tester/.local/share/keyrings");
+  });
+
+  it("constructs the Linux baseline without macOS-exclusive paths", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath: "/home/tester",
+      platform: "linux",
+    });
+
+    expect(policy.denyReadPaths).toEqual(
+      expect.arrayContaining([
+        "/home/tester/.ssh",
+        "/home/tester/.password-store",
+        "/home/tester/.local/share/keyrings",
+        "/home/tester/.config/google-chrome",
+        "/home/tester/.mozilla/firefox",
+      ]),
+    );
+    expect(policy.denyReadPaths).not.toContain("/home/tester/Library/Keychains");
+    expect(policy.denyReadPaths).not.toContain("/Library/Keychains");
+    expect(policy.denyReadPaths).not.toContain("/home/tester/Library/Messages");
   });
 });
 

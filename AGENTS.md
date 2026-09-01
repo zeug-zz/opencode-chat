@@ -89,6 +89,27 @@ code --install-extension opencode-chat-<version>.vsix --force
 
 ## Recent Changes
 
+### 2026-09-01: Chat sandbox static read-deny baseline (archived: `2026-09-01-add-chat-sandbox-read-baseline`)
+
+Chat sandboxing now applies a static platform-aware deny-read baseline on
+macOS/Linux for common credential stores, browser data, keychains/private data,
+and shell history/configuration while preserving broad compatibility reads
+outside protected paths and constrained writes. Required read-grant overlap
+fails closed; Windows remains unsupported and unsandboxed.
+
+**Main spec**: `openspec/specs/chat-agent-sandbox/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-01-add-chat-sandbox-read-baseline/`
+
+**Packaging**: VS Code engine metadata is aligned with the installed API types
+at `^1.134.0` so the VSIX packager accepts the extension.
+
+**Verified**: focused VS Code policy/settings and agent tests, normal
+integration skip-safe behavior, Biome, build, strict OpenSpec validation, and
+final diff review. Opt-in runtime enforcement was not executable under the
+enclosing nono sandbox because nested macOS Seatbelt returned
+`sandbox_apply: Operation not permitted`.
+
 ### 2026-09-01: Shell-resolved TUI handoff (archived: `2026-09-01-fix-tui-handoff-shell-resolution`)
 
 Chat's independent TUI continuation and attach fallback now send the literal
