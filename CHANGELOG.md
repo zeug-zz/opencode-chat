@@ -15,11 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion shell mode and `!` command dispatch removed; the independent **Hand off to TUI** flow is the only supported escape hatch for serious coding and shell work
 - Write mode is preserved through normal sends and edit/resend while retaining internal `primaryAgent: "build"` compatibility
 - README positioning expanded to document the project's divergence from the original `opencode-gui` fork and its research/writing-first product boundary
+- Chat and Write prompts now document the webview's dollar-delimited KaTeX, copyable Markdown/Mermaid output, research provenance, and mode boundaries
+- Session create/select/refresh flows now guard asynchronous responses so stale session data cannot replace the latest user intent
+- TUI handoff now sends shell-resolved `opencode` commands with safe POSIX argument escaping, preserving user shell policy while Chat stays running
 
 ### Security
 
 - Companion Write permissions are enforced in the in-memory server configuration without modifying the user's global `opencode.json`
 - Companion MCP controls remain process-scoped, with explicit trust guidance for user-installed MCP servers
+- Chat sandboxing now applies a static, versioned, platform-aware protected-read baseline on macOS/Linux for common credentials, browser data, shell history/configuration, keychains, and private data while preserving broad compatibility reads outside protected paths; Windows remains unsupported
+- Sandbox deny-read paths fail closed on overlap with required read grants, and failed sandbox startup never falls back to unsandboxed execution
+- Chat and Write prompts treat workspace, attachments, retrieved documents, web pages, and MCP output as untrusted data rather than instructions
+
+### Fixed
+
+- Project configuration links now open the workspace-local `.opencode/opencode.json` path
 
 ## [0.7.0] - 2026-07-13
 
