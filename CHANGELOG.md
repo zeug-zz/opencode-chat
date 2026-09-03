@@ -7,19 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-03
+
+### Fixed
+
+- Updated the webview header, empty state, and document title to use the OpenCode Research name
+
+## [0.8.0] - 2026-09-03
+
 ### Changed
 
-- Product direction clarified: OpenCode Chat is a **chat, research, and report-writing harness**, not a replacement for the OpenCode coding TUI or another sidebar coding loop
+- Marketplace identity is now `zeug-zz.opencode-research` with the display name **OpenCode Research**
+- Product direction clarified: OpenCode Research is a **chat, research, and report-writing harness**, not a replacement for the OpenCode coding TUI or another sidebar coding loop
 - User-facing `write` mode is now explicitly Build-backed report writing: it uses a dedicated writing prompt and is limited to read, workspace search, web research, and edit capabilities; agent Bash and task/subagent execution are denied
 - Scout remains the default user-facing **chat** mode with its separate read-only research prompt
 - Companion shell mode and `!` command dispatch removed; the independent **Hand off to TUI** flow is the only supported escape hatch for serious coding and shell work
 - Write mode is preserved through normal sends and edit/resend while retaining internal `primaryAgent: "build"` compatibility
 - README positioning expanded to document the project's divergence from the original `opencode-gui` fork and its research/writing-first product boundary
+- Chat and Write prompts now document the webview's dollar-delimited KaTeX, copyable Markdown/Mermaid output, research provenance, and mode boundaries
+- Session create/select/refresh flows now guard asynchronous responses so stale session data cannot replace the latest user intent
+- TUI handoff now sends shell-resolved `opencode` commands with safe POSIX argument escaping, preserving user shell policy while Chat stays running
 
 ### Security
 
 - Companion Write permissions are enforced in the in-memory server configuration without modifying the user's global `opencode.json`
 - Companion MCP controls remain process-scoped, with explicit trust guidance for user-installed MCP servers
+- Chat sandboxing now applies a static, versioned, platform-aware protected-read baseline on macOS/Linux for common credentials, browser data, shell history/configuration, keychains, and private data while preserving broad compatibility reads outside protected paths; Windows remains unsupported
+- Sandbox deny-read paths fail closed on overlap with required read grants, and failed sandbox startup never falls back to unsandboxed execution
+- Chat and Write prompts treat workspace, attachments, retrieved documents, web pages, and MCP output as untrusted data rather than instructions
+
+### Fixed
+
+- Project configuration links now open the workspace-local `.opencode/opencode.json` path
 
 ## [0.7.0] - 2026-07-13
 
@@ -217,7 +236,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/zeug-zz/opencode-chat/compare/v0.5.2...v0.5.3

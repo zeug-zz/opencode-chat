@@ -69,6 +69,224 @@ describe("resolveOpenCodePaths", () => {
 });
 
 describe("buildChatSandboxFilesystemPolicy", () => {
+  const homePath = "/home/tester";
+  const crossPlatformDenyReadPaths = [
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".azure",
+    ".config/gcloud",
+    ".gcloud",
+    ".kube",
+    ".docker",
+    ".git-credentials",
+    ".netrc",
+    ".npmrc",
+    ".bunfig.toml",
+    ".config/bun/bunfig.toml",
+    ".vault-token",
+    ".credentials",
+    ".secrets",
+    ".keys",
+    ".pki",
+    ".terraform.d",
+    ".config/op",
+    ".claude.json",
+    ".claude/.credentials.json",
+    ".codex/auth.json",
+    ".gemini/oauth_creds.json",
+    ".electrum",
+    ".android/adbkey",
+    ".android/adbkey.pub",
+    ".bash_history",
+    ".zsh_history",
+    ".history",
+    ".python_history",
+    ".zshrc",
+    ".zprofile",
+    ".zshenv",
+    ".zlogin",
+    ".zlogout",
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".profile",
+    ".config/fish",
+    ".env",
+    ".envrc",
+    ".config/gh/hosts.yml",
+    ".config/glab-cli/config.yml",
+    ".config/rclone/rclone.conf",
+    ".config/containers/auth.json",
+    ".pypirc",
+    ".cargo/credentials",
+    ".cargo/credentials.toml",
+    ".config/sops/age/keys.txt",
+    ".config/age/keys.txt",
+    ".local/share/fish/fish_history",
+    ".config/atuin",
+    ".config/nushell",
+    ".local/share/nushell",
+    ".zsh_sessions",
+    ".bash_sessions",
+  ];
+  const macosDenyReadPaths = [
+    "Library/Keychains",
+    "/Library/Keychains",
+    ".password-store",
+    ".1password",
+    "Library/Group Containers/2BUA8C4S2C.com.1password",
+    "Library/Application Support/1Password",
+    "Library/Containers/com.1password.1password",
+    "Library/Application Support/Google/Chrome",
+    "Library/Application Support/Chromium",
+    "Library/Application Support/Firefox",
+    "Library/Application Support/Microsoft Edge",
+    "Library/Application Support/Arc",
+    "Library/Application Support/BraveSoftware",
+    "Library/Application Support/Vivaldi",
+    "Library/Application Support/com.operasoftware.Opera",
+    "Library/Safari",
+    "Library/Messages",
+    "Library/Mail",
+    "Library/Cookies",
+    "Library/Containers/com.apple.Safari",
+    "Library/Application Support/MobileSync",
+    "Library/Application Support/Google/Chrome Beta",
+    "Library/Application Support/Google/Chrome Canary",
+    "Library/Application Support/Microsoft Edge Beta",
+    "Library/Application Support/Microsoft Edge Canary",
+    "Library/Application Support/com.operasoftware.Opera GX",
+    "Library/Application Support/Orion",
+    "Library/Application Support/LibreWolf",
+    "Library/Application Support/Waterfox",
+    "Library/Application Support/Bitwarden",
+    "Library/Application Support/Proton Pass",
+    "Library/Application Support/KeePassXC",
+    "Library/Calendars",
+    "Library/AddressBook",
+    "Library/Notes",
+    "Library/Accounts",
+    "Library/IdentityServices",
+    "Library/Application Support/Signal",
+    "Library/Thunderbird",
+  ];
+  const linuxDenyReadPaths = [
+    ".password-store",
+    ".1password",
+    ".op",
+    ".local/share/keyrings",
+    ".config/google-chrome",
+    ".config/chromium",
+    ".mozilla/firefox",
+    ".config/microsoft-edge",
+    ".config/BraveSoftware",
+    ".config/vivaldi",
+    ".config/opera",
+    ".config/google-chrome-beta",
+    ".config/google-chrome-unstable",
+    ".config/chromium-browser",
+    ".config/ungoogled-chromium",
+    ".config/librewolf",
+    ".config/waterfox",
+    ".config/qutebrowser",
+    ".config/falkon",
+    ".config/tor",
+    ".config/kwalletd",
+    ".config/keepassxc",
+    ".config/Signal",
+    ".config/Nextcloud",
+    ".thunderbird",
+    ".config/evolution",
+  ];
+  const resolveExpectedDenyReadPaths = (home: string, entries: readonly string[]) =>
+    [
+      ...new Set(
+        [...crossPlatformDenyReadPaths, ...entries].map((entry) =>
+          entry.startsWith("/") ? entry : `${home}/${entry}`,
+        ),
+      ),
+    ].sort((left, right) => left.localeCompare(right));
+
+  it("pins the complete cross-platform and macOS conservative inventory", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      platform: "darwin",
+    });
+
+    expect(policy.denyReadPaths).toEqual(resolveExpectedDenyReadPaths(homePath, macosDenyReadPaths));
+    expect(policy.denyReadPaths).toEqual([...policy.denyReadPaths].sort((left, right) => left.localeCompare(right)));
+    expect(new Set(policy.denyReadPaths).size).toBe(policy.denyReadPaths.length);
+  });
+
+  it("pins the complete cross-platform and Linux conservative inventory", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      platform: "linux",
+    });
+
+    expect(policy.denyReadPaths).toEqual(resolveExpectedDenyReadPaths(homePath, linuxDenyReadPaths));
+    expect(policy.denyReadPaths).toEqual([...policy.denyReadPaths].sort((left, right) => left.localeCompare(right)));
+    expect(new Set(policy.denyReadPaths).size).toBe(policy.denyReadPaths.length);
+  });
+
+  it("keeps platform-specific entries separated and rejects broad parent denies", () => {
+    const macosPolicy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      platform: "darwin",
+    });
+    const linuxPolicy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      platform: "linux",
+    });
+    const broadParents = [
+      homePath,
+      `${homePath}/.config`,
+      `${homePath}/.local/share`,
+      `${homePath}/.cache`,
+      `${homePath}/Library`,
+      `${homePath}/Documents`,
+      `${homePath}/Projects`,
+      `${homePath}/.config/opencode`,
+      `${homePath}/.config/opencode/cache`,
+      `${homePath}/.cache/opencode`,
+      `${homePath}/.claude`,
+      `${homePath}/.codex`,
+      `${homePath}/.gemini`,
+      `${homePath}/.android`,
+      "/tmp",
+      "/private/tmp",
+    ];
+
+    expect(macosPolicy.denyReadPaths).toEqual(resolveExpectedDenyReadPaths(homePath, macosDenyReadPaths));
+    expect(linuxPolicy.denyReadPaths).toEqual(resolveExpectedDenyReadPaths(homePath, linuxDenyReadPaths));
+    expect(macosPolicy.denyReadPaths).not.toEqual(
+      expect.arrayContaining(linuxDenyReadPaths.map((entry) => `${homePath}/${entry}`)),
+    );
+    expect(linuxPolicy.denyReadPaths).not.toEqual(
+      expect.arrayContaining(
+        macosDenyReadPaths.filter((entry) => entry.startsWith("Library/")).map((entry) => `${homePath}/${entry}`),
+      ),
+    );
+    expect(macosPolicy.denyReadPaths).not.toEqual(expect.arrayContaining(broadParents));
+    expect(linuxPolicy.denyReadPaths).not.toEqual(expect.arrayContaining(broadParents));
+  });
+
+  it("does not emit the protected baseline on Windows", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "C:\\work\\project",
+      homePath: "C:\\Users\\tester",
+      platform: "win32",
+    });
+
+    expect(policy.denyReadPaths).toEqual([]);
+  });
+
   it("keeps workspace and OpenCode data paths writable while config is read-only", () => {
     const openCodePaths = resolveOpenCodePaths({}, "/home/tester");
     const policy = buildChatSandboxFilesystemPolicy({
@@ -85,6 +303,8 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readWritePaths).not.toContain(openCodePaths.config);
     expect(policy.readWritePaths).not.toContain("/home/tester");
     expect(policy.readOnlyPaths).not.toContain("/home/tester");
+    expect(policy.denyReadPaths).not.toContain("/home/tester/.config/opencode");
+    expect(policy.denyReadPaths).not.toContain("/home/tester/.config/opencode/auth.json");
     expect(policy.readWritePaths).not.toContain("/home/tester/.ssh");
     expect(policy.readOnlyPaths).not.toContain("/home/tester/.ssh");
     expect(policy.denyReadPaths).toContain("/home/tester/.ssh");
@@ -163,6 +383,35 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readWritePaths).not.toContain("/home/tester/.ssh");
   });
 
+  it("preserves non-conflicting OpenCode authentication and runtime grants", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      openCodePaths: {
+        config: "/home/tester/.config/opencode",
+        auth: "/home/tester/.local/share/opencode/auth.json",
+        state: "/home/tester/.local/share/opencode",
+        cache: "/home/tester/.cache/opencode",
+        temp: "/home/tester/.cache/opencode/tmp",
+      },
+      runtimeCachePaths: ["/home/tester/.cache/uv"],
+    });
+
+    expect(policy.readOnlyPaths).toEqual(
+      expect.arrayContaining(["/home/tester/.config/opencode", "/home/tester/.local/share/opencode/auth.json"]),
+    );
+    expect(policy.readWritePaths).toEqual(
+      expect.arrayContaining([
+        "/home/tester/.local/share/opencode",
+        "/home/tester/.cache/opencode",
+        "/home/tester/.cache/opencode/tmp",
+        "/home/tester/.cache/uv",
+      ]),
+    );
+    expect(policy.denyReadPaths).not.toEqual(expect.arrayContaining(["/home/tester/.config/opencode"]));
+    expect(policy.denyReadPaths).not.toEqual(expect.arrayContaining(["/home/tester/.local/share/opencode"]));
+  });
+
   it.each([".ssh", ".aws", ".gnupg", "keychains"])("rejects credential-store writes under %s", (store) => {
     expect(() =>
       buildChatSandboxFilesystemPolicy({
@@ -203,6 +452,101 @@ describe("buildChatSandboxFilesystemPolicy", () => {
         platform: "darwin",
       }),
     ).toThrow(/deny-read path.*filesystem policy path.*\/Library/);
+  });
+
+  it.each([
+    ["OpenCode config", { config: "/Library/Keychains" }, undefined],
+    ["executable", undefined, "/Library/Keychains"],
+    ["PATH executable", undefined, undefined, ["/Library/Keychains"]],
+  ] as const)("rejects an exact protected deny conflict for the %s read-only grant", (label, openCodePaths, executablePath, executablePaths) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: "/Users/tester",
+        openCodePaths,
+        executablePath,
+        executablePaths,
+        platform: "darwin",
+      });
+    }).toThrow(
+      /deny-read path "\/Library\/Keychains" overlaps required read-only filesystem policy path read grant "\/Library\/Keychains"/,
+    );
+    expect(returnedPolicy).toBeUndefined();
+  });
+
+  it.each([
+    ["OpenCode config", { config: "/Library/Keychains/login.keychain-db" }, undefined],
+    ["PATH executable", undefined, ["/Library/Keychains/bin/opencode"]],
+  ] as const)("rejects a required read-only grant beneath a protected deny path for the %s", (label, openCodePaths, executablePaths) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: "/Users/tester",
+        openCodePaths,
+        executablePaths,
+        platform: "darwin",
+      });
+    }).toThrow(/deny-read path "\/Library\/Keychains" overlaps required read-only filesystem policy path/);
+    expect(returnedPolicy).toBeUndefined();
+  });
+
+  it.each([
+    ["workspace", { workspacePath: "/Library" }],
+    ["runtime cache", { workspacePath: "/workspace/project", runtimeCachePaths: ["/Users/tester/Library"] }],
+  ] as const)("rejects a workspace or runtime read-write grant containing a protected deny path for the %s", (label, input) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        ...input,
+        homePath: "/Users/tester",
+        platform: "darwin",
+      });
+    }).toThrow(/deny-read path.*overlaps required filesystem policy path/);
+    expect(returnedPolicy).toBeUndefined();
+  });
+
+  it.each([
+    ["workspace", { workspacePath: "/Library/Keychains" }],
+    ["runtime cache", { workspacePath: "/workspace/project", runtimeCachePaths: ["/Library/Keychains"] }],
+    ["temporary path", { workspacePath: "/workspace/project", temporaryPaths: ["/Library/Keychains"] }],
+  ] as const)("rejects an exact protected deny conflict for the %s read-write grant", (label, input) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        ...input,
+        homePath: "/Users/tester",
+        platform: "darwin",
+      });
+    }).toThrow(/deny-read path "\/Library\/Keychains" overlaps required filesystem policy path/);
+    expect(returnedPolicy).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "runtime cache",
+      { workspacePath: "/workspace/project", runtimeCachePaths: ["/Users/tester/.config/gh/hosts.yml/child"] },
+    ],
+    [
+      "temporary path",
+      { workspacePath: "/workspace/project", temporaryPaths: ["/Users/tester/.config/gh/hosts.yml/child"] },
+    ],
+  ] as const)("rejects a required read-write grant beneath a protected deny path for the %s", (label, input) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        ...input,
+        homePath: "/Users/tester",
+        platform: "darwin",
+      });
+    }).toThrow(/deny-read path "\/Users\/tester\/\.config\/gh\/hosts\.yml" overlaps required filesystem policy path/);
+    expect(returnedPolicy).toBeUndefined();
   });
 
   it("allows context-mode children beneath the derived macOS per-user temporary root", () => {

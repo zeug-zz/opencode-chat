@@ -355,7 +355,7 @@ process lifecycle abstraction.
 - With a supported nono installation, `auto` selects nono without requiring a
   repository or VSIX change.
 - The launched command uses the supported nono embedding form and preserves
-  the OpenCode Chat overlay and workspace.
+  the OpenCode Research overlay and workspace.
 - Non-nono fallback and nono launch failures are distinguishable and visible.
 - No automatic backend retry occurs after a selected backend fails.
 - Companion teardown is complete and reconnects do not accumulate processes or

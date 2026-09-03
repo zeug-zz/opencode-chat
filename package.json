@@ -1,19 +1,19 @@
 {
   "name": "opencode-chat-monorepo",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.1",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/zeug-zz/opencode-chat"
   },
   "scripts": {
-    "build": "pnpm --filter opencode-chat build",
+    "build": "pnpm --filter opencode-research build",
     "check": "biome check .",
     "check:fix": "biome check --fix .",
     "format": "biome format --write .",
-    "test": "pnpm --filter opencode-chat test",
-    "test:all": "pnpm --filter opencode-chat test:all"
+    "test": "pnpm --filter opencode-research test",
+    "test:all": "pnpm --filter opencode-research test:all"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.3"
@@ -22,12 +22,12 @@
     "overrides": {
       "undici": "^7.29.0",
       "picomatch": "^4.0.4",
-      "fast-uri": "^3.1.5",
+      "fast-uri": "^3.1.6",
       "lodash": "^4.18.0",
       "tmp": "^0.2.6",
       "postcss": "^8.5.20",
       "uuid": "^11.1.1",
-      "qs": "^6.15.2",
+      "qs": "^6.16.0",
       "brace-expansion": "^5.0.9",
       "esbuild": "^0.28.1",
       "form-data": "^4.0.6",

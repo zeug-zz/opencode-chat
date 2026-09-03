@@ -1,8 +1,8 @@
 {
-  "name": "opencode-chat",
+  "name": "opencode-research",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.0",
+  "version": "0.8.1",
   "publisher": "zeug-zz",
   "license": "MIT",
   "repository": {
@@ -18,7 +18,8 @@
     "ai",
     "chat",
     "llm",
-    "coding-assistant"
+    "research",
+    "writing"
   ],
   "icon": "media/icon.png",
   "preview": true,
@@ -58,7 +59,7 @@
       ]
     },
     "configuration": {
-      "title": "OpenCode Chat",
+      "title": "OpenCode Research",
       "properties": {
         "opencode-chat.chatSandbox.mode": {
           "type": "string",
@@ -69,13 +70,13 @@
           ],
           "default": "inherit",
           "scope": "window",
-          "description": "Controls sandboxing for OpenCode Chat tools."
+          "description": "Controls sandboxing for OpenCode Research tools."
         },
         "opencode-chat.chatSandbox.allowNetwork": {
           "type": "boolean",
           "default": true,
           "scope": "window",
-          "description": "Allows network access for sandboxed OpenCode Chat tools."
+          "description": "Allows network access for sandboxed OpenCode Research tools."
         }
       }
     }

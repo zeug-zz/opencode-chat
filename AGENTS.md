@@ -17,11 +17,11 @@ For version-specific docs, use `/org/project/version` from the `library` output 
 If a command fails with a quota error, inform the user and suggest `npx ctx7@latest login` or setting `CONTEXT7_API_KEY` env var for higher limits. Do not silently fall back to training data.
 <!-- context7 -->
 
-# OpenCode Chat — AGENTS.md
+# OpenCode Research — AGENTS.md
 
-Unofficial VS Code chat companion for OpenCode. Forked from ktmage/opencode-gui.
+Unofficial VS Code research and writing extension for OpenCode. Forked from ktmage/opencode-gui.
 Repository: https://github.com/zeug-zz/opencode-chat
-Extension ID: `zeug-zz.opencode-chat`
+Extension ID: `zeug-zz.opencode-research`
 
 ## Project structure
 
@@ -54,10 +54,31 @@ npm run check:fix            # Biome auto-fix
 
 To package into VSIX:
 ```sh
+pnpm build
+cp LICENSE CHANGELOG.md THIRD_PARTY_NOTICES.md packages/platforms/vscode/
 cd packages/platforms/vscode
-npm run package              # creates opencode-chat-<version>.vsix
-code --install-extension opencode-chat-<version>.vsix --force
+npm run package              # creates opencode-research-<version>.vsix
+code --install-extension opencode-research-<version>.vsix --force
 ```
+
+## Marketplace Updates
+
+Use a version newer than the one currently published in the Marketplace.
+
+For a manual update, build and package the VSIX using the commands above, then open
+the [Visual Studio Marketplace publisher portal](https://marketplace.visualstudio.com/manage),
+select publisher `zeug-zz`, and upload `opencode-research-<version>.vsix`.
+
+For a CLI update with `vsce`, authenticate with `vsce login zeug-zz` or provide
+the `VSCE_PAT` environment variable, then publish the already-tested VSIX:
+
+```sh
+cd packages/platforms/vscode
+vsce publish --packagePath opencode-research-<version>.vsix
+```
+
+`vsce` packages and publishes extensions; the `code --install-extension` command
+is only for installing a VSIX locally in VS Code.
 
 ## Code conventions
 
@@ -88,6 +109,33 @@ code --install-extension opencode-chat-<version>.vsix --force
 4. `memory-bank/` — deprecated optional legacy context (non-authoritative)
 
 ## Recent Changes
+
+### 2026-09-02: Conservative sandbox deny-read expansion (archived: `2026-09-02-expand-chat-sandbox-deny-read-baseline`)
+
+The Chat sandbox static deny-read baseline now includes a reviewed set of
+narrow credential, shell-history, browser, keychain, password-store, and
+private-application leaves on macOS/Linux. Required workspace, OpenCode,
+runtime/cache, executable/PATH, and temporary grants remain available when
+non-conflicting; deny/read-grant overlaps fail closed before launch with no
+unsandboxed fallback. Newly protected paths can affect local MCPs that
+intentionally read them, and Windows remains unsupported/unsandboxed.
+
+Write remains broad workspace-scoped Build editing with behavioral
+requested-artifact guidance. This change does not add a reports-directory
+convention, exact report-path enforcement, a staging writer, MCP-specific
+filesystem allowlists, or agent permission changes.
+
+**Main spec**: `openspec/specs/chat-agent-sandbox/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-02-expand-chat-sandbox-deny-read-baseline/`
+
+**Implementation**: `packages/platforms/vscode/src/chat-sandbox-policy.ts`,
+the sandbox policy/launch/integration tests, and security documentation.
+
+**Verified**: strict OpenSpec change validation, 1,800 webview tests, 205
+extension tests, focused policy and agent tests, Biome check, build, and VSIX
+packaging. Opt-in sandbox runtime enforcement remained skipped because nested
+macOS sandboxing is blocked by the enclosing environment.
 
 ### 2026-09-01: Session navigation race hardening (archived: `2026-09-01-fix-session-navigation-races`)
 

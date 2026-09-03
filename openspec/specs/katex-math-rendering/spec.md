@@ -82,7 +82,7 @@ KaTeX styles SHALL be imported from the webview entry module and the webview CSP
 
 #### Scenario: CSS bundled by Vite
 
-- **WHEN** `pnpm --filter opencode-chat build` is run
+- **WHEN** `pnpm --filter opencode-research build` is run
 - **THEN** the emitted `dist/webview/assets/index.css` SHALL contain KaTeX's base styles
 - **AND** no separate `<link rel="stylesheet">` for KaTeX SHALL be present in the webview HTML
 
@@ -92,4 +92,3 @@ KaTeX styles SHALL be imported from the webview entry module and the webview CSP
 - **THEN** the `Content-Security-Policy` meta tag SHALL include `style-src-attr 'unsafe-inline'`
 - **AND** the `style-src` and `style-src-elem` directives SHALL remain nonce-bound (no `'unsafe-inline'` on `style-src` or `style-src-elem`)
 - **AND** `script-src` SHALL remain nonce-bound
-

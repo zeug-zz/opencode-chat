@@ -1,13 +1,13 @@
 # primary-agent-selection Specification
 
 ## Purpose
-Selects and displays the primary chat agent in the VS Code companion, defaulting the lightweight chat canvas and preserving write mode as an escape hatch.
+Selects and displays the primary chat agent in the OpenCode Research extension, defaulting the lightweight chat canvas and preserving write mode as an escape hatch.
 
 ## Requirements
 
 ### Requirement: Prefer scout for initial primary-agent selection
 
-When the VS Code webview receives the opencode agent list and no primary agent has already been selected in the current webview session, OpenCode Chat SHALL initialize the selected primary agent to an eligible agent named `scout` when one exists.
+When the VS Code webview receives the opencode agent list and no primary agent has already been selected in the current webview session, OpenCode Research SHALL initialize the selected primary agent to an eligible agent named `scout` when one exists.
 
 #### Scenario: Scout agent is available after build
 
@@ -27,7 +27,7 @@ When the VS Code webview receives the opencode agent list and no primary agent h
 
 ### Requirement: Preserve explicit primary-agent selection
 
-OpenCode Chat SHALL NOT overwrite a non-empty selected primary agent when a subsequent agent-list message is received.
+OpenCode Research SHALL NOT overwrite a non-empty selected primary agent when a subsequent agent-list message is received.
 
 #### Scenario: User selection survives agent refresh
 
@@ -57,18 +57,18 @@ The default primary-agent selection change SHALL preserve existing message send 
 - **THEN** the webview SHALL include `primaryAgent: "scout"` in the existing send message payload
 - **AND** no new protocol field SHALL be required
 
-### Requirement: Append chat companion prompt for Scout
+### Requirement: Append chat assistant prompt for Scout
 
-OpenCode Chat SHALL append the chat companion system prompt when sending a message with selected primary agent `scout` and no explicit system override is provided.
+OpenCode Research SHALL append the chat assistant system prompt when sending a message with selected primary agent `scout` and no explicit system override is provided.
 
-#### Scenario: Scout chat message uses chat companion prompt
+#### Scenario: Scout chat message uses chat assistant prompt
 
 - **WHEN** the webview sends a chat message with `primaryAgent: "scout"`
 - **AND** the message does not include an explicit `system` override
-- **THEN** the extension host SHALL forward the loaded chat companion system prompt to the agent send call
+- **THEN** the extension host SHALL forward the loaded chat assistant system prompt to the agent send call
 
 #### Scenario: Write message does not use chat companion prompt
 
 - **WHEN** the webview sends a chat message with `primaryAgent: "build"`
 - **AND** the message does not include an explicit `system` override
-- **THEN** the extension host SHALL NOT inject the chat companion system prompt
+- **THEN** the extension host SHALL NOT inject the chat assistant system prompt

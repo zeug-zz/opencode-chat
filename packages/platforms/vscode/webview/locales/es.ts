@@ -3,11 +3,11 @@ import type { LocaleSchema } from "./en";
 export const es: LocaleSchema = {
   // ChatHeader
   "header.sessions": "Sesiones",
-  "header.title.fallback": "OpenCode",
+  "header.title.fallback": "OpenCode Research",
   "header.newChat": "Nuevo chat",
 
   // EmptyState
-  "empty.title": "OpenCode",
+  "empty.title": "OpenCode Research",
   "empty.description": "Inicia una nueva conversación para comenzar.",
   "empty.newChat": "Nuevo chat",
 

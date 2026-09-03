@@ -1,8 +1,8 @@
-# Contributing to OpenCode Chat
+# Contributing to OpenCode Research
 
 > **Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui).** This fork maintains its own review process. Upstream maintainer [@ktmage](https://github.com/ktmage) retains credit for the original project.
 
-OpenCode Chat へのコントリビュートについて
+OpenCode Research へのコントリビュートについて
 
 ## Table of Contents / 目次
 

@@ -1,0 +1,24 @@
+## 1. Static protected-read baseline
+
+- [x] 1.1 Extend the existing literal `CROSS_PLATFORM_DENY_READ_PATHS`, `MACOS_DENY_READ_PATHS`, and `LINUX_DENY_READ_PATHS` constants with exactly the conservative leaf-path inventory selected in `design.md`; preserve effective-home resolution, normalization, deduplication, deterministic sorting, platform separation, unchanged Windows behavior, and all existing compatibility grants, and verify the focused policy test suite passes.
+- [x] 1.2 Add focused policy tests for every selected representative entry and category, no broad parent deny (including home, generic XDG, `Library`, Documents, Projects, OpenCode, cache, and temporary roots), sorted/deduplicated output, macOS/Linux separation, and unchanged Windows `denyReadPaths: []`; verify the assertions fail if a selected entry is missing or a broad parent is introduced.
+- [x] 1.3 Preserve fail-closed deny/read-grant validation and add or adjust focused tests for exact, deny-ancestor-of-grant, and grant-ancestor-of-deny conflicts across read-only and read-write grants, including workspace and runtime examples; verify conflicts fail before launch without filtering denies, broadening grants, or retrying unsandboxed.
+
+## 2. Launch mapping and compatibility boundaries
+
+- [x] 2.1 Verify the computed deny list is mapped to `SandboxRuntimeConfig.filesystem.denyRead` through the existing macOS/Linux launch path and inherited by the complete companion process tree, while workspace, OpenCode, cache/temp, executable/PATH, and other documented compatibility grants remain unchanged; verify focused launch/agent tests cover the mapping and no new dependency, network policy, MCP-specific filesystem allowlist, runtime nono discovery, or agent permission change is introduced.
+- [x] 2.2 Preserve unsupported Windows and failure behavior: Windows remains unchanged and unsandboxed without an enforcement claim, while supported-platform construction/startup failures remain visible, terminate partial children, and never use an unsandboxed fallback; verify the focused extension and OpenCode agent tests cover both paths.
+
+## 3. Opt-in runtime enforcement coverage
+
+- [x] 3.1 Extend the opt-in macOS/Linux sandbox integration tests for representative existing protected reads, protected-read inheritance through a process-tree/local-MCP-like child, existing-path Linux enforcement semantics, and permitted workspace/runtime reads and writes; verify `OPENCODE_CHAT_RUN_SANDBOX_INTEGRATION=1` coverage is skip-safe and reports skipped enforcement as an environment limitation rather than a passing enforcement result.
+
+## 4. Security and compatibility documentation
+
+- [x] 4.1 Update `README.md`, `packages/platforms/vscode/README.md`, and `SECURITY.md` to describe the expanded versioned macOS/Linux baseline, broad compatibility reads and writes outside protected paths, MCP/process-tree impact, compatibility tradeoffs, fail-closed overlap behavior, unsupported unchanged Windows behavior, and targeted-defense-in-depth limitations; verify the three documents make no strict-confidentiality or Windows-enforcement claim.
+- [x] 4.2 Document accurate Write semantics as broad workspace-scoped edit capability with behavioral requested-artifact guidance, without imposing a reports-directory convention, host-mediated/staging writer, exact report-path enforcement, technical report-only boundary, MCP-specific filesystem allowlist, runtime nono discovery, new dependency, network policy change, or agent permission change; verify `packages/platforms/vscode/CHAT_SYSTEM.md` and `packages/platforms/vscode/WRITE_SYSTEM.md` remain unmodified.
+
+## 5. Final verification and scope review
+
+- [x] 5.1 Run strict OpenSpec validation, affected focused policy/launch/agent/integration tests, the full test and check gates, and the build gate; verify all required commands pass, opt-in runtime skips are accurately reported, and no commit, archive, push, or history change is performed. Verified: strict OpenSpec validation, focused policy/launch/agent tests, full test and test:all gates, `npm run check`, `npm run build`, and `git diff --check` passed. The opt-in runtime integration command passed with 10 tests skipped because nested macOS sandboxing is blocked by the enclosing environment; this is an environment limitation, not runtime-enforcement proof.
+- [x] 5.2 Perform a final diff and scope review; verify only the intended implementation, focused tests, documentation, and OpenSpec task/spec files changed, deny/read-grant conflicts still fail closed without filtering denies or broadening grants, supported macOS/Linux-only enforcement and unchanged unsandboxed Windows boundaries remain explicit, no broad parent deny was added, and no reports convention, staging writer, exact report-path enforcement, MCP-specific allowlist, runtime nono discovery, new dependency, network policy, or agent permission change is present.

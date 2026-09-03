@@ -25,7 +25,7 @@ import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform
 let agent = new OpenCodeAgent();
 let sandboxController: ChatSandboxController<ChatSandboxStatus> | undefined;
 const MCP_INVENTORY_ERROR_MESSAGE =
-  "OpenCode Chat could not resolve its MCP inventory. Repair the OpenCode configuration and reload Chat.";
+  "OpenCode Research could not resolve its MCP inventory. Repair the OpenCode configuration and reload the extension.";
 
 class McpInventoryError extends Error {
   constructor() {
@@ -40,7 +40,7 @@ process.on("exit", () => agent?.disconnect());
 export async function activate(context: vscode.ExtensionContext) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspaceFolder) {
-    vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Chat requires an open workspace folder."));
+    vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Research requires an open workspace folder."));
     return;
   }
 
@@ -118,7 +118,7 @@ export async function activate(context: vscode.ExtensionContext) {
     };
     initialSandboxStatus = sandboxStatus;
     chatViewProvider?.publishChatSandboxStatus(sandboxStatus);
-    vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Chat: {0}", message));
+    vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Research: {0}", message));
   };
   agent.onAvailabilityError = (error) => reportSandboxError(error);
 
@@ -158,7 +158,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (kind === "not-found") {
         vscode.window.showWarningMessage(
           vscode.l10n.t(
-            'OpenCode Chat: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
+            'OpenCode Research: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
           ),
         );
         return;
@@ -175,14 +175,14 @@ export async function activate(context: vscode.ExtensionContext) {
       if (kind === "database-locked") {
         vscode.window.showErrorMessage(
           vscode.l10n.t(
-            "OpenCode Chat: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
+            "OpenCode Research: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
           ),
         );
       } else {
         const message = error instanceof Error ? error.message : String(error);
         const truncated = message.length > 500 ? `${message.slice(0, 500)}...` : message;
         vscode.window.showErrorMessage(
-          vscode.l10n.t("OpenCode Chat: Failed to start companion server. {0}", truncated),
+          vscode.l10n.t("OpenCode Research: Failed to start OpenCode server. {0}", truncated),
         );
       }
     }

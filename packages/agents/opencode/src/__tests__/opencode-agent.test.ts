@@ -212,7 +212,7 @@ describe("OpenCodeAgent", () => {
           mode: "on",
           enabled: true,
           allowNetwork: true,
-          filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [] },
+          filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [], denyReadPaths: [] },
         },
         executable: { path: "opencode" },
       });
@@ -222,8 +222,31 @@ describe("OpenCodeAgent", () => {
       expect(createOpencodeServer).toHaveBeenCalled();
       expect(mockSandboxManager.initialize).not.toHaveBeenCalled();
       expect(mockSandboxManager.wrapWithSandbox).not.toHaveBeenCalled();
+      expect(mockSandboxManager.reset).not.toHaveBeenCalled();
       expect(spawn).not.toHaveBeenCalled();
       unsupportedAgent.disconnect();
+    });
+
+    it("surfaces supported-platform sandbox construction failures without fallback", async () => {
+      const failure = new Error("sandbox policy construction failed");
+      mockSandboxManager.initialize.mockRejectedValueOnce(failure);
+      const sandboxedAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "on",
+          enabled: true,
+          allowNetwork: true,
+          filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [], denyReadPaths: [] },
+        },
+        executable: { path: "opencode" },
+      });
+
+      await expect(sandboxedAgent.connect()).rejects.toThrow(
+        "Sandboxed OpenCode startup failed; no unsandboxed fallback was started",
+      );
+      expect(createOpencodeServer).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+      expect(mockSandboxManager.reset).toHaveBeenCalledTimes(1);
     });
 
     it("should keep the default startup path unsandboxed", async () => {
@@ -523,12 +546,18 @@ describe("OpenCodeAgent", () => {
       sandboxedAgent.disconnect();
     });
 
-    it("passes the generated deny-read baseline alongside existing filesystem grants", async () => {
+    it("passes the computed deny-read baseline unchanged to the inherited sandbox runtime", async () => {
       const { child, stdout } = createSandboxChild();
       vi.mocked(spawn).mockImplementationOnce(() => {
         queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
         return child as never;
       });
+      const denyReadPaths = [
+        "/Users/test/.ssh",
+        "/Users/test/.config/gh/hosts.yml",
+        "/Users/test/Library/Application Support/Google/Chrome",
+        "/Users/test/Library/Calendars",
+      ];
       const sandboxedAgent = new OpenCodeAgent({
         workspacePath: "/workspace/project",
         sandbox: {
@@ -538,7 +567,7 @@ describe("OpenCodeAgent", () => {
           filesystemPolicy: {
             readWritePaths: ["/workspace/project", "/workspace/state"],
             readOnlyPaths: ["/workspace/config"],
-            denyReadPaths: ["/Users/test/.ssh", "/Users/test/.aws"],
+            denyReadPaths,
           },
         },
         executable: { path: "/usr/local/bin/opencode" },
@@ -549,7 +578,7 @@ describe("OpenCodeAgent", () => {
       expect(mockSandboxManager.initialize).toHaveBeenCalledWith(
         expect.objectContaining({
           filesystem: {
-            denyRead: ["/Users/test/.ssh", "/Users/test/.aws"],
+            denyRead: denyReadPaths,
             allowRead: ["/workspace/config", "/workspace/project", "/workspace/state"],
             allowWrite: ["/workspace/project", "/workspace/state"],
             denyWrite: [],
@@ -559,6 +588,15 @@ describe("OpenCodeAgent", () => {
         true,
       );
       expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
+      expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledWith(expect.stringContaining("'serve'"));
+      expect(spawn).toHaveBeenCalledWith(
+        "sandboxed-command",
+        expect.objectContaining({
+          cwd: "/workspace/project",
+          detached: true,
+          shell: true,
+        }),
+      );
       sandboxedAgent.disconnect();
     });
 
@@ -764,6 +802,7 @@ describe("OpenCodeAgent", () => {
     it("bounds and redacts diagnostics when a ready companion exits", async () => {
       const { child, stdout, handlers } = createSandboxChild();
       const availabilityError = vi.fn();
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
       vi.mocked(spawn).mockImplementationOnce(() => {
         queueMicrotask(() => {
           stdout.emit("data", "http://127.0.0.1:4567\n");
@@ -797,6 +836,8 @@ describe("OpenCodeAgent", () => {
       expect(error.message).not.toContain("secret-value");
       expect(error.message).not.toContain("abc123");
       expect(error.message.length).toBeLessThan(5_500);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("sandbox diagnostic (companion exit)"));
+      log.mockRestore();
       sandboxedAgent.disconnect();
     });
 
@@ -1983,6 +2024,104 @@ describe("OpenCodeAgent", () => {
       expect(availabilityError.mock.calls[0]?.[0].message).toContain("code=17, signal=SIGTERM");
       expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
       expect(createOpencodeServer).not.toHaveBeenCalled();
+      sandboxedAgent.disconnect();
+    });
+
+    it("logs bounded MCP denial reasons with an accurate generic filesystem label", async () => {
+      const { child, stdout } = createSandboxChild();
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => stdout.emit("data", "ready at http://127.0.0.1:4567\n"));
+        return child as never;
+      });
+      mockClient.mcp.status.mockResolvedValue({
+        data: {
+          localMcp: {
+            status: "failed",
+            error: `permission denied EPERM ${"x".repeat(10_000)} token=secret-value`,
+          },
+        },
+      });
+      const sandboxedAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "on",
+          enabled: true,
+          allowNetwork: true,
+          filesystemPolicy: { readWritePaths: [], readOnlyPaths: [] },
+        },
+        executable: { path: "opencode" },
+        mcpTransport: { localMcp: "stdio" },
+      });
+
+      await sandboxedAgent.connect();
+      await sandboxedAgent.getMcpStatus();
+
+      const diagnostic = log.mock.calls.at(-1)?.[0] ?? "";
+      expect(diagnostic).toContain("MCP operation (stdio)");
+      expect(diagnostic).toContain("permission denied EPERM");
+      expect(diagnostic).toContain("operation=filesystem operation");
+      expect(diagnostic).not.toContain("secret-value");
+      expect(diagnostic.length).toBeLessThanOrEqual(4_096 + 80);
+      log.mockRestore();
+      sandboxedAgent.disconnect();
+    });
+
+    it("checks write markers before read markers while retaining network and read labels", async () => {
+      const { child, stdout } = createSandboxChild();
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => stdout.emit("data", "ready at http://127.0.0.1:4567\n"));
+        return child as never;
+      });
+      mockClient.mcp.status.mockResolvedValue({
+        data: {
+          writeMcp: { status: "failed", error: "read-only filesystem EACCES" },
+          readMcp: { status: "failed", error: "read failed EACCES" },
+          networkMcp: { status: "failed", error: "network request denied" },
+        },
+      });
+      const sandboxedAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "on",
+          enabled: true,
+          allowNetwork: true,
+          filesystemPolicy: { readWritePaths: [], readOnlyPaths: [] },
+        },
+        executable: { path: "opencode" },
+      });
+
+      await sandboxedAgent.connect();
+      const result = await sandboxedAgent.getMcpStatus();
+
+      expect(result.writeMcp.error).toContain("operation=write operation");
+      expect(result.readMcp.error).toContain("operation=read operation");
+      expect(result.networkMcp.error).toContain("operation=network request/startup");
+      sandboxedAgent.disconnect();
+    });
+
+    it("logs failed MCP operations with stage context and preserves opaque errors", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const failure = new Error("opaque broker failure");
+      mockClient.mcp.connect.mockRejectedValueOnce(failure);
+      const sandboxedAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "on",
+          enabled: true,
+          allowNetwork: true,
+          filesystemPolicy: { readWritePaths: [], readOnlyPaths: [] },
+        },
+        executable: { path: "opencode" },
+        mcpTransport: { remoteMcp: "http" },
+      });
+
+      await sandboxedAgent.connect();
+      await expect(sandboxedAgent.connectMcp("remoteMcp")).rejects.toBe(failure);
+
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("sandbox diagnostic (MCP connect (http))"));
+      expect(log.mock.calls.at(-1)?.[0]).toContain("opaque broker failure");
+      log.mockRestore();
       sandboxedAgent.disconnect();
     });
 

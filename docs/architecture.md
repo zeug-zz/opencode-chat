@@ -1,8 +1,8 @@
-# OpenCode Chat アーキテクチャ
+# OpenCode Research アーキテクチャ
 
 ## 概要
 
-OpenCode Chat は、AI コーディングエージェントと対話するための VS Code 拡張機能を提供するマルチパッケージモノレポです。アーキテクチャは **Core**（共有型定義）、**Agents**（バックエンドアダプター）、**Platforms**（UI + プラットフォーム固有サービス）の3層に関心を分離しています。
+OpenCode Research は、AI コーディングエージェントと対話するための VS Code 拡張機能を提供するマルチパッケージモノレポです。アーキテクチャは **Core**（共有型定義）、**Agents**（バックエンドアダプター）、**Platforms**（UI + プラットフォーム固有サービス）の3層に関心を分離しています。
 
 ```
 opencode-chat-monorepo/
@@ -11,7 +11,7 @@ opencode-chat-monorepo/
 │   ├── agents/
 │   │   └── opencode/                  @opencode-chat/agent-opencode
 │   └── platforms/
-│       └── vscode/                    @opencode-chat/vscode
+│       └── vscode/                    opencode-research
 ├── package.json                       ワークスペースルート
 ├── pnpm-workspace.yaml                pnpm ワークスペース設定
 └── biome.json                         共有リンター設定
@@ -20,7 +20,7 @@ opencode-chat-monorepo/
 ## 依存関係グラフ
 
 ```
-@opencode-chat/vscode
+opencode-research
   ├── @opencode-chat/core          (ドメイン型、インターフェース、プロトコル)
   └── @opencode-chat/agent-opencode
         └── @opencode-chat/core
@@ -53,7 +53,7 @@ opencode-chat-monorepo/
 | `opencode-agent.ts` | `IAgent` を実装する `OpenCodeAgent` クラス — ライフサイクル管理、イベント転送、全エージェント操作 |
 | `mappers.ts` | SDK 型 → core ドメイン型への変換関数群 (`mapSession`, `mapMessage`, `mapParts` 等) |
 
-### `@opencode-chat/vscode`
+### `opencode-research`
 
 Extension Host プロセスと React Webview の両方を含む VS Code 拡張機能。
 
@@ -278,7 +278,7 @@ Webview と Extension Host 間の通信は型付き判別共用体を使用し�
 pnpm -r build
   1. @opencode-chat/core             (tsc)
   2. @opencode-chat/agent-opencode   (tsc、core に依存)
-  3. @opencode-chat/vscode           (esbuild + vite、core + agent に依存)
+  3. opencode-research               (esbuild + vite、core + agent に依存)
 ```
 
 ---
