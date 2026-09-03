@@ -1,7 +1,7 @@
-# OpenCode Chat
+# OpenCode Research
 
-[![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.125.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
-[![Version](https://img.shields.io/visual-studio-marketplace/v/zeug-zz.opencode-chat?label=version&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=zeug-zz.opencode-chat)
+[![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.134.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/zeug-zz.opencode-research?label=version&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=zeug-zz.opencode-research)
 [![License](https://img.shields.io/github/license/zeug-zz/opencode-chat)](LICENSE)
 [![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
 [![Security Audit](<https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github>)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
@@ -40,32 +40,32 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 
 #### What makes this different
 
-- **Chat is the product** — The default **Scout** agent appears as **chat**: a clean, read-oriented mode for conversation, workspace reading, reasoning, and research. It does not edit or run shell commands.
+- **Research is the product** — The default **Scout** agent appears as **chat**: a clean, read-oriented mode for conversation, workspace reading, reasoning, and research. It does not edit or run shell commands.
 - **Write means requested artifacts, not coding loops** — The **write** mode is backed by OpenCode **Build** internally, but uses a dedicated report-authoring prompt. It can read, search, use web research, and edit within its broad workspace-scoped capability; requested-artifact guidance is behavioral, while agent Bash and task/subagent execution are denied.
-- **Research-oriented prompts** — Chat and Write have separate system prompts so a read-only research companion is not mixed with a report-writing agent or a coding-agent persona.
-- **Companion-owned OpenCode server** — The extension owns its `opencode serve` process and injects companion behavior in memory. It does **not** rewrite your global `opencode.json`; the independent TUI keeps its normal agents and configuration.
-- **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across Chat companion, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit sticky Gear selection may enable that inventoried server through the companion-only in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
-- **Compatibility Chat sandbox** — The optional Chat sandbox applies one process boundary to the companion, local MCPs, remote MCP traffic, and their descendants. On macOS and Linux, it also applies a static, versioned protected-read baseline for common credentials, shell history/configuration, browser data, and platform-specific keychain/private data. Reads outside that baseline remain broad for compatibility with local MCPs and installed runtimes/dependencies, while writes stay constrained to documented workspace, OpenCode, runtime, and temporary paths. Windows is unsupported: Chat reports the unsupported status and uses its existing unsandboxed path.
+- **Research-oriented prompts** — Chat and Write have separate system prompts so a read-only research assistant is not mixed with a report-writing agent or a coding-agent persona.
+- **Extension-owned OpenCode server** — The extension owns its `opencode serve` process and injects its behavior in memory. It does **not** rewrite your global `opencode.json`; the independent TUI keeps its normal agents and configuration.
+- **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across the Chat extension, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit selection may enable that inventoried server through the extension's in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
+- **Compatibility Chat sandbox** — The optional Chat sandbox applies one process boundary to the extension's OpenCode server, local MCPs, remote MCP traffic, and their descendants. On macOS and Linux, it also applies a static, versioned protected-read baseline for common credentials, shell history/configuration, browser data, and platform-specific keychain/private data. Reads outside that baseline remain broad for compatibility with local MCPs and installed runtimes/dependencies, while writes stay constrained to documented workspace, OpenCode, runtime, and temporary paths. Windows is unsupported: Chat reports the unsupported status and uses its existing unsandboxed path.
 - **Report output with controlled scope** — Write is for drafting and saving sourced reports, separating evidence from inference, and updating requested files without turning the chat panel into a general-purpose coding shell.
 - **Hand off to full TUI** — Export the session to an independent OpenCode TUI while **chat keeps running**. The TUI is the supported path for serious coding, shell work, and unrestricted Build workflows.
 - **Stable thinking / CoT stream** — Reasoning display for thinking models without mid-stream blanking.
 - **Research-grade message UI** — Markdown, KaTeX, Mermaid, highlighted code, stable reasoning streams, and **copy as Markdown**.
 - **Model + effort UX** — Search, sticky per-model effort, recent models, collapsed providers, and provider-aware model controls.
 - **Context chip** — token / context usage in the input area for long research threads.
-- **Security posture** — Gitleaks, Semgrep, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a clear MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit its compatibility process and write boundary.
+- **Security posture** — Gitleaks, Semgrep, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a clear MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit the extension process and write boundary.
 
 #### What this is not
 
 - Not a replacement for the OpenCode TUI.
 - Not a Cline-style autonomous coding loop in the VS Code sidebar.
-- Not a companion shell terminal; use **Hand off to TUI** for coding and command execution.
+- Not a shell terminal; use **Hand off to TUI** for coding and command execution.
 
 #### Chat sandbox compatibility
 
 Chat sandboxing is controlled from the gear settings in the Chat panel. The
-existing `inherit`, `on`, and `off` modes determine whether the Chat companion
-is sandboxed, and **Allow network access** applies to the complete companion
-process tree.
+existing `inherit`, `on`, and `off` modes determine whether the extension's
+OpenCode server is sandboxed, and **Allow network access** applies to the
+complete extension process tree.
 
 The compatibility sandbox is targeted defense-in-depth, not strict filesystem
 confidentiality:
@@ -78,7 +78,7 @@ confidentiality:
 - Writes remain constrained to the active workspace and required OpenCode,
   cache, and temporary paths.
 - With network access disabled, remote providers and MCPs fail inside the
-  sandbox. With network access enabled, the companion tree can use provider and
+  sandbox. With network access enabled, the extension tree can use provider and
   MCP network services.
 - Network-enabled compatibility mode is not a credential-confidentiality
   boundary: a readable local MCP or other process may still read data outside
@@ -89,7 +89,7 @@ confidentiality:
 
 The current expansion adds these exact home-relative credential and private-key leaves on supported macOS/Linux: `.claude.json`, `.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`, `.electrum`, `.android/adbkey`, and `.android/adbkey.pub`. These are narrow reviewed paths, not an exhaustive baseline: it does not deny the whole home, generic `.config`, generic application-support data, generic `.android`, `.codex`, or `.gemini` parents, other-user homes, or external volumes. The `.config/op` entry must not be confused with `.config/opencode`; required OpenCode configuration and provider-authentication data remain available.
 
-The extension host records bounded, redacted diagnostics for supported sandbox startup/readiness failures, unexpected companion exits, and failed MCP operations when runtime information is available. Existing user-visible
+The extension host records bounded, redacted diagnostics for supported sandbox startup/readiness failures, unexpected extension exits, and failed MCP operations when runtime information is available. Existing user-visible
 diagnostics remain bounded, redacted, and transport-aware; exposed denial
 wording is retained, while opaque errors remain opaque, and secrets, payloads,
 file contents, and unredacted environment/configuration data are not logged.
@@ -140,12 +140,12 @@ protected path, policy construction fails closed before launch with an
 actionable error. It does not remove the deny, broaden the grant, or retry
 unsandboxed. A configured MCP that intentionally reads a newly protected path
 may therefore be affected; there is no MCP-specific exception. The complete
-companion process tree, including MCP descendants, inherits the baseline.
+extension process tree, including MCP descendants, inherits the baseline.
 
 Users who need stronger read isolation should wait for the future advanced
 strict-sandbox mode rather than adding ad hoc MCP exceptions.
 
-#### A complete chat companion
+#### A complete research workspace
 
 Streaming sessions, permissions and questions, file chips and diffs, undo/redo, skills, 8-locale i18n, notifications, model effort controls, context awareness, MCP settings, and the OpenCode-native message surface are kept sharp for research and writing rather than codebase churn.
 
@@ -160,7 +160,7 @@ Streaming sessions, permissions and questions, file chips and diffs, undo/redo, 
 
 ### Installation
 
-Search for **OpenCode Chat** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+Search for **OpenCode Research** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
 
 ### Development
 
@@ -183,10 +183,10 @@ pnpm run build
 pnpm run build
 
 # Extension only (from packages/platforms/vscode)
-pnpm --filter opencode-chat run build:ext
+pnpm --filter opencode-research run build:ext
 
 # Webview only (from packages/platforms/vscode)
-pnpm --filter opencode-chat run build:webview
+pnpm --filter opencode-research run build:webview
 ```
 
 #### Watch Mode
@@ -195,10 +195,10 @@ Open two terminals and run each:
 
 ```sh
 # Terminal 1: Extension watch
-pnpm --filter opencode-chat run watch:ext
+pnpm --filter opencode-research run watch:ext
 
 # Terminal 2: Webview watch
-pnpm --filter opencode-chat run watch:webview
+pnpm --filter opencode-research run watch:webview
 ```
 
 #### Lint & Format
@@ -239,7 +239,7 @@ packages/
         mappers.ts        # SDK ↔ domain type mappers
 
   platforms/
-    vscode/               # opencode-chat — VS Code extension
+    vscode/               # opencode-research — VS Code extension
       src/
         extension.ts      # Extension entry point
         chat-view-provider.ts   # Webview panel & messaging

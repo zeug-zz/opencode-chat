@@ -1,4 +1,4 @@
 {
-  "displayName": "OpenCode Chat",
-  "description": "[Experimental / Não oficial] Um companheiro de chat do VS Code para OpenCode, projetado para ser usado junto com a TUI do OpenCode. Esta extensão é desenvolvida principalmente por meio de codificação assistida por IA e fornecida como está, sem garantia. Não é afiliada nem endossada pelo projeto OpenCode."
+  "displayName": "OpenCode Research",
+  "description": "[Experimental / Não oficial] Uma extensão de pesquisa e redação de relatórios para VS Code e OpenCode, projetada para ser usada junto com a TUI do OpenCode. Esta extensão é desenvolvida principalmente por meio de codificação assistida por IA e fornecida como está, sem garantia. Não é afiliada nem endossada pelo projeto OpenCode."
 }

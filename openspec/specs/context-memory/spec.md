@@ -1,6 +1,10 @@
-## Context Memory Display
+# context-memory Specification
+
+## Purpose
 
 The InputArea displays a contextual memory chip showing context window usage (e.g. `22.1K (2%)`) using server-provided token data from events or React state.
+
+## Requirements
 
 ### Requirement: Event types for context memory data flow
 

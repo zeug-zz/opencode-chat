@@ -1,4 +1,4 @@
 {
-  "displayName": "OpenCode Chat",
-  "description": "【實驗性·非官方】與 OpenCode TUI 搭配使用的 VS Code OpenCode 聊天夥伴。本擴充功能主要透過 AI 輔助編碼開發，按原樣提供，不含任何保證。與 OpenCode 專案無關聯或背書關係。"
+  "displayName": "OpenCode Research",
+  "description": "【實驗性·非官方】與 OpenCode TUI 搭配使用的 VS Code OpenCode 研究與報告撰寫擴充功能。本擴充功能主要透過 AI 輔助編碼開發，按原樣提供，不含任何保證。與 OpenCode 專案無關聯或背書關係。"
 }

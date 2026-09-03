@@ -17,11 +17,11 @@ For version-specific docs, use `/org/project/version` from the `library` output 
 If a command fails with a quota error, inform the user and suggest `npx ctx7@latest login` or setting `CONTEXT7_API_KEY` env var for higher limits. Do not silently fall back to training data.
 <!-- context7 -->
 
-# OpenCode Chat — AGENTS.md
+# OpenCode Research — AGENTS.md
 
-Unofficial VS Code chat companion for OpenCode. Forked from ktmage/opencode-gui.
+Unofficial VS Code research and writing extension for OpenCode. Forked from ktmage/opencode-gui.
 Repository: https://github.com/zeug-zz/opencode-chat
-Extension ID: `zeug-zz.opencode-chat`
+Extension ID: `zeug-zz.opencode-research`
 
 ## Project structure
 
@@ -55,8 +55,8 @@ npm run check:fix            # Biome auto-fix
 To package into VSIX:
 ```sh
 cd packages/platforms/vscode
-npm run package              # creates opencode-chat-<version>.vsix
-code --install-extension opencode-chat-<version>.vsix --force
+npm run package              # creates opencode-research-<version>.vsix
+code --install-extension opencode-research-<version>.vsix --force
 ```
 
 ## Code conventions

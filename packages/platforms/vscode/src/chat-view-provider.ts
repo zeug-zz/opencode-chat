@@ -309,13 +309,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const serverUrl = this.agent.getServerUrl();
         if (!serverUrl) {
           vscode.window.showErrorMessage(
-            vscode.l10n.t("OpenCode Chat: companion server is not connected. Reload the window and try again."),
+            vscode.l10n.t("OpenCode Research: OpenCode server is not connected. Reload the window and try again."),
           );
           break;
         }
         if (!this.activeSession) {
           vscode.window.showErrorMessage(
-            vscode.l10n.t("OpenCode Chat: select an active session before handing off to the TUI."),
+            vscode.l10n.t("OpenCode Research: select an active session before handing off to the TUI."),
           );
           break;
         }
@@ -324,7 +324,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: vscode.l10n.t("OpenCode Chat: exporting session for TUI…"),
+            title: vscode.l10n.t("OpenCode Research: exporting session for TUI…"),
             cancellable: false,
           },
           async () => {
@@ -333,14 +333,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               await this.platformServices.runHandoffTerminal(exportPath);
               vscode.window.showInformationMessage(
                 vscode.l10n.t(
-                  "OpenCode Chat: opened independent TUI with a copy of this session. Chat is still running.",
+                  "OpenCode Research: opened independent TUI with a copy of this session. Chat is still running.",
                 ),
               );
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               const choice = await vscode.window.showErrorMessage(
                 vscode.l10n.t(
-                  "OpenCode Chat: independent TUI handoff failed ({0}). Chat is still running. Open on the chat server instead?",
+                  "OpenCode Research: independent TUI handoff failed ({0}). Chat is still running. Open on the OpenCode server instead?",
                   msg.slice(0, 200),
                 ),
                 vscode.l10n.t("Open on chat server"),

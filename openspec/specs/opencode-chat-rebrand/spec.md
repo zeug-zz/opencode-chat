@@ -22,25 +22,25 @@ The rebrand SHALL be implemented in a separate local working copy and SHALL NOT 
 
 ### Requirement: Standalone Project Identity
 
-The new `/Users/zeug/Projects/opencode-chat` repository SHALL identify as `opencode-chat` rather than `opencode-gui` in package metadata, documentation, workflow filters, and repository URLs.
+The new `/Users/zeug/Projects/opencode-chat` repository SHALL identify as `opencode-chat` rather than `opencode-gui` in repository metadata, documentation, workflow filters, and repository URLs. Its VS Code Marketplace package SHALL use the distinct `opencode-research` identity.
 
 #### Scenario: Package metadata is rebranded
 
 - **WHEN** root and VS Code package manifests are inspected
 - **THEN** the root package name SHALL be `opencode-chat-monorepo`
-- **AND** the VS Code package name SHALL be `opencode-chat`
+- **AND** the VS Code package name SHALL be `opencode-research`
 - **AND** repository, homepage, and bugs URLs SHALL point at `https://github.com/zeug-zz/opencode-chat`
 
 ### Requirement: Side-by-side VS Code Extension Identity
 
-The VS Code extension SHALL install as `zeug-zz.opencode-chat` and SHALL NOT reuse the upstream extension identity `ktmage.opencodegui`.
+The VS Code extension SHALL install as `zeug-zz.opencode-research` and SHALL NOT reuse the upstream extension identity `ktmage.opencodegui`.
 
 #### Scenario: Extension manifest is packaged
 
 - **WHEN** the built VSIX manifest is inspected
 - **THEN** `publisher` SHALL be `zeug-zz`
-- **AND** `name` SHALL be `opencode-chat`
-- **AND** the display name SHALL be `OpenCode Chat`
+- **AND** `name` SHALL be `opencode-research`
+- **AND** the display name SHALL be `OpenCode Research`
 
 #### Scenario: VS Code activates the chat view
 
@@ -84,4 +84,3 @@ Local git configuration in the new `/Users/zeug/Projects/opencode-chat` checkout
 - **THEN** `origin` SHALL point to `https://github.com/zeug-zz/opencode-chat.git`
 - **AND** `/Users/zeug/Projects/opencode-gui` remotes SHALL remain unchanged
 - **AND** no command in this change SHALL force-push, delete branches, reset hard, or automatically publish artifacts
-

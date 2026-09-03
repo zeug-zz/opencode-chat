@@ -15,7 +15,7 @@ Run OpenCode on macOS inside a Seatbelt sandbox that:
 - Allows OpenCode to read and write `/Users/zeug/Documents/Philosophy/Die Lichtung/The Phenomenal World/Relative State Observer`.
 - Allows the runtime state, caches, executables, and temporary files required for OpenCode and MCP servers.
 - Makes ordinary `opencode` CLI invocations use the sandbox automatically.
-- Integrates with the `opencode-chat` VS Code extension without relying on a shell alias.
+- Integrates with the `opencode-research` VS Code extension without relying on a shell alias.
 - Preserves the extension's existing agent permissions and MCP behavior.
 
 The implementation must distinguish between sandboxing the OpenCode CLI process tree and sandboxing the OpenCode server that powers the VS Code chat panel. These are separate process boundaries in the current codebase.
@@ -53,7 +53,7 @@ The relevant project is:
 
 `/Users/zeug/Projects/opencode-chat`
 
-The VS Code package is `opencode-chat`, published by `zeug-zz`, with the extension identifier `zeug-zz.opencode-chat`.
+The VS Code package is `opencode-research`, published by `zeug-zz`, with the extension identifier `zeug-zz.opencode-research`.
 
 The current extension has two different OpenCode launch paths.
 
@@ -525,6 +525,6 @@ The profile and wrapper should remain available for diagnosis until the implemen
 - [OpenCode server documentation](https://opencode.ai/docs/server/)
 - [OpenCode configuration documentation](https://opencode.ai/docs/config/)
 - [OpenCode IDE documentation](https://opencode.ai/docs/ide/)
-- [`opencode-chat` VS Code platform services](../../../Projects/opencode-chat/packages/platforms/vscode/src/vscode-platform-services.ts)
-- [`opencode-chat` OpenCode agent](../../../Projects/opencode-chat/packages/agents/opencode/src/opencode-agent.ts)
+- [`OpenCode Research` VS Code platform services](../../../Projects/opencode-chat/packages/platforms/vscode/src/vscode-platform-services.ts)
+- [`OpenCode Research` OpenCode agent](../../../Projects/opencode-chat/packages/agents/opencode/src/opencode-agent.ts)
 - [Agora OpenCode configuration](../.opencode/opencode.json)

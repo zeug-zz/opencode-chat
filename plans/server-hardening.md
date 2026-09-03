@@ -1,4 +1,4 @@
-# OpenCode Chat Server Hardening Plan
+# OpenCode Research Server Hardening Plan
 
 Status: Proposed implementation plan
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This capability gives the OpenCode Chat companion an optional, Chat-specific
+This capability gives the OpenCode Research extension an optional, Chat-specific
 filesystem and process sandbox with an explicit network-access choice, without
 changing VS Code-wide agent behavior or independent OpenCode processes.
 
@@ -53,7 +53,7 @@ Code's `chat.agent.sandbox.allowNetwork` setting.
 #### Scenario: Chat settings do not change Copilot policy
 
 - **WHEN** a user changes either Chat sandbox setting
-- **THEN** the extension SHALL change only the OpenCode Chat companion policy
+- **THEN** the extension SHALL change only the OpenCode Research Chat policy
 - **AND** it SHALL NOT update `chat.agent.sandbox.enabled`
 - **AND** it SHALL NOT update `chat.agent.sandbox.allowNetwork`
 - **AND** it SHALL NOT change the sandbox behavior of other VS Code agents
