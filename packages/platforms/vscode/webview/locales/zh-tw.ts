@@ -167,8 +167,12 @@ export const zhTw: LocaleSchema = {
   // Context menu sections
   "input.section.files": "檔案",
   "input.section.agents": "子代理",
+  "input.section.skills": "技能",
   "input.section.shell": "Shell 模式",
 
   // AgentMention
   "input.noAgents": "沒有可用的子代理",
+  "input.noSkills": "沒有可用的技能",
+  "input.type.skill": "技能",
+  "input.type.command": "命令",
 };

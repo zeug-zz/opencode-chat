@@ -326,12 +326,24 @@ describe("OpenCodeAgent", () => {
         },
         executable: { path: "/usr/local/bin/opencode" },
         mcpOverlay,
+        guidanceOverlay: {
+          skills: { paths: ["/installed-extension/dist/skills-commands/skills"] },
+          command: {
+            "research-answer": {
+              description: "Answer a research question",
+              template: "Research this question:\n$ARGUMENTS",
+            },
+          },
+        },
       };
 
       const unsandboxedAgent = new OpenCodeAgent(launchConfiguration);
       await unsandboxedAgent.connect();
       const unsandboxedOptions = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
       expect(unsandboxedOptions?.config?.mcp).toEqual(mcpOverlay.mcp);
+      expect(unsandboxedOptions?.config?.skills).toEqual(launchConfiguration.guidanceOverlay.skills);
+      expect(unsandboxedOptions?.config?.command).toEqual(launchConfiguration.guidanceOverlay.command);
+      expect(JSON.stringify(unsandboxedOptions?.config)).toContain("$ARGUMENTS");
       unsandboxedAgent.disconnect();
 
       const { child, stdout } = createSandboxChild();
@@ -351,6 +363,9 @@ describe("OpenCodeAgent", () => {
       const sandboxedOverlay = JSON.parse((options.env as Record<string, string>).OPENCODE_CONFIG_CONTENT);
       expect(sandboxedOverlay.mcp).toEqual(unsandboxedOptions?.config?.mcp);
       expect(sandboxedOverlay.mcp).toEqual(mcpOverlay.mcp);
+      expect(sandboxedOverlay.skills).toEqual(unsandboxedOptions?.config?.skills);
+      expect(sandboxedOverlay.command).toEqual(unsandboxedOptions?.config?.command);
+      expect(JSON.stringify(sandboxedOverlay)).toContain("$ARGUMENTS");
       sandboxedAgent.disconnect();
     });
 
@@ -515,7 +530,7 @@ describe("OpenCodeAgent", () => {
       });
       const filesystemPolicy = {
         readWritePaths: ["/workspace/project", "/workspace/state"],
-        readOnlyPaths: ["/workspace/config"],
+        readOnlyPaths: ["/workspace/config", "/installed-extension/dist/skills-commands/skills"],
       };
       const sandboxedAgent = new OpenCodeAgent({
         workspacePath: "/workspace/project",
@@ -535,7 +550,12 @@ describe("OpenCodeAgent", () => {
           network: expectedNetwork,
           filesystem: {
             denyRead: [],
-            allowRead: ["/workspace/config", "/workspace/project", "/workspace/state"],
+            allowRead: [
+              "/workspace/config",
+              "/installed-extension/dist/skills-commands/skills",
+              "/workspace/project",
+              "/workspace/state",
+            ],
             allowWrite: ["/workspace/project", "/workspace/state"],
             denyWrite: [],
           },
@@ -1635,6 +1655,69 @@ describe("OpenCodeAgent", () => {
       expect(call.parts).toHaveLength(2);
       expect(call.parts[0]).toEqual({ type: "text", text: "/coding-guidelines", synthetic: true });
       expect(call.parts[1]).toEqual({ type: "text", text: "Hello" });
+    });
+
+    it("should expand only the selected trusted bundled command", async () => {
+      const commandAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "off",
+          enabled: false,
+          allowNetwork: true,
+          filesystemPolicy: { readWritePaths: [], readOnlyPaths: [] },
+        },
+        executable: { path: "opencode" },
+        guidanceOverlay: {
+          command: {
+            "research-answer": {
+              description: "Answer",
+              template: "Answer only this:\n$ARGUMENTS\n$ARGUMENTS",
+            },
+          },
+        },
+      });
+      await commandAgent.connect();
+
+      await commandAgent.sendMessage("sess-1", "ignored", {
+        primaryAgent: "scout",
+        bundledCommand: { name: "research-answer", arguments: "a'b" },
+      });
+      await commandAgent.sendMessage("sess-1", "ignored again", {
+        primaryAgent: "build",
+        bundledCommand: { name: "research-answer", arguments: "" },
+      });
+
+      expect(mockClient.session.promptAsync.mock.calls[0][0].parts).toEqual([
+        { type: "text", text: "Answer only this:\na'b\na'b" },
+      ]);
+      expect(mockClient.session.promptAsync.mock.calls[0][0].agent).toBe("scout");
+      expect(mockClient.session.promptAsync.mock.calls[1][0].parts).toEqual([
+        { type: "text", text: "Answer only this:\n\n" },
+      ]);
+      expect(mockClient.session.promptAsync.mock.calls[1][0].agent).toBe("build");
+      commandAgent.disconnect();
+    });
+
+    it("falls back to ordinary text for an unknown bundled command", async () => {
+      const commandAgent = new OpenCodeAgent({
+        workspacePath: "/workspace/project",
+        sandbox: {
+          mode: "off",
+          enabled: false,
+          allowNetwork: true,
+          filesystemPolicy: { readWritePaths: [], readOnlyPaths: [] },
+        },
+        executable: { path: "opencode" },
+        guidanceOverlay: { command: {} },
+      });
+      await commandAgent.connect();
+
+      await commandAgent.sendMessage("sess-1", "ordinary", {
+        bundledCommand: { name: "unknown", arguments: "not executed" },
+      });
+
+      expect(mockClient.session.promptAsync.mock.calls[0][0].parts).toEqual([{ type: "text", text: "ordinary" }]);
+      commandAgent.disconnect();
     });
 
     it("should include all parts when files and agent are provided", async () => {

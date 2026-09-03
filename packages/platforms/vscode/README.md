@@ -140,6 +140,10 @@ future strict-sandbox mode.
 - [OpenCode](https://github.com/anomalyco/opencode) installed
 - LLM provider authentication configured in OpenCode
 
+#### Optional research integrations
+
+The following optional, user-installed runtime/tooling integrations can support research workflows: context-mode, Firecrawl, Brave Search, PDF readers, paper search, and Playwright. These are not extension dependencies; the extension does not install, configure, bundle, or require them.
+
 ### Installation
 
 Search for **OpenCode Research** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.

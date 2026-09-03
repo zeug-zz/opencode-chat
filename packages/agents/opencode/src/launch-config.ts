@@ -19,6 +19,16 @@ export type OpenCodeExecutableSelection = {
   args?: readonly string[];
 };
 
+export type OpenCodeCommandDefinition = {
+  description: string;
+  template: string;
+};
+
+export type OpenCodeGuidanceOverlay = {
+  skills?: { paths: readonly string[] };
+  command?: Record<string, OpenCodeCommandDefinition>;
+};
+
 export type OpenCodeLaunchConfiguration = {
   workspacePath: string;
   sandbox: {
@@ -31,4 +41,5 @@ export type OpenCodeLaunchConfiguration = {
   executable: OpenCodeExecutableSelection;
   mcpOverlay?: { mcp: Record<string, { enabled: boolean }> };
   mcpTransport?: Readonly<Record<string, import("./mcp-inventory").McpTransport>>;
+  guidanceOverlay?: OpenCodeGuidanceOverlay;
 };

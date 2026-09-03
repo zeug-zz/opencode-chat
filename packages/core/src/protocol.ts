@@ -12,6 +12,8 @@ import type {
   AgentInfo,
   AllProvidersData,
   AppPaths,
+  BundledCommandInvocation,
+  BundledResourceMetadata,
   ChatMessageWithParts,
   ChatSandboxSettings,
   ChatSandboxStatus,
@@ -71,6 +73,7 @@ export type UIToHostMessage =
       agent?: string;
       primaryAgent?: string;
       skill?: string;
+      bundledCommand?: BundledCommandInvocation;
       /**
        * Optional system prompt override. When sent from the webview, the
        * extension host merges this into the promptAsync call. If omitted,
@@ -231,6 +234,7 @@ export type HostToUIMessage =
   // --- Agent list ---
   | { type: "agents"; agents: AgentInfo[] }
   | { type: "skills"; skills: SkillInfo[] }
+  | { type: "bundledResources"; resources: BundledResourceMetadata[] }
 
   // --- Platform data ---
   | { type: "openEditors"; files: FileAttachment[] }

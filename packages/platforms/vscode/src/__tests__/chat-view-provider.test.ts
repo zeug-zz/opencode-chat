@@ -162,12 +162,16 @@ function setupProvider(
     settings: import("@opencode-chat/core").ChatSandboxSettings,
   ) => Promise<import("@opencode-chat/core").ChatSandboxStatus>,
   chatMcpPrefs?: ChatMcpPrefsStore,
+  bundledResources?: import("@opencode-chat/core").BundledResourceMetadata[],
+  bundledCommandNames?: string[],
 ) {
   const extensionUri = { fsPath: "/ext" };
   const ps = mockPlatformServices ?? createMockPlatformServices();
   const provider = new ChatViewProvider(extensionUri as never, mockAgent as never, ps as never, {
     setChatSandboxSettings,
     chatMcpPrefs,
+    bundledResources,
+    bundledCommandNames,
   });
   const mock = createMockWebviewView();
   provider.resolveWebviewView(
@@ -413,6 +417,30 @@ describe("ChatViewProvider", () => {
         type: "activeEditor",
         file: null,
       });
+    });
+
+    it("should send additive bundled metadata without bodies or paths", async () => {
+      const bundledResources = [
+        { source: "bundled" as const, type: "skill" as const, name: "citation-audit", description: "Citations" },
+        { source: "bundled" as const, type: "skill" as const, name: "evidence-synthesis", description: "Evidence" },
+        { source: "bundled" as const, type: "skill" as const, name: "mcp-research", description: "MCP research" },
+        { source: "bundled" as const, type: "skill" as const, name: "research-workflow", description: "Workflow" },
+        { source: "bundled" as const, type: "command" as const, name: "research-answer", description: "Answer" },
+        { source: "bundled" as const, type: "command" as const, name: "research-citations", description: "Citations" },
+        { source: "bundled" as const, type: "command" as const, name: "research-edit", description: "Edit" },
+        { source: "bundled" as const, type: "command" as const, name: "research-plan", description: "Plan" },
+        { source: "bundled" as const, type: "command" as const, name: "research-report", description: "Report" },
+      ];
+      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, undefined, bundledResources);
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "bundledResources", resources: bundledResources });
+      const message = postMessage.mock.calls.find(([value]) => value.type === "bundledResources")?.[0];
+      expect(message).not.toHaveProperty("template");
+      expect(message).not.toHaveProperty("body");
+      expect(message).not.toHaveProperty("absolutePath");
+      expect(message).not.toHaveProperty("relativePath");
     });
 
     it("should set configModel to undefined when config file read fails", async () => {
@@ -849,6 +877,85 @@ describe("ChatViewProvider", () => {
       const options = (mockAgent.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][2] as Record<string, unknown>;
       expect(options.primaryAgent).toBeUndefined();
       expect(options.system).toBeUndefined();
+    });
+
+    it("should forward only a validated bundled command and typed arguments", async () => {
+      const { sendMessage } = setupProvider(mockAgent, undefined, undefined, undefined, undefined, ["research-answer"]);
+
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "What is new?",
+        primaryAgent: "scout",
+        bundledCommand: { name: "research-answer", arguments: "scope='recent'" },
+      });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "What is new?",
+        expect.objectContaining({
+          primaryAgent: "scout",
+          bundledCommand: { name: "research-answer", arguments: "scope='recent'" },
+          system: "chat prompt",
+        }),
+      );
+    });
+
+    it("discards extra fields from validated bundled commands", async () => {
+      const { sendMessage } = setupProvider(mockAgent, undefined, undefined, undefined, undefined, ["research-answer"]);
+
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "What is new?",
+        bundledCommand: {
+          name: "research-answer",
+          arguments: "scope='recent'",
+          template: "malicious template",
+          body: "malicious body",
+          absolutePath: "/outside/bundle",
+        },
+      });
+
+      const options = (mockAgent.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][2] as Record<string, unknown>;
+      expect(options.bundledCommand).toEqual({ name: "research-answer", arguments: "scope='recent'" });
+      expect(Object.keys(options.bundledCommand as object)).toEqual(["name", "arguments"]);
+    });
+
+    it("omits missing or unknown bundled commands without blocking ordinary sends", async () => {
+      const { sendMessage } = setupProvider(mockAgent, undefined, undefined, undefined, undefined, ["research-answer"]);
+
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "ordinary",
+        bundledCommand: { name: "not-available", arguments: "ignored" },
+      });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "ordinary again" });
+
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(1, "sess-1", "ordinary", expect.anything());
+      const firstOptions = mockAgent.sendMessage.mock.calls[0][2] as Record<string, unknown>;
+      expect(firstOptions.bundledCommand).toBeUndefined();
+      expect(mockAgent.sendMessage.mock.calls[1][1]).toBe("ordinary again");
+    });
+
+    it("retains explicit system overrides for bundled commands", async () => {
+      const { sendMessage } = setupProvider(mockAgent, undefined, undefined, undefined, undefined, ["research-answer"]);
+
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "question",
+        primaryAgent: "build",
+        system: "explicit",
+        bundledCommand: { name: "research-answer", arguments: "" },
+      });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "question",
+        expect.objectContaining({ primaryAgent: "build", system: "explicit" }),
+      );
     });
   });
 

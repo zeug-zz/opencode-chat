@@ -5,8 +5,9 @@ import {
   type OpenCodeLaunchConfiguration,
   resolveMcpInventory,
 } from "@opencode-chat/agent-opencode";
-import type { ChatSandboxSettings, ChatSandboxStatus } from "@opencode-chat/core";
+import type { BundledResourceMetadata, ChatSandboxSettings, ChatSandboxStatus } from "@opencode-chat/core";
 import * as vscode from "vscode";
+import { type BundledResource, loadBundledResearchResources } from "./bundled-research-resources";
 import { VscodeChatMcpPrefsStore } from "./chat-mcp-prefs";
 import { ChatSandboxController } from "./chat-sandbox-controller";
 import {
@@ -47,6 +48,34 @@ export async function activate(context: vscode.ExtensionContext) {
   const sandboxSettings = resolveChatSandboxSettings(workspaceUri);
   const executablePath = resolveOpencodeBinary();
   const resolvedExecutablePath = path.isAbsolute(executablePath) ? executablePath : undefined;
+  const extensionPath = context.extensionPath ?? context.extensionUri.fsPath;
+  const bundledResourceRoot = path.join(extensionPath, "dist", "skills-commands");
+  const bundledResources = await loadBundledResearchResources(bundledResourceRoot);
+  const bundledSkills = bundledResources.resources.filter(
+    (resource): resource is Extract<BundledResource, { type: "skill" }> => resource.type === "skill",
+  );
+  const bundledCommands = bundledResources.resources.filter(
+    (resource): resource is Extract<BundledResource, { type: "command" }> => resource.type === "command",
+  );
+  const bundledResourceMetadata: BundledResourceMetadata[] = bundledResources.resources.map((resource) => ({
+    source: "bundled",
+    type: resource.type,
+    name: resource.name,
+    description: resource.description,
+  }));
+  const guidanceOverlay: OpenCodeLaunchConfiguration["guidanceOverlay"] = {
+    ...(bundledSkills.length ? { skills: { paths: [path.join(bundledResourceRoot, "skills")] } } : {}),
+    ...(bundledCommands.length
+      ? {
+          command: Object.fromEntries(
+            bundledCommands.map((resource) => [
+              resource.name,
+              { description: resource.description, template: resource.template },
+            ]),
+          ),
+        }
+      : {}),
+  };
   const openCodePaths = resolveOpenCodePaths();
   let initialMcpOverlay: ReturnType<typeof buildMcpOverlay> = { mcp: {} };
   let initialMcpTransport: OpenCodeLaunchConfiguration["mcpTransport"] = {};
@@ -64,6 +93,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const executablePaths = (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":").filter(Boolean);
   const filesystemPolicy = buildChatSandboxFilesystemPolicy({
     workspacePath: workspaceFolder,
+    ...(bundledSkills.length ? { packagedSkillDirectory: path.join(bundledResourceRoot, "skills") } : {}),
     openCodePaths,
     runtimeCachePaths,
     temporaryPaths: [openCodePaths.temp],
@@ -89,6 +119,7 @@ export async function activate(context: vscode.ExtensionContext) {
     executable: { path: executablePath },
     mcpOverlay: { mcp: mcpOverlay.mcp },
     mcpTransport,
+    ...(Object.keys(guidanceOverlay).length ? { guidanceOverlay } : {}),
   });
   const launchConfiguration = createLaunchConfiguration(sandboxSettings);
   agent = new OpenCodeAgent(launchConfiguration);
@@ -192,6 +223,8 @@ export async function activate(context: vscode.ExtensionContext) {
   let lastResolvedKey = resolvedSettingsKey(sandboxSettings);
   chatViewProvider = new ChatViewProvider(context.extensionUri, agent, platformServices, {
     chatMcpPrefs,
+    bundledResources: bundledResourceMetadata,
+    bundledCommandNames: bundledCommands.map((resource) => resource.name),
     setChatSandboxSettings: async (settings: ChatSandboxSettings) => {
       const previousKey = lastResolvedKey;
       const previousStatus = initialSandboxStatus;

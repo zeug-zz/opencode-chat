@@ -176,4 +176,6 @@ export const ja: LocaleSchema = {
   // AgentMention
   "input.noAgents": "利用可能なサブエージェントがありません",
   "input.noSkills": "利用可能なスキルがありません",
+  "input.type.skill": "スキル",
+  "input.type.command": "コマンド",
 };

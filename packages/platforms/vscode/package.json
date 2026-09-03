@@ -2,7 +2,7 @@
   "name": "opencode-research",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "publisher": "zeug-zz",
   "license": "MIT",
   "repository": {
@@ -82,7 +82,7 @@
     }
   },
   "scripts": {
-    "build": "node esbuild.mjs && vite build",
+    "build": "node --experimental-strip-types scripts/stage-bundled-research-resources.ts && node esbuild.mjs && vite build",
     "build:ext": "node esbuild.mjs",
     "build:webview": "vite build",
     "watch:ext": "node esbuild.mjs --watch",
@@ -93,6 +93,8 @@
     "test:all": "vitest run --config vitest.config.ts && vitest run --config vitest.config.ext.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "package": "vsce package --no-dependencies",
+    "verify-package": "node --experimental-strip-types scripts/verify-bundled-research-package.ts",
+    "package:verify": "npm run package && npm run verify-package",
     "publish": "vsce publish --no-dependencies"
   },
   "devDependencies": {

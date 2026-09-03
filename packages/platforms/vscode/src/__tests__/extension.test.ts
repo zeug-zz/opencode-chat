@@ -15,6 +15,7 @@ const mockUpdateLaunchConfiguration = vi.fn();
 const mockSandboxSupported = vi.hoisted(() => vi.fn().mockReturnValue(true));
 const mockAgentLaunchConfigurations: unknown[] = [];
 const mockPublishedSandboxStatuses: unknown[] = [];
+const mockChatViewProviderOptions: unknown[] = [];
 const mockResolveMcpInventory = vi.fn(() => ({
   servers: {
     selected: { explicitlyDisabled: false },
@@ -25,6 +26,7 @@ const mockResolveMcpInventory = vi.fn(() => ({
 const mockMcpOverlay = {
   mcp: { selected: { enabled: true }, unselected: { enabled: false }, locked: { enabled: true } },
 };
+const mockLoadBundledResearchResources = vi.fn().mockResolvedValue({ resources: [], diagnostics: [] });
 let configurationListener:
   | ((event: { affectsConfiguration: (section: string, scope?: unknown) => boolean }) => void)
   | undefined;
@@ -67,6 +69,9 @@ function createMockAgentClass() {
 function createMockChatViewProviderClass() {
   return Object.assign(
     class MockChatViewProvider {
+      constructor(_extensionUri: unknown, _agent: unknown, _platformServices: unknown, options: unknown) {
+        mockChatViewProviderOptions.push(options);
+      }
       refresh = vi.fn().mockResolvedValue(undefined);
       publishChatSandboxStatus = vi.fn((status: unknown) => mockPublishedSandboxStatuses.push(status));
     },
@@ -89,6 +94,8 @@ describe("extension", () => {
     mockSandboxSupported.mockReturnValue(true);
     mockAgentLaunchConfigurations.length = 0;
     mockPublishedSandboxStatuses.length = 0;
+    mockChatViewProviderOptions.length = 0;
+    mockLoadBundledResearchResources.mockResolvedValue({ resources: [], diagnostics: [] });
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {
       configurationListener = listener as typeof configurationListener;
       return { dispose: configurationListenerDispose } as never;
@@ -144,6 +151,9 @@ describe("extension", () => {
     vi.doMock("../chat-view-provider", () => ({
       ChatViewProvider: createMockChatViewProviderClass(),
     }));
+    vi.doMock("../bundled-research-resources", () => ({
+      loadBundledResearchResources: mockLoadBundledResearchResources,
+    }));
 
     return import("../extension");
   }
@@ -194,6 +204,85 @@ describe("extension", () => {
 
       // subscriptions に push された (webview provider + 2 diff providers + Disposable for disconnect)
       expect(subscriptions.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("should build guidance overlay from the installed extension resources", async () => {
+      mockLoadBundledResearchResources.mockResolvedValueOnce({
+        resources: [
+          {
+            type: "skill",
+            name: "research-workflow",
+            description: "Research workflow",
+            relativePath: "skills/research-workflow/SKILL.md",
+            absolutePath: "/installed-extension/dist/skills-commands/skills/research-workflow/SKILL.md",
+          },
+          {
+            type: "command",
+            name: "research-answer",
+            description: "Answer a research question",
+            relativePath: "commands/research-answer.md",
+            absolutePath: "/installed-extension/dist/skills-commands/commands/research-answer.md",
+            template: "Research this question:\n$ARGUMENTS",
+          },
+        ],
+        diagnostics: [],
+      });
+      const ext = await importExtension();
+      await ext.activate({
+        extensionPath: "/installed-extension",
+        extensionUri: { fsPath: "/wrong-workspace" },
+        subscriptions: [],
+      } as never);
+
+      expect(mockLoadBundledResearchResources).toHaveBeenCalledWith("/installed-extension/dist/skills-commands");
+      expect(latestLaunchConfiguration()).toMatchObject({
+        guidanceOverlay: {
+          skills: { paths: ["/installed-extension/dist/skills-commands/skills"] },
+          command: {
+            "research-answer": {
+              description: "Answer a research question",
+              template: "Research this question:\n$ARGUMENTS",
+            },
+          },
+        },
+        sandbox: {
+          filesystemPolicy: {
+            readOnlyPaths: expect.arrayContaining(["/installed-extension/dist/skills-commands/skills"]),
+            readWritePaths: expect.not.arrayContaining(["/installed-extension/dist/skills-commands/skills"]),
+          },
+        },
+      });
+      expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
+        bundledResources: [
+          { source: "bundled", type: "skill", name: "research-workflow", description: "Research workflow" },
+          { source: "bundled", type: "command", name: "research-answer", description: "Answer a research question" },
+        ],
+      });
+    });
+
+    it("passes only valid bundled metadata when a resource is unavailable", async () => {
+      mockLoadBundledResearchResources.mockResolvedValueOnce({
+        resources: [
+          {
+            type: "skill",
+            name: "citation-audit",
+            description: "Citations",
+            relativePath: "skills/citation-audit/SKILL.md",
+            absolutePath: "/installed-extension/dist/skills-commands/skills/citation-audit/SKILL.md",
+          },
+        ],
+        diagnostics: [{ resourceId: "command:research-answer", type: "command", reason: "missing" }],
+      });
+      const ext = await importExtension();
+      await ext.activate({
+        extensionPath: "/installed-extension",
+        extensionUri: { fsPath: "/ext" },
+        subscriptions: [],
+      } as never);
+
+      expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
+        bundledResources: [{ source: "bundled", type: "skill", name: "citation-audit", description: "Citations" }],
+      });
     });
 
     it("keeps requested sandboxing unsupported and unsandboxed without an enforcement claim", async () => {

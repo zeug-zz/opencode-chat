@@ -3,6 +3,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type {
   AppPaths,
+  BundledCommandInvocation,
+  BundledResourceMetadata,
   ChatSandboxSettings,
   ChatSandboxStatus,
   ChatSession,
@@ -28,6 +30,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly writeSystemPrompt: string | null;
   private readonly setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
   private readonly chatMcpPrefs?: ChatMcpPrefsStore;
+  private readonly bundledResources: readonly BundledResourceMetadata[];
+  private readonly bundledCommandNames: ReadonlySet<string>;
 
   private getSystemPrompt(primaryAgent: string | undefined, explicitSystem: string | undefined): string | undefined {
     return (
@@ -48,12 +52,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     options?: {
       setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
       chatMcpPrefs?: ChatMcpPrefsStore;
+      bundledCommandNames?: readonly string[];
+      bundledResources?: readonly BundledResourceMetadata[];
     },
   ) {
     this.chatSystemPrompt = this.loadSystemPrompt("CHAT_SYSTEM.md");
     this.writeSystemPrompt = this.loadSystemPrompt("WRITE_SYSTEM.md");
     this.setChatSandboxSettings = options?.setChatSandboxSettings;
     this.chatMcpPrefs = options?.chatMcpPrefs;
+    this.bundledResources = options?.bundledResources ?? [];
+    this.bundledCommandNames = new Set(options?.bundledCommandNames ?? []);
   }
 
   resolveWebviewView(
@@ -117,6 +125,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           locale: vscode.env.language,
           paths,
         });
+        this.postMessage({ type: "bundledResources", resources: [...this.bundledResources] });
         this.postMcpPrefs();
         await this.refresh(undefined, paths);
         if (this.chatSandboxStatus) {
@@ -128,12 +137,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "sendMessage": {
         const system = this.getSystemPrompt(message.primaryAgent, message.system);
+        const bundledCommand =
+          message.bundledCommand &&
+          this.bundledCommandNames.has(message.bundledCommand.name) &&
+          typeof message.bundledCommand.arguments === "string"
+            ? ({
+                name: message.bundledCommand.name,
+                arguments: message.bundledCommand.arguments,
+              } satisfies BundledCommandInvocation)
+            : undefined;
         await this.agent.sendMessage(message.sessionId, message.text, {
           model: message.model,
           files: message.files,
           agent: message.agent,
           primaryAgent: message.primaryAgent,
           skill: message.skill,
+          ...(bundledCommand ? { bundledCommand } : {}),
           system,
           ...(message.effort !== undefined && { effort: message.effort }),
         });

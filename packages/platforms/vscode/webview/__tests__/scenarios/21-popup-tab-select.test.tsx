@@ -61,6 +61,13 @@ async function setupWithFiles() {
   });
   await sendExtMessage({ type: "agents", agents: testAgents });
   await sendExtMessage({ type: "skills", skills: testSkills });
+  await sendExtMessage({
+    type: "bundledResources",
+    resources: [
+      { source: "bundled", type: "command", name: "research-answer", description: "Answer research" },
+      { source: "bundled", type: "skill", name: "evidence-synthesis", description: "Synthesize evidence" },
+    ],
+  });
   vi.mocked(postMessage).mockClear();
 }
 
@@ -296,5 +303,20 @@ describe("ポップアップの Tab 選択", () => {
       expect(screen.queryByTestId("skill-popup")).not.toBeInTheDocument();
       expect(screen.getByText("/coding-guidelines")).toBeInTheDocument();
     });
+  });
+
+  it("バンドルコマンドの引数を送信ペイロードに含めること", async () => {
+    const user = userEvent.setup();
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    await user.type(textarea, "/research-answer");
+    await user.keyboard("{ArrowDown}{Enter}");
+    await user.type(textarea, "recent papers{Enter}");
+    expect(vi.mocked(postMessage)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "sendMessage",
+        text: "recent papers",
+        bundledCommand: { name: "research-answer", arguments: "recent papers" },
+      }),
+    );
   });
 });

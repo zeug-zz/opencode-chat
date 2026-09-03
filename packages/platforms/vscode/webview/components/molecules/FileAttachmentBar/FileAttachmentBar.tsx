@@ -5,6 +5,7 @@ import type { FileAttachment } from "../../../vscode-api";
 import { IconButton } from "../../atoms/IconButton";
 import { AgentIcon, ClipIcon, CloseIcon, GearIcon, PlusIcon } from "../../atoms/icons";
 import { ListItem } from "../../atoms/ListItem";
+import type { GuidanceItem } from "../../organisms/InputArea/guidance";
 import styles from "./FileAttachmentBar.module.css";
 
 type Props = {
@@ -23,9 +24,11 @@ type Props = {
   selectedAgent: AgentInfo | null;
   onSelectAgent: (agent: AgentInfo) => void;
   onClearAgent: () => void;
-  skills: SkillInfo[];
-  selectedSkill: SkillInfo | null;
-  onSelectSkill: (skill: SkillInfo) => void;
+  guidanceItems?: GuidanceItem[];
+  skills?: SkillInfo[];
+  selectedGuidance?: GuidanceItem | null;
+  selectedSkill?: SkillInfo | null;
+  onSelectSkill: (skill: GuidanceItem) => void;
   onClearSkill: () => void;
 };
 
@@ -45,12 +48,19 @@ export function FileAttachmentBar({
   selectedAgent,
   onSelectAgent,
   onClearAgent,
-  skills,
+  guidanceItems = [],
+  skills = [],
+  selectedGuidance,
   selectedSkill,
   onSelectSkill,
   onClearSkill,
 }: Props) {
   const t = useLocale();
+  const allGuidanceItems =
+    guidanceItems.length > 0
+      ? guidanceItems
+      : skills.map((skill) => ({ ...skill, source: "native" as const, type: "skill" as const }));
+  const activeGuidance = selectedGuidance ?? selectedSkill;
 
   return (
     <div className={styles.left}>
@@ -122,15 +132,15 @@ export function FileAttachmentBar({
               <div className={styles.sectionDivider} />
               <div className={styles.sectionHeader}>{t["input.section.skills"]}</div>
               <div className={styles.pickerList}>
-                {skills.length > 0 ? (
-                  skills.map((skill) => (
+                {allGuidanceItems.length > 0 ? (
+                  allGuidanceItems.map((skill) => (
                     <ListItem
                       key={skill.name}
                       title={skill.name}
-                      description={skill.description}
+                      description={`${skill.type === "command" ? t["input.type.command"] : t["input.type.skill"]}${skill.description ? ` · ${skill.description}` : ""}`}
                       icon={<GearIcon width={14} height={14} />}
                       onClick={() => onSelectSkill(skill)}
-                      focused={selectedSkill?.name === skill.name}
+                      focused={activeGuidance?.name === skill.name}
                     />
                   ))
                 ) : (
@@ -151,10 +161,10 @@ export function FileAttachmentBar({
           </button>
         </div>
       )}
-      {selectedSkill && (
+      {activeGuidance && (
         <div className={styles.skillChip}>
           <GearIcon width={14} height={14} />
-          <span className={styles.skillChipName}>/{selectedSkill.name}</span>
+          <span className={styles.skillChipName}>/{activeGuidance.name}</span>
           <button type="button" className={styles.skillChipClear} onClick={onClearSkill}>
             <CloseIcon width={12} height={12} />
           </button>

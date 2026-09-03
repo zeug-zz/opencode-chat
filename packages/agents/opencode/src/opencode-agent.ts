@@ -20,6 +20,7 @@ import type {
   AllProvidersData,
   AppConfig,
   AppPaths,
+  BundledCommandInvocation,
   ChatMessageWithParts,
   ChatSession,
   Disposable,
@@ -36,7 +37,7 @@ import type {
   ToolListItem,
 } from "@opencode-chat/core";
 import { SandboxManager, type SandboxRuntimeConfig } from "@vscode/sandbox-runtime";
-import type { OpenCodeLaunchConfiguration } from "./launch-config";
+import type { OpenCodeGuidanceOverlay, OpenCodeLaunchConfiguration } from "./launch-config";
 import {
   mapAgents,
   mapAllProvidersData,
@@ -95,8 +96,29 @@ const CHAT_AGENT_OVERLAY = {
   },
 } as const;
 
+function buildChatOverlay(
+  mcpOverlay: OpenCodeLaunchConfiguration["mcpOverlay"],
+  guidanceOverlay: OpenCodeGuidanceOverlay | undefined,
+): Record<string, unknown> {
+  return {
+    ...CHAT_AGENT_OVERLAY,
+    ...(guidanceOverlay ?? {}),
+    ...(mcpOverlay ?? {}),
+  };
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function expandBundledCommand(
+  invocation: BundledCommandInvocation | undefined,
+  guidanceOverlay: OpenCodeGuidanceOverlay | undefined,
+): string | undefined {
+  if (!invocation || typeof invocation.name !== "string" || typeof invocation.arguments !== "string") return undefined;
+  const definition = guidanceOverlay?.command?.[invocation.name];
+  if (!definition) return undefined;
+  return definition.template.replaceAll("$ARGUMENTS", invocation.arguments);
 }
 
 type BoundedOutput = {
@@ -368,10 +390,7 @@ export class OpenCodeAgent implements IAgent {
     // In-memory Scout overlay scoped to this child process via OPENCODE_CONFIG_CONTENT.
     const server = await createOpencodeServer({
       port: 0,
-      config: {
-        ...CHAT_AGENT_OVERLAY,
-        ...this.launchConfiguration?.mcpOverlay,
-      },
+      config: buildChatOverlay(this.launchConfiguration?.mcpOverlay, this.launchConfiguration?.guidanceOverlay),
     });
     this.server = server;
     this.client = createOpencodeClient({
@@ -434,10 +453,9 @@ export class OpenCodeAgent implements IAgent {
         cwd: configuration.workspacePath,
         env: {
           ...process.env,
-          OPENCODE_CONFIG_CONTENT: JSON.stringify({
-            ...CHAT_AGENT_OVERLAY,
-            ...configuration.mcpOverlay,
-          }),
+          OPENCODE_CONFIG_CONTENT: JSON.stringify(
+            buildChatOverlay(configuration.mcpOverlay, configuration.guidanceOverlay),
+          ),
         },
         detached: true,
         shell: true,
@@ -689,7 +707,8 @@ export class OpenCodeAgent implements IAgent {
       parts.push({ type: "text", text: `/${options.skill}`, synthetic: true });
     }
 
-    parts.push({ type: "text", text });
+    const commandText = expandBundledCommand(options?.bundledCommand, this.launchConfiguration?.guidanceOverlay);
+    parts.push({ type: "text", text: commandText ?? text });
 
     if (options?.files) {
       for (const file of options.files) {
