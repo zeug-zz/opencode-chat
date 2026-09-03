@@ -140,10 +140,6 @@ future strict-sandbox mode.
 - [OpenCode](https://github.com/anomalyco/opencode) installed
 - LLM provider authentication configured in OpenCode
 
-#### Optional
-
-- [difit](https://github.com/yoshiko-pg/difit) — enables the session diff review feature. Install with `npm install -g difit`.
-
 ### Installation
 
 Search for **OpenCode Research** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.

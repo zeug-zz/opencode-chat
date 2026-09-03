@@ -13,7 +13,6 @@ import type {
 } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
-import type { DiffReviewManager } from "./diff-review-manager";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "opencode-chat.chatView";
@@ -46,8 +45,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly extensionUri: vscode.Uri,
     private readonly agent: IAgent,
     private readonly platformServices: IPlatformServices,
-    private readonly diffReviewManager: DiffReviewManager,
-    private readonly difitAvailable: boolean,
     options?: {
       setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
       chatMcpPrefs?: ChatMcpPrefsStore;
@@ -127,8 +124,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         // 初期アクティブエディタを送信する
         this.postMessage({ type: "activeEditor", file: this.getActiveEditorFile(vscode.window.activeTextEditor) });
-        // difit の利用可否を Webview に通知する
-        this.postMessage({ type: "difitAvailable", available: this.difitAvailable });
         break;
       }
       case "sendMessage": {
@@ -488,33 +483,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "openFile": {
         await this.platformServices.openFile(message.filePath, message.line);
-        break;
-      }
-      case "openDiffReview": {
-        if (!this.activeSession) {
-          console.warn("[openDiffReview] No active session");
-          break;
-        }
-        try {
-          console.log("[openDiffReview] Getting diffs for session:", this.activeSession.id);
-          const diffs = await this.agent.getSessionDiff(this.activeSession.id);
-          console.log("[openDiffReview] Got diffs:", diffs.length, "files");
-          if (diffs.length === 0) {
-            console.warn("[openDiffReview] No diffs returned from agent");
-            break;
-          }
-          await this.diffReviewManager.start(diffs, message.focusFile);
-          this.postMessage({ type: "diffReviewStarted" });
-        } catch (e) {
-          const errorMsg = e instanceof Error ? e.message : String(e);
-          console.error("[openDiffReview]", errorMsg);
-          this.postMessage({ type: "diffReviewError", error: errorMsg });
-        }
-        break;
-      }
-      case "stopDiffReview": {
-        this.diffReviewManager.stop();
-        this.postMessage({ type: "diffReviewStopped" });
         break;
       }
     }

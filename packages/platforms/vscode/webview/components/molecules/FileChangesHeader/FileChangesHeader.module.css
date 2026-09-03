@@ -49,17 +49,6 @@
   transition: transform 0.15s;
 }
 
-.reviewButton {
-  margin-left: auto;
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.bar:hover .reviewButton {
-  opacity: 1;
-}
-
 .chevron.expanded {
   transform: rotate(90deg);
 }
