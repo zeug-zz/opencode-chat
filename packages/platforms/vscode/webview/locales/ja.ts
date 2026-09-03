@@ -156,8 +156,6 @@ export const ja: LocaleSchema = {
   "fileChanges.title": "ファイル変更",
   "fileChanges.noChanges": "ファイル変更なし",
   "fileChanges.openDiff": "差分エディタで開く",
-  "fileChanges.diffReview": "Diff Review",
-  "fileChanges.openReview": "Diff Review で開く",
   "fileChanges.toggle": "ファイル変更",
 
   // Share

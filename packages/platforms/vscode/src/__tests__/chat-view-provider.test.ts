@@ -24,7 +24,6 @@ import type { IAgent, IPlatformServices } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "../chat-mcp-prefs";
 import { ChatViewProvider } from "../chat-view-provider";
-import type { DiffReviewManager } from "../diff-review-manager";
 
 // --- Helper: IAgent のモック ---
 
@@ -112,18 +111,6 @@ function createMockPlatformServices(): {
   };
 }
 
-// --- Helper: DiffReviewManager のモック ---
-
-function createMockDiffReviewManager(): {
-  [K in keyof DiffReviewManager]: ReturnType<typeof vi.fn>;
-} {
-  return {
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn(),
-    dispose: vi.fn(),
-  };
-}
-
 // --- Helper: WebviewView のモック ---
 
 function createMockWebviewView() {
@@ -171,8 +158,6 @@ function createMockWebviewView() {
 function setupProvider(
   mockAgent: ReturnType<typeof createMockAgent>,
   mockPlatformServices?: ReturnType<typeof createMockPlatformServices>,
-  mockDiffReviewManager?: ReturnType<typeof createMockDiffReviewManager>,
-  difitAvailable = false,
   setChatSandboxSettings?: (
     settings: import("@opencode-chat/core").ChatSandboxSettings,
   ) => Promise<import("@opencode-chat/core").ChatSandboxStatus>,
@@ -180,22 +165,17 @@ function setupProvider(
 ) {
   const extensionUri = { fsPath: "/ext" };
   const ps = mockPlatformServices ?? createMockPlatformServices();
-  const drm = mockDiffReviewManager ?? createMockDiffReviewManager();
-  const provider = new ChatViewProvider(
-    extensionUri as never,
-    mockAgent as never,
-    ps as never,
-    drm as never,
-    difitAvailable,
-    { setChatSandboxSettings, chatMcpPrefs },
-  );
+  const provider = new ChatViewProvider(extensionUri as never, mockAgent as never, ps as never, {
+    setChatSandboxSettings,
+    chatMcpPrefs,
+  });
   const mock = createMockWebviewView();
   provider.resolveWebviewView(
     mock.webviewView as never,
     {} as never,
     { isCancellationRequested: false, onCancellationRequested: vi.fn() } as never,
   );
-  return { provider, platformServices: ps, diffReviewManager: drm, ...mock };
+  return { provider, platformServices: ps, ...mock };
 }
 
 describe("ChatViewProvider", () => {
@@ -224,7 +204,7 @@ describe("ChatViewProvider", () => {
     it("applies settings through the injected operation and posts the resulting status", async () => {
       const apply = vi.fn().mockResolvedValue({ ...previousStatus, mode: "on", enabled: true });
       const settings = { mode: "on" as const, allowNetwork: false };
-      const { provider, postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, apply);
+      const { provider, postMessage, sendMessage } = setupProvider(mockAgent, undefined, apply);
       provider.publishChatSandboxStatus(previousStatus);
       await sendMessage({ type: "setChatSandboxSettings", settings });
 
@@ -237,7 +217,7 @@ describe("ChatViewProvider", () => {
 
     it("posts the previous effective status with an error when applying fails", async () => {
       const apply = vi.fn().mockRejectedValue(new Error("sandbox startup failed"));
-      const { provider, postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, apply);
+      const { provider, postMessage, sendMessage } = setupProvider(mockAgent, undefined, apply);
       provider.publishChatSandboxStatus(previousStatus);
       postMessage.mockClear();
 
@@ -451,7 +431,7 @@ describe("ChatViewProvider", () => {
 
     it("publishes empty host preferences with no locked servers on ready", async () => {
       const store: ChatMcpPrefsStore = { read: () => ({}), write: vi.fn() };
-      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, store);
 
       await sendMessage({ type: "ready" });
 
@@ -463,7 +443,7 @@ describe("ChatViewProvider", () => {
         read: () => ({ selected: true }),
         write: vi.fn(),
       };
-      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, store);
 
       await sendMessage({ type: "ready" });
 
@@ -527,8 +507,6 @@ describe("ChatViewProvider", () => {
         { fsPath: "/ext" } as never,
         mockAgent as never,
         createMockPlatformServices() as never,
-        createMockDiffReviewManager() as never,
-        false,
       );
 
       await expect(provider.refresh()).resolves.toBeUndefined();
@@ -1423,7 +1401,7 @@ describe("ChatViewProvider", () => {
 
       it("migrates the first non-empty webview map into empty host state", async () => {
         const store = createStore({});
-        const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+        const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, store);
 
         await sendMessage({ type: "setMcpPrefs", prefs: { selected: true } });
 
@@ -1439,7 +1417,7 @@ describe("ChatViewProvider", () => {
 
       it("persists subsequent preference changes and posts the authoritative map", async () => {
         const store = createStore({ selected: true });
-        const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false, undefined, store);
+        const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, store);
 
         await sendMessage({ type: "setMcpPrefs", prefs: { selected: false } });
 
@@ -1735,97 +1713,6 @@ describe("ChatViewProvider", () => {
   });
 
   // ============================================================
-  // openDiffReview / stopDiffReview
-  // ============================================================
-
-  describe("openDiffReview", () => {
-    // should call agent.getSessionDiff and diffReviewManager.start
-    it("agent.getSessionDiff と diffReviewManager.start を呼ぶこと", async () => {
-      const diffs = [{ file: "a.ts", before: "old", after: "new", additions: 1, deletions: 1 }];
-      mockAgent.getSessionDiff.mockResolvedValue(diffs);
-      const drm = createMockDiffReviewManager();
-      const { sendMessage, postMessage } = setupProvider(mockAgent, undefined, drm);
-
-      // activeSession を設定
-      const session = { id: "s1", title: "S1" };
-      mockAgent.createSession.mockResolvedValue(session);
-      mockAgent.listSessions.mockResolvedValue([session]);
-      await sendMessage({ type: "createSession", title: "S1" });
-
-      await sendMessage({ type: "openDiffReview" });
-
-      expect(mockAgent.getSessionDiff).toHaveBeenCalledWith("s1");
-      expect(drm.start).toHaveBeenCalledWith(diffs, undefined);
-      expect(postMessage).toHaveBeenCalledWith({ type: "diffReviewStarted" });
-    });
-
-    // should pass focusFile to diffReviewManager.start
-    it("focusFile を diffReviewManager.start に渡すこと", async () => {
-      const diffs = [{ file: "a.ts", before: "old", after: "new", additions: 1, deletions: 1 }];
-      mockAgent.getSessionDiff.mockResolvedValue(diffs);
-      const drm = createMockDiffReviewManager();
-      const { sendMessage } = setupProvider(mockAgent, undefined, drm);
-
-      const session = { id: "s1", title: "S1" };
-      mockAgent.createSession.mockResolvedValue(session);
-      mockAgent.listSessions.mockResolvedValue([session]);
-      await sendMessage({ type: "createSession", title: "S1" });
-
-      await sendMessage({ type: "openDiffReview", focusFile: "a.ts" });
-
-      expect(drm.start).toHaveBeenCalledWith(diffs, "a.ts");
-    });
-
-    // should not call start when no activeSession
-    it("activeSession がない場合は start を呼ばないこと", async () => {
-      const drm = createMockDiffReviewManager();
-      const { sendMessage } = setupProvider(mockAgent, undefined, drm);
-
-      await sendMessage({ type: "openDiffReview" });
-
-      expect(mockAgent.getSessionDiff).not.toHaveBeenCalled();
-      expect(drm.start).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("stopDiffReview", () => {
-    // should call diffReviewManager.stop
-    it("diffReviewManager.stop を呼ぶこと", async () => {
-      const drm = createMockDiffReviewManager();
-      const { sendMessage, postMessage } = setupProvider(mockAgent, undefined, drm);
-
-      await sendMessage({ type: "stopDiffReview" });
-
-      expect(drm.stop).toHaveBeenCalled();
-      expect(postMessage).toHaveBeenCalledWith({ type: "diffReviewStopped" });
-    });
-  });
-
-  // ============================================================
-  // difitAvailable on ready
-  // ============================================================
-
-  describe("difitAvailable", () => {
-    // should send difitAvailable on ready
-    it("ready 時に difitAvailable メッセージを送信すること", async () => {
-      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, true);
-
-      await sendMessage({ type: "ready" });
-
-      expect(postMessage).toHaveBeenCalledWith({ type: "difitAvailable", available: true });
-    });
-
-    // should send false when difit is not available
-    it("difit 未インストール時は available=false を送信すること", async () => {
-      const { postMessage, sendMessage } = setupProvider(mockAgent, undefined, undefined, false);
-
-      await sendMessage({ type: "ready" });
-
-      expect(postMessage).toHaveBeenCalledWith({ type: "difitAvailable", available: false });
-    });
-  });
-
-  // ============================================================
   // postMessage の null safety
   // ============================================================
 
@@ -1837,8 +1724,6 @@ describe("ChatViewProvider", () => {
         extensionUri as never,
         mockAgent as never,
         createMockPlatformServices() as never,
-        createMockDiffReviewManager() as never,
-        false,
       );
 
       // view が undefined のまま postMessage を呼ぶ（内部的に）

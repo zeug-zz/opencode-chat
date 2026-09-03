@@ -157,8 +157,6 @@ export const es: LocaleSchema = {
   "fileChanges.title": "Cambios de archivos",
   "fileChanges.noChanges": "Sin cambios de archivos",
   "fileChanges.openDiff": "Abrir en editor de diferencias",
-  "fileChanges.diffReview": "Diff Review",
-  "fileChanges.openReview": "Abrir en Diff Review",
   "fileChanges.toggle": "Cambios de archivos",
 
   // Share

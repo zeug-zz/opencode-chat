@@ -2,6 +2,7 @@
   "name": "opencode-chat-monorepo",
   "private": true,
   "version": "0.8.1",
+  "packageManager": "pnpm@10.16.0",
   "license": "MIT",
   "repository": {
     "type": "git",

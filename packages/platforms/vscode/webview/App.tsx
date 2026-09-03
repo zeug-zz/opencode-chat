@@ -78,7 +78,6 @@ export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selectedPrimaryAgent, setSelectedPrimaryAgent] = useState<string | null>(null);
-  const [difitAvailable, setDifitAvailable] = useState(false);
   const [openCodePaths, setOpenCodePaths] = useState<{
     home?: string;
     config: string;
@@ -360,10 +359,6 @@ export function App() {
           setSkills(data.skills);
           break;
         }
-        case "difitAvailable": {
-          setDifitAvailable(data.available);
-          break;
-        }
         case "mcpStatus": {
           handleMcpStatus(data.status);
           break;
@@ -625,7 +620,6 @@ export function App() {
     openEditors,
     workspaceFiles,
     fileDiffs: fileChanges.diffs,
-    difitAvailable,
     onOpenDiffEditor: handleOpenDiffEditor,
     onOpenFile: handleOpenFile,
     onSend: handleSend,
@@ -687,11 +681,7 @@ export function App() {
               />
               {todos.length > 0 && <TodoHeader todos={todos} />}
               {fileChanges.diffs.length > 0 && (
-                <FileChangesHeader
-                  diffs={fileChanges.diffs}
-                  onOpenDiffEditor={handleOpenDiffEditor}
-                  difitAvailable={difitAvailable}
-                />
+                <FileChangesHeader diffs={fileChanges.diffs} onOpenDiffEditor={handleOpenDiffEditor} />
               )}
               <PermissionQueue permissions={perm.permissions} />
               {!isChildSession && (

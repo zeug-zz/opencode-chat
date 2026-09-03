@@ -164,10 +164,6 @@ export type UIToHostMessage =
   // --- Chat sandbox ---
   | { type: "setChatSandboxSettings"; settings: ChatSandboxSettings }
 
-  // --- Diff Review ---
-  | { type: "openDiffReview"; focusFile?: string }
-  | { type: "stopDiffReview" }
-
   // --- Legacy (kept during migration) ---
   | {
       type: "revertToMessage";
@@ -240,12 +236,6 @@ export type HostToUIMessage =
   | { type: "openEditors"; files: FileAttachment[] }
   | { type: "activeEditor"; file: FileAttachment | null }
   | { type: "workspaceFiles"; files: FileAttachment[] }
-
-  // --- Diff Review ---
-  | { type: "difitAvailable"; available: boolean }
-  | { type: "diffReviewStarted" }
-  | { type: "diffReviewStopped" }
-  | { type: "diffReviewError"; error: string }
 
   // --- MCP ---
   | { type: "mcpStatus"; status: McpStatus }

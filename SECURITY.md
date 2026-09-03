@@ -137,10 +137,11 @@ no MCP-specific exception, reports directory, or exact report-path restriction.
 | Date       | Finding | Severity | Rationale |
 |------------|---------|----------|-----------|
 | 2026-07-10 | —       | —        | All audit modes cleared 0 findings. Threat landscape assessed — no stack-relevant actively exploited CVEs. |
+| 2026-09-03 | —       | —        | All audit modes cleared 0 findings and no open Dependabot alerts were present. Adjacent MCP and supply-chain risks are tracked in the dated threat assessment. |
 
 ## Audit Trail
 
 Security audits are recorded in `scripts/security/last-audit.json`.
-Latest audit: **2026-07-10** (workspace, mode: all) — 0 findings, 0 CVEs.
-Threat-monitor risk assessments: `plans/security/risk_assessment-*.md`.
+Latest audit: **2026-09-03** (workspace, mode: all) — 0 findings, 0 CVEs.
+Threat-monitor risk assessments: `plans/security/risk_assessment-*.md` (latest: `plans/security/risk_assessment-20260903.md`).
 Pre-commit hooks: installed (gitleaks v8.30.1).

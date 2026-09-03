@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- Patched vulnerable transitive `fast-uri` and `qs` dependencies
+- Added a 24-hour pnpm dependency release-age requirement and pinned CI to pnpm 10.16.0
+- Pinned the Semgrep CI container to an immutable image digest
+- Strengthened the `main` branch ruleset with pull-request and security-check requirements
+
 ## [0.8.1] - 2026-09-03
 
 ### Fixed

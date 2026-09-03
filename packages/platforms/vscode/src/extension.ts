@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import * as path from "node:path";
 import {
   buildMcpOverlay,
@@ -19,7 +18,6 @@ import {
 import { resolveChatSandboxSettings, updateChatSandboxSettings } from "./chat-sandbox-settings";
 import { ChatViewProvider } from "./chat-view-provider";
 import { classifyConnectError } from "./connect-error";
-import { DiffReviewManager } from "./diff-review-manager";
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent = new OpenCodeAgent();
@@ -190,43 +188,31 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const platformServices = new VscodePlatformServices();
 
-  // PATH 上に difit が存在するか確認する。
-  // 存在しない場合はレビューボタンを非表示にするだけでエラーは出さない。
-  const difitAvailable = await checkDifitAvailable();
-
-  const diffReviewManager = new DiffReviewManager();
   let panelUpdateInProgress = false;
   let lastResolvedKey = resolvedSettingsKey(sandboxSettings);
-  chatViewProvider = new ChatViewProvider(
-    context.extensionUri,
-    agent,
-    platformServices,
-    diffReviewManager,
-    difitAvailable,
-    {
-      chatMcpPrefs,
-      setChatSandboxSettings: async (settings: ChatSandboxSettings) => {
-        const previousKey = lastResolvedKey;
-        const previousStatus = initialSandboxStatus;
-        panelUpdateInProgress = true;
-        try {
-          await updateChatSandboxSettings(settings, workspaceUri);
-          const resolved = resolveChatSandboxSettings(workspaceUri);
-          lastResolvedKey = resolvedSettingsKey(resolved);
-          const status = await sandboxController?.update(resolved);
-          if (!status) throw new Error("Chat sandbox controller is unavailable");
-          initialSandboxStatus = status;
-          return status;
-        } catch (error) {
-          lastResolvedKey = previousKey;
-          initialSandboxStatus = previousStatus;
-          throw error;
-        } finally {
-          panelUpdateInProgress = false;
-        }
-      },
+  chatViewProvider = new ChatViewProvider(context.extensionUri, agent, platformServices, {
+    chatMcpPrefs,
+    setChatSandboxSettings: async (settings: ChatSandboxSettings) => {
+      const previousKey = lastResolvedKey;
+      const previousStatus = initialSandboxStatus;
+      panelUpdateInProgress = true;
+      try {
+        await updateChatSandboxSettings(settings, workspaceUri);
+        const resolved = resolveChatSandboxSettings(workspaceUri);
+        lastResolvedKey = resolvedSettingsKey(resolved);
+        const status = await sandboxController?.update(resolved);
+        if (!status) throw new Error("Chat sandbox controller is unavailable");
+        initialSandboxStatus = status;
+        return status;
+      } catch (error) {
+        lastResolvedKey = previousKey;
+        initialSandboxStatus = previousStatus;
+        throw error;
+      } finally {
+        panelUpdateInProgress = false;
+      }
     },
-  );
+  });
   sandboxController = new ChatSandboxController<ChatSandboxStatus>({
     stop: () => agent.stopForReconnect(),
     start: async (settings) => {
@@ -252,8 +238,6 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   chatViewProvider.publishChatSandboxStatus(initialSandboxStatus);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatViewProvider));
-  context.subscriptions.push(diffReviewManager);
-
   // diff エディタ用の仮想ドキュメントプロバイダー。
   // URI のクエリ部分にエンコードされたコンテンツを返す。
   const diffContentProvider: vscode.TextDocumentContentProvider = {
@@ -305,14 +289,5 @@ function resolvedSettingsKey(settings: { mode: string; enabled: boolean; allowNe
   return JSON.stringify({
     enabled: settings.enabled,
     allowNetwork: settings.enabled ? settings.allowNetwork : true,
-  });
-}
-
-/** PATH 上に difit コマンドが存在するかチェックする */
-function checkDifitAvailable(): Promise<boolean> {
-  return new Promise((resolve) => {
-    execFile("which", ["difit"], (error) => {
-      resolve(!error);
-    });
   });
 }
