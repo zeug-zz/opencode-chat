@@ -31,6 +31,7 @@ export const MACOS_MACH_LOOKUP_SERVICES = [
 
 export type ChatSandboxPolicyInput = {
   workspacePath: string;
+  packagedSkillDirectory?: string;
   openCodePaths?: {
     config?: string;
     auth?: string;
@@ -413,6 +414,8 @@ export function buildChatSandboxFilesystemPolicy(input: ChatSandboxPolicyInput):
   const workspacePath = normalizePath(input.workspacePath, "workspacePath", platform);
   const homePath = normalizePath(input.homePath ?? os.homedir(), "homePath", platform);
   const openCodePaths = input.openCodePaths ?? {};
+  const packagedSkillDirectory =
+    platform === "darwin" || platform === "linux" ? input.packagedSkillDirectory : undefined;
   const readOnlyPaths = collectPaths(
     [openCodePaths.config, openCodePaths.auth, input.executablePath, ...(input.executablePaths ?? [])].filter(
       (value): value is string => value !== undefined,
@@ -422,6 +425,11 @@ export function buildChatSandboxFilesystemPolicy(input: ChatSandboxPolicyInput):
     workspacePath,
     platform,
   );
+  const packagedSkillPaths =
+    packagedSkillDirectory === undefined
+      ? []
+      : collectPaths([packagedSkillDirectory], "packaged skill directory", homePath, workspacePath, platform);
+  readOnlyPaths.push(...packagedSkillPaths);
   const readWritePaths = collectPaths(
     [
       workspacePath,
@@ -438,11 +446,27 @@ export function buildChatSandboxFilesystemPolicy(input: ChatSandboxPolicyInput):
     platform,
   );
   const readOnlySet = new Set(readOnlyPaths);
+  if (packagedSkillDirectory !== undefined) {
+    const normalizedPackagedSkillDirectory = packagedSkillPaths[0];
+    for (const writablePath of readWritePaths) {
+      if (
+        isWithin(normalizedPackagedSkillDirectory, writablePath, platform) ||
+        isWithin(writablePath, normalizedPackagedSkillDirectory, platform)
+      ) {
+        throw new Error(
+          `packaged skill directory "${normalizedPackagedSkillDirectory}" overlaps writable filesystem policy path "${writablePath}"`,
+        );
+      }
+    }
+  }
   const denyReadPaths = resolveStaticDenyReadPaths(homePath, platform);
   assertNoDenyReadOverlap(
     denyReadPaths,
     [
-      ...readOnlyPaths.map((path) => ({ path, label: "read-only filesystem policy path" })),
+      ...readOnlyPaths.map((path) => ({
+        path,
+        label: packagedSkillPaths.includes(path) ? "packaged skill directory" : "read-only filesystem policy path",
+      })),
       ...readWritePaths.map((path) => ({ path, label: "filesystem policy path" })),
     ],
     platform,

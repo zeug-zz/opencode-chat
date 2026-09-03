@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  BundledResourceMetadata,
   ChatSandboxSettings,
   ChatSandboxStatus,
   McpStatus,
@@ -28,10 +29,18 @@ import { ModelEffortSelector } from "../../molecules/ModelEffortSelector";
 import { ModelSelector } from "../../molecules/ModelSelector";
 import { SkillPopup } from "../../molecules/SkillPopup";
 import { ToolConfigPanel } from "../../organisms/ToolConfigPanel";
+import type { GuidanceItem } from "./guidance";
+import { nativeGuidance } from "./guidance";
 import styles from "./InputArea.module.css";
 
 type Props = {
-  onSend: (text: string, files: FileAttachment[], agent?: string, primaryAgent?: string, skill?: string) => void;
+  onSend: (
+    text: string,
+    files: FileAttachment[],
+    agent?: string,
+    primaryAgent?: string,
+    guidance?: GuidanceItem,
+  ) => void;
   onAbort: () => void;
   isBusy: boolean;
   providers: ProviderInfo[];
@@ -77,6 +86,7 @@ type Props = {
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
   agents: AgentInfo[];
   skills: SkillInfo[];
+  bundledResources?: BundledResourceMetadata[];
   contextMemoryText?: string;
   mcpServers?: McpStatus | null;
   onMcpToggle?: (server: string, enabled: boolean) => void;
@@ -112,6 +122,7 @@ export function InputArea({
   onSoundSettingChange,
   agents,
   skills,
+  bundledResources = [],
   recentModels,
   contextMemoryText,
   mcpServers,
@@ -143,7 +154,7 @@ export function InputArea({
   });
   const [slashQuery, setSlashQuery] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
-  const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
+  const [selectedGuidance, setSelectedGuidance] = useState<GuidanceItem | null>(null);
   // ポップアップ内のフォーカス位置（-1 = フォーカスなし）
   const [hashFocusedIndex, setHashFocusedIndex] = useState(-1);
   const [atFocusedIndex, setAtFocusedIndex] = useState(-1);
@@ -282,8 +293,8 @@ export function InputArea({
   }, []);
 
   const selectSkill = useCallback(
-    (skill: SkillInfo) => {
-      setSelectedSkill(skill);
+    (guidance: GuidanceItem | SkillInfo) => {
+      setSelectedGuidance("source" in guidance ? guidance : nativeGuidance(guidance));
       if (slashTrigger.active) {
         setText((prev) => {
           const before = prev.slice(0, slashTrigger.startIndex);
@@ -300,23 +311,29 @@ export function InputArea({
   );
 
   const clearSkill = useCallback(() => {
-    setSelectedSkill(null);
+    setSelectedGuidance(null);
   }, []);
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed && selectedGuidance?.type !== "command") return;
     // 送信テキストを履歴に追加する
     inputHistory.addEntry(trimmed);
-    onSend(trimmed, attachedFiles, selectedAgent?.name, selectedPrimaryAgent ?? undefined, selectedSkill?.name);
+    onSend(
+      trimmed,
+      attachedFiles,
+      selectedAgent?.name,
+      selectedPrimaryAgent ?? undefined,
+      selectedGuidance ?? undefined,
+    );
     setText("");
     setAttachedFiles([]);
     setSelectedAgent(null);
-    setSelectedSkill(null);
+    setSelectedGuidance(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, attachedFiles, onSend, selectedAgent?.name, selectedSkill?.name, inputHistory, selectedPrimaryAgent]);
+  }, [text, attachedFiles, onSend, selectedAgent?.name, selectedGuidance, inputHistory, selectedPrimaryAgent]);
 
   // # トリガーのファイル候補
   const hashFiles = hashQuery
@@ -337,9 +354,16 @@ export function InputArea({
   const filteredAgents = atQuery
     ? subagents.filter((a) => a.name.toLowerCase().includes(atQuery.toLowerCase())).slice(0, 10)
     : subagents.slice(0, 10);
-  const filteredSkills = slashQuery
-    ? skills.filter((skill) => skill.name.toLowerCase().includes(slashQuery.toLowerCase())).slice(0, 10)
-    : skills.slice(0, 10);
+  const guidanceItems = [...skills.map(nativeGuidance), ...bundledResources];
+  const filteredSkills = (
+    slashQuery
+      ? guidanceItems.filter(
+          (item) =>
+            item.name.toLowerCase().includes(slashQuery.toLowerCase()) ||
+            item.description?.toLowerCase().includes(slashQuery.toLowerCase()),
+        )
+      : guidanceItems
+  ).slice(0, 10);
 
   // Ctrl+T: cycle model effort for the selected model.
   //
@@ -696,8 +720,8 @@ export function InputArea({
               selectedAgent={selectedAgent}
               onSelectAgent={selectAgent}
               onClearAgent={clearAgent}
-              skills={skills}
-              selectedSkill={selectedSkill}
+              guidanceItems={guidanceItems}
+              selectedGuidance={selectedGuidance}
               onSelectSkill={selectSkill}
               onClearSkill={clearSkill}
             />

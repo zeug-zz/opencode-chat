@@ -48,4 +48,16 @@ describe("SkillPopup", () => {
       expect(items[0]?.getAttribute("data-focused")).toBe("true");
     });
   });
+
+  it("バンドルされたスキルとコマンドの種類および説明を表示すること", () => {
+    const resources = [
+      { source: "bundled" as const, type: "skill" as const, name: "research-workflow", description: "Research flow" },
+      { source: "bundled" as const, type: "command" as const, name: "research-answer", description: "Answer research" },
+    ];
+    const { container } = render(
+      <SkillPopup skills={resources} onSelectSkill={vi.fn()} skillPopupRef={{ current: null }} focusedIndex={-1} />,
+    );
+    expect(container.textContent).toContain("Skill · Research flow");
+    expect(container.textContent).toContain("Command · Answer research");
+  });
 });

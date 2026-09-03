@@ -1,9 +1,11 @@
 // @opencode-chat/agent-opencode - OpenCode agent implementation
 
 export type {
+  OpenCodeCommandDefinition,
   OpenCodeEffectiveSandboxMode,
   OpenCodeExecutableSelection,
   OpenCodeFilesystemPolicy,
+  OpenCodeGuidanceOverlay,
   OpenCodeLaunchConfiguration,
 } from "./launch-config";
 export * from "./mappers";

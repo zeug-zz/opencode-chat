@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Pinned the Semgrep CI container to an immutable image digest
 - Strengthened the `main` branch ruleset with pull-request and security-check requirements
 
+## [0.9.0] - 2026-09-03
+
+### Added
+
+- Bundled reviewed research skills and command templates, available on demand without copying resources into the workspace
+- Process-scoped guidance discovery and command invocation for the Chat agent, without injecting the full guidance corpus into ordinary prompts
+
+### Changed
+
+- Completed the difit integration removal; this release does not restore difit dependencies, scripts, UI, or integration
+
 ## [0.8.1] - 2026-09-03
 
 ### Fixed
@@ -243,7 +254,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.6.0...v0.7.0

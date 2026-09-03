@@ -2,6 +2,7 @@ import type {
   AgentCapabilities,
   AgentEvent,
   AgentInfo,
+  BundledResourceMetadata,
   ChatSandboxSettings,
   ChatSandboxStatus,
   ChatSession,
@@ -14,6 +15,7 @@ import { FileChangesHeader } from "./components/molecules/FileChangesHeader";
 import { TodoHeader } from "./components/molecules/TodoHeader";
 import { ChatHeader } from "./components/organisms/ChatHeader";
 import { InputArea } from "./components/organisms/InputArea";
+import type { GuidanceItem } from "./components/organisms/InputArea/guidance";
 import { MessagesArea } from "./components/organisms/MessagesArea";
 import { PermissionQueue } from "./components/organisms/PermissionView";
 import { SessionList } from "./components/organisms/SessionList";
@@ -77,6 +79,7 @@ export function App() {
   const [childSessions, setChildSessions] = useState<ChatSession[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [bundledResources, setBundledResources] = useState<BundledResourceMetadata[]>([]);
   const [selectedPrimaryAgent, setSelectedPrimaryAgent] = useState<string | null>(null);
   const [openCodePaths, setOpenCodePaths] = useState<{
     home?: string;
@@ -359,6 +362,9 @@ export function App() {
           setSkills(data.skills);
           break;
         }
+        case "bundledResources":
+          setBundledResources(data.resources);
+          break;
         case "mcpStatus": {
           handleMcpStatus(data.status);
           break;
@@ -400,7 +406,7 @@ export function App() {
   // Cross-cutting action handlers (span multiple hooks)
 
   const handleSend = useCallback(
-    (text: string, files: FileAttachment[], agent?: string, primaryAgent?: string, skill?: string) => {
+    (text: string, files: FileAttachment[], agent?: string, primaryAgent?: string, guidance?: GuidanceItem) => {
       if (!session.activeSession) return;
       // Build the explicit effort entry only when an effort has been
       // selected by the user. Omitting the property entirely (rather
@@ -418,7 +424,8 @@ export function App() {
         files: files.length > 0 ? files : undefined,
         agent,
         primaryAgent,
-        skill,
+        skill: guidance?.type === "skill" ? guidance.name : undefined,
+        ...(guidance?.type === "command" ? { bundledCommand: { name: guidance.name, arguments: text } } : {}),
       };
       if (prov.selectedModelEffort) {
         payload.effort = prov.selectedModelEffort;
@@ -714,6 +721,7 @@ export function App() {
                   onSoundSettingChange={sound.handleSoundSettingChange}
                   agents={agents}
                   skills={skills}
+                  bundledResources={bundledResources}
                   mcpServers={capabilities?.mcp ? mcp.servers : null}
                   onMcpToggle={capabilities?.mcp ? mcp.toggle : undefined}
                   onMcpRefresh={capabilities?.mcp ? mcp.refresh : undefined}

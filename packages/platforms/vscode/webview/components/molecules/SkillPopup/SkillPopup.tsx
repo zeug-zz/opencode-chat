@@ -2,11 +2,12 @@ import type { SkillInfo } from "@opencode-chat/core";
 import { useLocale } from "../../../locales";
 import { GearIcon } from "../../atoms/icons";
 import { ListItem } from "../../atoms/ListItem";
+import type { GuidanceItem } from "../../organisms/InputArea/guidance";
 import styles from "./SkillPopup.module.css";
 
 type Props = {
-  skills: SkillInfo[];
-  onSelectSkill: (skill: SkillInfo) => void;
+  skills: Array<GuidanceItem | SkillInfo>;
+  onSelectSkill: (skill: GuidanceItem | SkillInfo) => void;
   skillPopupRef: React.RefObject<HTMLDivElement | null>;
   focusedIndex: number;
 };
@@ -21,7 +22,7 @@ export function SkillPopup({ skills, onSelectSkill, skillPopupRef, focusedIndex 
           <ListItem
             key={skill.name}
             title={skill.name}
-            description={skill.description}
+            description={`${"type" in skill && skill.type === "command" ? t["input.type.command"] : t["input.type.skill"]}${skill.description ? ` · ${skill.description}` : ""}`}
             icon={<GearIcon width={14} height={14} />}
             onClick={() => onSelectSkill(skill)}
             focused={i === focusedIndex}

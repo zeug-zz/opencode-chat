@@ -518,6 +518,18 @@ export type SkillInfo = {
   location?: string;
 };
 
+export type BundledResourceMetadata = {
+  source: "bundled";
+  type: "skill" | "command";
+  name: string;
+  description: string;
+};
+
+export type BundledCommandInvocation = {
+  name: string;
+  arguments: string;
+};
+
 // ============================================================
 // App Config & Paths
 // ============================================================
@@ -563,6 +575,7 @@ export type SendMessageOptions = {
   agent?: string;
   primaryAgent?: string;
   skill?: string;
+  bundledCommand?: BundledCommandInvocation;
   /**
    * Optional system prompt override. When provided, this is appended to the
    * assembled system prompt sent to the LLM (after agent prompt, environment

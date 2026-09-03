@@ -173,6 +173,8 @@ export const en = {
   // AgentMention
   "input.noAgents": "No sub-agents available",
   "input.noSkills": "No skills available",
+  "input.type.skill": "Skill",
+  "input.type.command": "Command",
 } as const;
 
 export type LocaleSchema = {

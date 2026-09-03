@@ -412,6 +412,55 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.denyReadPaths).not.toEqual(expect.arrayContaining(["/home/tester/.local/share/opencode"]));
   });
 
+  it("normalizes packaged skills as a read-only grant without making them writable", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      packagedSkillDirectory: "/installed-extension/dist/skills-commands/skills/../skills",
+      platform: "linux",
+    });
+
+    expect(policy.readOnlyPaths).toContain("/installed-extension/dist/skills-commands/skills");
+    expect(policy.readWritePaths).not.toContain("/installed-extension/dist/skills-commands/skills");
+    expect(policy.readWritePaths).not.toContain("/installed-extension");
+  });
+
+  it.each(["darwin", "linux"] as const)("rejects packaged skills overlapping a protected deny on %s", (platform) => {
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: platform === "darwin" ? "/Users/tester" : homePath,
+        packagedSkillDirectory:
+          platform === "darwin" ? "/Library/Keychains/skills" : "/home/tester/.config/Signal/skills",
+        platform,
+      }),
+    ).toThrow(/deny-read path.*packaged skill directory/);
+  });
+
+  it("rejects packaged skills overlapping the workspace write boundary", () => {
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath,
+        packagedSkillDirectory: "/workspace/project/dist/skills-commands/skills",
+        platform: "linux",
+      }),
+    ).toThrow(/packaged skill directory.*overlaps writable filesystem policy path/);
+  });
+
+  it("does not add packaged grants to the unsupported Windows policy", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "C:\\workspace\\project",
+      homePath: "C:\\Users\\tester",
+      packagedSkillDirectory: "C:\\installed-extension\\dist\\skills-commands\\skills",
+      platform: "win32",
+    });
+
+    expect(policy.denyReadPaths).toEqual([]);
+    expect(policy.readOnlyPaths).toEqual([]);
+    expect(policy.readWritePaths).toEqual(["C:\\workspace\\project"]);
+  });
+
   it.each([".ssh", ".aws", ".gnupg", "keychains"])("rejects credential-store writes under %s", (store) => {
     expect(() =>
       buildChatSandboxFilesystemPolicy({
