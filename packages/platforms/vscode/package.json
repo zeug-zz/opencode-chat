@@ -2,7 +2,7 @@
   "name": "opencode-research",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "zeug-zz",
   "license": "MIT",
   "repository": {

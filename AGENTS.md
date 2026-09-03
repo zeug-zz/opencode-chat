@@ -54,10 +54,31 @@ npm run check:fix            # Biome auto-fix
 
 To package into VSIX:
 ```sh
+pnpm build
+cp LICENSE CHANGELOG.md THIRD_PARTY_NOTICES.md packages/platforms/vscode/
 cd packages/platforms/vscode
 npm run package              # creates opencode-research-<version>.vsix
 code --install-extension opencode-research-<version>.vsix --force
 ```
+
+## Marketplace Updates
+
+Use a version newer than the one currently published in the Marketplace.
+
+For a manual update, build and package the VSIX using the commands above, then open
+the [Visual Studio Marketplace publisher portal](https://marketplace.visualstudio.com/manage),
+select publisher `zeug-zz`, and upload `opencode-research-<version>.vsix`.
+
+For a CLI update with `vsce`, authenticate with `vsce login zeug-zz` or provide
+the `VSCE_PAT` environment variable, then publish the already-tested VSIX:
+
+```sh
+cd packages/platforms/vscode
+vsce publish --packagePath opencode-research-<version>.vsix
+```
+
+`vsce` packages and publishes extensions; the `code --install-extension` command
+is only for installing a VSIX locally in VS Code.
 
 ## Code conventions
 

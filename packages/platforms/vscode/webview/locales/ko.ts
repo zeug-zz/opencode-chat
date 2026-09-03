@@ -3,11 +3,11 @@ import type { LocaleSchema } from "./en";
 export const ko: LocaleSchema = {
   // ChatHeader
   "header.sessions": "세션 목록",
-  "header.title.fallback": "OpenCode",
+  "header.title.fallback": "OpenCode Research",
   "header.newChat": "새 채팅",
 
   // EmptyState
-  "empty.title": "OpenCode",
+  "empty.title": "OpenCode Research",
   "empty.description": "새 대화를 시작하세요.",
   "empty.newChat": "새 채팅",
 
