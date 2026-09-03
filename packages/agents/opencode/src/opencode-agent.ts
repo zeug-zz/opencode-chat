@@ -58,6 +58,7 @@ type EventHandler = (event: AgentEvent) => void;
 
 const SANDBOX_STARTUP_TIMEOUT_MS = 10_000;
 const DIAGNOSTIC_TAIL_LENGTH = 4_096;
+const DIAGNOSTIC_LOG_LENGTH = 4_096;
 const SANDBOX_TERMINATION_GRACE_MS = 1_000;
 const SANDBOX_TERMINATION_ESCALATION_MS = 1_000;
 
@@ -132,6 +133,19 @@ function redactDiagnostic(value: string): string {
     .replace(/\b(?:authorization|bearer)\s*[:=]?\s*(?:bearer\s+)?[^\s,;]+/gi, "authorization=[redacted]")
     .replace(/([?&](?:token|key|password|secret|api[_-]?key)=)[^&\s]+/gi, "$1[redacted]")
     .replace(/(https?:\/\/)[^/\s:@]+:[^@\s]+@/gi, "$1[redacted]@");
+}
+
+function boundDiagnostic(value: string): string {
+  const redacted = redactDiagnostic(value);
+  if (redacted.length <= DIAGNOSTIC_LOG_LENGTH) return redacted;
+  const prefixLength = 512;
+  const marker = "\n...[diagnostic truncated]...\n";
+  const suffixLength = DIAGNOSTIC_LOG_LENGTH - prefixLength - marker.length;
+  return `${redacted.slice(0, prefixLength)}${marker}${redacted.slice(-suffixLength)}`;
+}
+
+function logSandboxDiagnostic(stage: string, diagnostic: string): void {
+  console.error(boundDiagnostic(`[opencode-chat] sandbox diagnostic (${stage}): ${diagnostic}`));
 }
 
 function formatOutput(output: BoundedOutput, command?: string): string {
@@ -213,7 +227,9 @@ async function terminateSandboxChild(child: ChildProcess | undefined): Promise<v
 function inferMcpOperation(error?: string): string {
   if (!error) return "startup/readiness";
   if (/network|connect|dns|tls|http|fetch|socket|timeout/i.test(error)) return "network request/startup";
-  if (/write|mkdir|rename|unlink|permission denied|read-only/i.test(error)) return "write operation";
+  if (/write|mkdir|rename|unlink|read-only/i.test(error)) return "write operation";
+  if (/read|open|stat|readdir/i.test(error)) return "read operation";
+  if (/permission denied|eperm|eacces|operation not permitted/i.test(error)) return "filesystem operation";
   return "startup/readiness";
 }
 
@@ -225,6 +241,7 @@ function formatMcpDiagnostic(
   output: string,
   violations: string,
   transport: "stdio" | "http" | "sdk" | "unknown" = "unknown",
+  operation?: string,
 ): string {
   const attribution =
     transport === "stdio"
@@ -236,12 +253,12 @@ function formatMcpDiagnostic(
           : "MCP transport=unknown (not attributed to a child)";
   const context = [
     attribution,
-    `operation=${inferMcpOperation(error)}`,
+    `operation=${operation ?? inferMcpOperation(error)}`,
     `readiness=${readiness}`,
     exit ? `companion-exit=code=${exit.code}, signal=${exit.signal ?? "none"}` : "companion-exit=not-observed",
   ].join(", ");
   const details = [
-    error && `SDK error: ${redactDiagnostic(error)}`,
+    error && `SDK error: ${boundDiagnostic(error)}`,
     output && `Companion process context (aggregate; server attribution unavailable):${output}`,
     transport === "stdio" && violations && `Sandbox violation context (recent child/companion records):${violations}`,
   ].filter(Boolean);
@@ -313,6 +330,10 @@ export class OpenCodeAgent implements IAgent {
 
   updateLaunchConfiguration(launchConfiguration: OpenCodeLaunchConfiguration): void {
     this.launchConfiguration = launchConfiguration;
+  }
+
+  private isSandboxDiagnosticsActive(): boolean {
+    return Boolean(this.launchConfiguration?.sandbox.enabled && SandboxManager.isSupportedPlatform());
   }
 
   // --- Capability declaration ---
@@ -441,18 +462,21 @@ export class OpenCodeAgent implements IAgent {
         this.sseAbortController?.abort();
         this.sseAbortController = undefined;
         if (!expected) {
-          this.onAvailabilityError?.(
-            new Error(
-              `Sandboxed OpenCode companion exited unexpectedly after readiness (companion, code=${code}, signal=${signal ?? "none"}); ` +
-                `Chat is unavailable.${formatOutput(output, command)}${formatSandboxViolations(command)}`,
-            ),
-          );
+          const diagnostic =
+            `Sandboxed OpenCode companion exited unexpectedly after readiness (companion, code=${code}, signal=${signal ?? "none"}); ` +
+            `Chat is unavailable.${formatOutput(output, command)}${formatSandboxViolations(command)}`;
+          logSandboxDiagnostic("companion exit", diagnostic);
+          this.onAvailabilityError?.(new Error(diagnostic));
         }
         void this.cleanupSandboxResources(child);
       });
     } catch (error) {
       await this.cleanupSandboxResources();
       const message = error instanceof Error ? error.message : String(error);
+      const startupDiagnostic = /Captured sandboxed OpenCode output|Sandbox violations/.test(message)
+        ? message
+        : `${message}${formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand)}${formatSandboxViolations(this.sandboxCommand)}`;
+      logSandboxDiagnostic("startup/readiness", `Sandboxed OpenCode startup failed: ${startupDiagnostic}`);
       throw new Error(
         `Sandboxed OpenCode startup failed; no unsandboxed fallback was started: ${redactDiagnostic(message)}`,
       );
@@ -832,7 +856,13 @@ export class OpenCodeAgent implements IAgent {
 
   async getMcpStatus(): Promise<McpStatus> {
     const client = this.requireClient();
-    const response = await client.mcp.status();
+    const response = await client.mcp.status().catch((error: unknown) => {
+      if (this.isSandboxDiagnosticsActive()) {
+        const message = error instanceof Error ? error.message : String(error);
+        logSandboxDiagnostic("MCP status", `MCP status failed (operation=status): ${message}`);
+      }
+      throw error;
+    });
     const mapped = mapMcpStatus(response.data!);
     if (!this.launchConfiguration?.sandbox.enabled || !SandboxManager.isSupportedPlatform()) return mapped;
     const output = formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand);
@@ -849,6 +879,7 @@ export class OpenCodeAgent implements IAgent {
           transports[server] === "stdio" ? violations : "",
           transports[server] ?? "unknown",
         );
+        logSandboxDiagnostic(`MCP operation (${transports[server] ?? "unknown"})`, status.error);
       }
     }
     return mapped;
@@ -856,12 +887,54 @@ export class OpenCodeAgent implements IAgent {
 
   async connectMcp(server: string): Promise<void> {
     const client = this.requireClient();
-    await client.mcp.connect({ name: server });
+    try {
+      await client.mcp.connect({ name: server });
+    } catch (error) {
+      if (this.isSandboxDiagnosticsActive()) {
+        const message = error instanceof Error ? error.message : String(error);
+        const transport = this.launchConfiguration?.mcpTransport?.[server] ?? "unknown";
+        logSandboxDiagnostic(
+          `MCP connect (${transport})`,
+          formatMcpDiagnostic(
+            server,
+            message,
+            this.sandboxChildReady ? "ready" : "not-ready",
+            this.sandboxChildExit,
+            formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand),
+            transport === "stdio" ? formatSandboxViolations(this.sandboxCommand) : "",
+            transport,
+            "connect",
+          ),
+        );
+      }
+      throw error;
+    }
   }
 
   async disconnectMcp(server: string): Promise<void> {
     const client = this.requireClient();
-    await client.mcp.disconnect({ name: server });
+    try {
+      await client.mcp.disconnect({ name: server });
+    } catch (error) {
+      if (this.isSandboxDiagnosticsActive()) {
+        const message = error instanceof Error ? error.message : String(error);
+        const transport = this.launchConfiguration?.mcpTransport?.[server] ?? "unknown";
+        logSandboxDiagnostic(
+          `MCP disconnect (${transport})`,
+          formatMcpDiagnostic(
+            server,
+            message,
+            this.sandboxChildReady ? "ready" : "not-ready",
+            this.sandboxChildExit,
+            formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand),
+            transport === "stdio" ? formatSandboxViolations(this.sandboxCommand) : "",
+            transport,
+            "disconnect",
+          ),
+        );
+      }
+      throw error;
+    }
   }
 
   // --- Tools ---

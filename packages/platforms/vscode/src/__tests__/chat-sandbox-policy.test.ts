@@ -91,6 +91,13 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     ".pki",
     ".terraform.d",
     ".config/op",
+    ".claude.json",
+    ".claude/.credentials.json",
+    ".codex/auth.json",
+    ".gemini/oauth_creds.json",
+    ".electrum",
+    ".android/adbkey",
+    ".android/adbkey.pub",
     ".bash_history",
     ".zsh_history",
     ".history",
@@ -248,6 +255,10 @@ describe("buildChatSandboxFilesystemPolicy", () => {
       `${homePath}/.config/opencode`,
       `${homePath}/.config/opencode/cache`,
       `${homePath}/.cache/opencode`,
+      `${homePath}/.claude`,
+      `${homePath}/.codex`,
+      `${homePath}/.gemini`,
+      `${homePath}/.android`,
       "/tmp",
       "/private/tmp",
     ];
@@ -292,6 +303,8 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readWritePaths).not.toContain(openCodePaths.config);
     expect(policy.readWritePaths).not.toContain("/home/tester");
     expect(policy.readOnlyPaths).not.toContain("/home/tester");
+    expect(policy.denyReadPaths).not.toContain("/home/tester/.config/opencode");
+    expect(policy.denyReadPaths).not.toContain("/home/tester/.config/opencode/auth.json");
     expect(policy.readWritePaths).not.toContain("/home/tester/.ssh");
     expect(policy.readOnlyPaths).not.toContain("/home/tester/.ssh");
     expect(policy.denyReadPaths).toContain("/home/tester/.ssh");
@@ -368,6 +381,35 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     );
     expect(policy.readWritePaths).not.toContain("/home/tester/Documents");
     expect(policy.readWritePaths).not.toContain("/home/tester/.ssh");
+  });
+
+  it("preserves non-conflicting OpenCode authentication and runtime grants", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      openCodePaths: {
+        config: "/home/tester/.config/opencode",
+        auth: "/home/tester/.local/share/opencode/auth.json",
+        state: "/home/tester/.local/share/opencode",
+        cache: "/home/tester/.cache/opencode",
+        temp: "/home/tester/.cache/opencode/tmp",
+      },
+      runtimeCachePaths: ["/home/tester/.cache/uv"],
+    });
+
+    expect(policy.readOnlyPaths).toEqual(
+      expect.arrayContaining(["/home/tester/.config/opencode", "/home/tester/.local/share/opencode/auth.json"]),
+    );
+    expect(policy.readWritePaths).toEqual(
+      expect.arrayContaining([
+        "/home/tester/.local/share/opencode",
+        "/home/tester/.cache/opencode",
+        "/home/tester/.cache/opencode/tmp",
+        "/home/tester/.cache/uv",
+      ]),
+    );
+    expect(policy.denyReadPaths).not.toEqual(expect.arrayContaining(["/home/tester/.config/opencode"]));
+    expect(policy.denyReadPaths).not.toEqual(expect.arrayContaining(["/home/tester/.local/share/opencode"]));
   });
 
   it.each([".ssh", ".aws", ".gnupg", "keychains"])("rejects credential-store writes under %s", (store) => {

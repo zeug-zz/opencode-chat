@@ -69,6 +69,10 @@ temporary paths.
 The current versioned, reviewed expansion adds narrow leaves rather than broad
 parent denies. The selected additions are:
 
+- Additional cross-platform credential/private-key leaves: `.claude.json`,
+  `.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`,
+  `.electrum`, `.android/adbkey`, and `.android/adbkey.pub`.
+
 - Cross-platform credential/config: `.config/gh/hosts.yml`,
   `.config/glab-cli/config.yml`, `.config/rclone/rclone.conf`,
   `.config/containers/auth.json`, `.pypirc`, `.cargo/credentials`,
@@ -98,6 +102,7 @@ parent denies. The selected additions are:
   `.config/evolution`.
 
 The inventory is intentionally not exhaustive and is subject to later review.
+These are narrow reviewed paths only: the baseline is not a whole-home deny and does not deny generic `.config`, generic application-support data, generic `.android`, `.codex`, or `.gemini` parents, other-user homes, or external volumes. The `.config/op` entry is not `.config/opencode`; required OpenCode configuration and provider-authentication data remain available.
 Required read grants that exactly overlap, contain, or are contained by a
 protected path fail closed before launch; the deny is not removed, the grant is
 not broadened, and no unsandboxed retry occurs. The complete companion process
@@ -115,6 +120,17 @@ it can read. The baseline does not promise protection against a malicious proces
 Windows does not enforce this read baseline. Chat reports sandboxing as unsupported and uses the
 existing unsandboxed path there; the Windows path must not be treated as providing sandbox
 read-deny protection.
+
+For supported sandbox launches, the extension host records bounded, redacted diagnostics for sandbox startup/readiness failures, unexpected companion exits, and failed MCP operations when runtime information is available. Existing
+user-visible diagnostics remain bounded, redacted, and transport-aware: exposed
+denial wording such as `EPERM`, `EACCES`, or `Operation not permitted` is
+retained, while opaque errors remain opaque. Secret values, file contents,
+authorization material, environment/configuration data, and request payloads
+are not logged. Process-tree inheritance, write containment, network behavior,
+MCP compatibility outside the baseline, fail-closed overlap and
+no-unsandboxed-fallback semantics, and the Scout/Write/Build boundaries remain
+unchanged. The explicit `off` mode remains the compatibility fallback; there is
+no MCP-specific exception, reports directory, or exact report-path restriction.
 
 ## Accepted Risks
 

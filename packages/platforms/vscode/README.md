@@ -77,6 +77,18 @@ strict filesystem confidentiality:
 - Windows does not enforce this read baseline. Chat reports sandboxing as
   unsupported there and uses the existing unsandboxed path.
 
+The current expansion adds these exact home-relative credential and private-key leaves on supported macOS/Linux: `.claude.json`, `.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`, `.electrum`, `.android/adbkey`, and `.android/adbkey.pub`. These are narrow reviewed paths, not an exhaustive baseline: it does not deny the whole home, generic `.config`, generic application-support data, generic `.android`, `.codex`, or `.gemini` parents, other-user homes, or external volumes. The `.config/op` entry must not be confused with `.config/opencode`; required OpenCode configuration and provider-authentication data remain available.
+
+The extension host records bounded, redacted diagnostics for supported sandbox startup/readiness failures, unexpected companion exits, and failed MCP operations when runtime information is available. Existing user-visible
+diagnostics remain bounded, redacted, and transport-aware; exposed denial
+wording is retained, while opaque errors remain opaque, and secrets, payloads,
+file contents, and unredacted environment/configuration data are not logged.
+Process-tree inheritance, write containment, network behavior, MCP compatibility
+outside the baseline, fail-closed overlap and no-unsandboxed-fallback semantics,
+and the Scout/Write/Build boundaries remain unchanged. The explicit `off` mode
+remains the compatibility fallback; there is no MCP-specific exception,
+reports directory, or exact report-path restriction.
+
 The protected list is versioned and reviewed as a conservative first-pass
 inventory, not an exhaustive protection promise. In addition to the existing
 cross-platform leaves, the current expansion selects these narrow paths:
