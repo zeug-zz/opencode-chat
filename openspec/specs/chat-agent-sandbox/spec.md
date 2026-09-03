@@ -170,7 +170,10 @@ protected paths relative to the effective home directory, including `.ssh`,
 `.git-credentials`, `.netrc`, `.npmrc`, `.bunfig.toml`,
 `.config/bun/bunfig.toml`, `.vault-token`, `.credentials`, `.secrets`, `.keys`,
 `.pki`, `.terraform.d`, `.config/op`, shell history and configuration files,
-`.config/fish`, `.env`, and `.envrc`. It SHALL also retain the reviewed
+`.config/fish`, `.env`, `.envrc`, `.bash_history`, `.zsh_history`, `.history`,
+`.python_history`, `.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`,
+`.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`, and `.profile`. It
+SHALL also retain the reviewed
 platform-specific macOS and Linux keychain, password-store, browser, and
 private-application protections, while adding only the reviewed narrow leaf
 paths in those same sensitive-data classes rather than broad parent-directory
@@ -261,16 +264,23 @@ not become a technical report-only restriction.
 - **AND** reads of each protected path SHALL fail at the sandbox boundary
 - **AND** the baseline SHALL not be replaced by a broad home-directory deny
 
+#### Scenario: Protected baseline reads are denied
+
+- **WHEN** a sandboxed companion, shell, or local MCP attempts to read a path in
+  the platform-appropriate protected read baseline
+- **THEN** the read SHALL fail at the sandbox boundary
+- **AND** the failure SHALL be inherited by descendants of the companion
+- **AND** the extension SHALL not broaden read or write access automatically
+
 #### Scenario: Protected baseline is platform-aware
 
 - **WHEN** Chat sandboxing is enabled on macOS or Linux
-- **THEN** the deny paths SHALL be resolved from the configured effective home
+- **THEN** the companion SHALL receive the corresponding static platform-aware
+  deny paths
+- **AND** the deny paths SHALL be resolved from the configured effective home
   directory, normalized, deduplicated, and emitted deterministically
 - **AND** macOS-only paths SHALL not be emitted on Linux
 - **AND** Linux-only paths SHALL not be emitted on macOS
-- **AND** the deny paths SHALL be resolved from the configured home directory
-- **AND** the deny paths SHALL be normalized, deduplicated, and emitted
-  deterministically
 - **AND** the expanded baseline SHALL not be emitted as an enforcement claim
   on Windows
 
