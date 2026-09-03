@@ -110,6 +110,37 @@ is only for installing a VSIX locally in VS Code.
 
 ## Recent Changes
 
+### 2026-09-03: Credential-leaf protection and sandbox denial diagnostics (archived: `2026-09-03-expand-chat-sandbox-credential-leaves-diagnostics`)
+
+The supported macOS/Linux Chat sandbox now denies these exact home-relative
+credential and private-key leaves to the complete companion process tree:
+`.claude.json`, `.claude/.credentials.json`, `.codex/auth.json`,
+`.gemini/oauth_creds.json`, `.electrum`, `.android/adbkey`, and
+`.android/adbkey.pub`. The OpenCode configuration root and provider-auth data
+remain available; `.config/op` must not be confused with `.config/opencode`.
+Windows remains unsupported and makes no read-deny enforcement claim.
+
+The extension host records bounded, redacted diagnostics for supported sandbox
+startup/readiness failures, unexpected companion exits, and failed MCP status or
+connect/disconnect operations. Exposed denial reasons such as `EPERM`, `EACCES`,
+or `Operation not permitted` are retained, opaque errors remain opaque, and
+secrets, payloads, file contents, and unredacted environment/configuration data
+are not logged. Existing fail-closed, no-unsandboxed-fallback, compatibility,
+process-tree, network, and Scout/Write/Build boundaries remain unchanged.
+
+**Main spec**: `openspec/specs/chat-agent-sandbox/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-03-expand-chat-sandbox-credential-leaves-diagnostics/`
+
+**Implementation**: `packages/platforms/vscode/src/chat-sandbox-policy.ts`,
+`packages/agents/opencode/src/opencode-agent.ts`, focused tests, and security
+documentation.
+
+**Verified**: focused policy and agent tests, Biome checks, targeted strict
+OpenSpec validation, and `git diff --check`. Opt-in sandbox runtime enforcement
+remains unavailable because nested macOS sandboxing is blocked by the enclosing
+environment.
+
 ### 2026-09-02: Conservative sandbox deny-read expansion (archived: `2026-09-02-expand-chat-sandbox-deny-read-baseline`)
 
 The Chat sandbox static deny-read baseline now includes a reviewed set of
