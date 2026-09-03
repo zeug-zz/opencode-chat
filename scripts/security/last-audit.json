@@ -1,7 +1,7 @@
 {
   "repo": "opencode-chat",
   "type": "node",
-  "timestamp": "2026-08-17T06:31:10Z",
+  "timestamp": "2026-09-03T04:01:42Z",
   "scope": "workspace",
   "mode": "all",
   "findings": [],
@@ -21,10 +21,10 @@
       "version": "8.30.1",
       "status": "PASS",
       "findings": 0,
-      "report": "scripts/security/.gitleaks-report.json"
+      "report": "scripts/security/gitleaks-report.json"
     },
     "semgrep": {
-      "version": "1.173.0",
+      "version": "1.175.0",
       "status": "PASS",
       "findings": 0,
       "errors": 0,
