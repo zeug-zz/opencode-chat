@@ -147,6 +147,9 @@ export const es: LocaleSchema = {
   "config.langPtBr": "Português (Brasil)",
   "config.langRu": "Русский",
 
+  "config.thinking": "Pensamiento",
+  "config.showAllThinking": "Mostrar todo el pensamiento",
+
   // Sound notification
   "config.sound": "Notificación de sonido",
   "config.soundResponseComplete": "Respuesta completada",

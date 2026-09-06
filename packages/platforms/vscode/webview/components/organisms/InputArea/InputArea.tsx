@@ -83,6 +83,8 @@ type Props = {
   onOpenTerminal: () => void;
   localeSetting: LocaleSetting;
   onLocaleSettingChange: (setting: LocaleSetting) => void;
+  showAllThinking?: boolean;
+  onShowAllThinkingChange?: (value: boolean) => void;
   soundSettings: SoundSettings;
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
   agents: AgentInfo[];
@@ -120,6 +122,8 @@ export function InputArea({
   onOpenTerminal,
   localeSetting,
   onLocaleSettingChange,
+  showAllThinking = false,
+  onShowAllThinkingChange = () => {},
   soundSettings,
   onSoundSettingChange,
   agents,
@@ -822,6 +826,8 @@ export function InputArea({
                     onClose={close}
                     localeSetting={localeSetting}
                     onLocaleSettingChange={onLocaleSettingChange}
+                    showAllThinking={showAllThinking}
+                    onShowAllThinkingChange={onShowAllThinkingChange}
                     soundSettings={soundSettings}
                     onSoundSettingChange={onSoundSettingChange}
                     mcpServers={mcpServers}

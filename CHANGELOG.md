@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Pinned the Semgrep CI container to an immutable image digest
 - Strengthened the `main` branch ruleset with pull-request and security-check requirements
 
+## [0.11.0] - 2026-09-06
+
+### Added
+
+- Persisted “Show all thinking” settings toggle that reveals reasoning as it streams while retaining per-thought controls when disabled
+
 ## [0.10.1] - 2026-09-06
 
 ### Fixed
@@ -266,7 +272,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.1...v0.9.0

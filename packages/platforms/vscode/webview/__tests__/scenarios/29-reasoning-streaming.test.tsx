@@ -1,6 +1,7 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getPersistedState } from "../../vscode-api";
 import { createMessage, createSession, createTextPart } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
@@ -19,6 +20,10 @@ async function setupWithMessage() {
 }
 
 describe("リーズニングストリーミング表示", () => {
+  beforeEach(() => {
+    vi.mocked(getPersistedState).mockReturnValue(undefined);
+  });
+
   context("reasoning.started イベント受信時", () => {
     beforeEach(async () => {
       await setupWithMessage();
@@ -66,6 +71,35 @@ describe("リーズニングストリーミング表示", () => {
       const user = userEvent.setup();
       await user.click(screen.getByTitle("Toggle thought details"));
       expect(await screen.findByText("Step 1 Step 2")).toBeInTheDocument();
+    });
+  });
+
+  context("すべての思考を表示する設定でストリーミングする場合", () => {
+    beforeEach(async () => {
+      vi.mocked(getPersistedState).mockReturnValue({ showAllThinking: true });
+      await setupWithMessage();
+      await sendExtMessage({
+        type: "event",
+        event: {
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
+        } as any,
+      });
+    });
+
+    it("新しい本文をクリックなしで表示し、デルタを継続表示すること", async () => {
+      const part = screen.getByText("Thinking\u2026").closest(".reasoningPart");
+      expect(part?.querySelector(".reasoningBody")).toBeInTheDocument();
+
+      await sendExtMessage({
+        type: "event",
+        event: {
+          type: "session.next.reasoning.delta",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", delta: "Visible thought" },
+        } as any,
+      });
+
+      expect(await screen.findByText("Visible thought")).toBeInTheDocument();
     });
   });
 

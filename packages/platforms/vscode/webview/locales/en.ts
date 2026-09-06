@@ -138,6 +138,9 @@ export const en = {
   "config.langPtBr": "Português (Brasil)",
   "config.langRu": "Русский",
 
+  "config.thinking": "Thinking",
+  "config.showAllThinking": "Show all thinking",
+
   // MCP setting
   "config.mcp": "MCP",
   "config.mcpEmpty": "No MCP servers configured. Configure via Project or Global Config.",

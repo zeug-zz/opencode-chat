@@ -115,6 +115,18 @@ is only for installing a VSIX locally in VS Code.
 
 ## Recent Changes
 
+### 2026-09-06: Global show-all-thinking preference (archived: `2026-09-06-toggle-all-thinking`)
+
+The OpenCode Research webview now persists an optional `UIPersistedState.showAllThinking` preference and exposes it as an accessible, localized checkbox in the settings popover. When enabled, current and future reasoning bodies remain visible while streaming; when disabled, reasoning keeps its collapsed-by-default behavior and existing per-block expansion state. The setting is passed through the message components, memo boundaries include it, and reasoning buffering/transport remains unchanged.
+
+**Main spec**: `openspec/specs/reasoning-streaming/spec.md`
+
+**Archived change**: `openspec/changes/archive/2026-09-06-toggle-all-thinking/`
+
+**Implementation**: `packages/core/src/platform.interface.ts`, the webview app/settings/message components, all eight locale dictionaries, and focused settings/reasoning tests.
+
+**Verified**: 1,804 webview tests plus 218 extension tests, Biome check, build, synced main-spec validation, archived OpenSpec validation, and `git diff --check`. Repository-wide archived validation still reports three older archived changes with incomplete historical task lists; they were not modified.
+
 ### 2026-09-06: Queued prompts, restricted Scout delegation, and bundled research guidance (archived: `2026-09-06-queue-busy-prompts`, `2026-09-06-allow-restricted-scout-delegation`, `2026-09-06-bundle-research-skills-commands`)
 
 Chat and Write now accept normal prompts while a session is active through a

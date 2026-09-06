@@ -12,6 +12,7 @@ type Props = {
   messages: MessageWithParts[];
   sessionBusy: boolean;
   activeSessionId: string;
+  showAllThinking?: boolean;
   questions: Map<string, QuestionRequest>;
   onEditAndResend: (messageId: string, text: string) => void;
   onRevertToCheckpoint: (assistantMessageId: string, userText: string | null) => void;
@@ -22,6 +23,7 @@ export function MessagesArea({
   messages,
   sessionBusy,
   activeSessionId,
+  showAllThinking = false,
   questions,
   onEditAndResend,
   onRevertToCheckpoint,
@@ -44,6 +46,7 @@ export function MessagesArea({
             <MessageItem
               message={msg}
               activeSessionId={activeSessionId}
+              showAllThinking={showAllThinking}
               questions={questions}
               onEditAndResend={onEditAndResend}
             />

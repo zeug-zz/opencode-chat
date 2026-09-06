@@ -27,6 +27,7 @@ const CHECK_ICON = `<svg width="12" height="12" viewBox="0 0 16 16" fill="curren
 type Props = {
   message: MessageWithParts;
   activeSessionId: string;
+  showAllThinking?: boolean;
   questions: Map<string, QuestionRequest>;
   onEditAndResend?: (messageId: string, text: string) => void;
 };
@@ -63,7 +64,7 @@ export function getCopyableAssistantMarkdownSource(
   return getAssistantMarkdownSource(parts);
 }
 
-function MessageItemInner({ message, activeSessionId, questions, onEditAndResend }: Props) {
+function MessageItemInner({ message, activeSessionId, showAllThinking = false, questions, onEditAndResend }: Props) {
   const t = useLocale();
   const { isShellMessage, childSessions, onNavigateToChild } = useAppContext();
   const { info, parts } = message;
@@ -232,7 +233,13 @@ function MessageItemInner({ message, activeSessionId, questions, onEditAndResend
                     />
                   );
                 case "reasoning":
-                  return <ReasoningPartView key={part.id} part={part as ReasoningPartType} />;
+                  return (
+                    <ReasoningPartView
+                      key={part.id}
+                      part={part as ReasoningPartType}
+                      showAllThinking={showAllThinking}
+                    />
+                  );
                 default:
                   return null;
               }
@@ -269,6 +276,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   return (
     prev.message === next.message &&
     prev.activeSessionId === next.activeSessionId &&
+    prev.showAllThinking === next.showAllThinking &&
     // onEditAndResend is stable during streaming (uses a ref for msg.messages
     // in App.tsx), so it only changes on effort/model/session changes.
     prev.onEditAndResend === next.onEditAndResend
@@ -277,10 +285,11 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
 
 /** Thinking/Reasoning パートの折りたたみ表示 */
 const ReasoningPartView = memo(
-  function ReasoningPartView({ part }: { part: ReasoningPartType }) {
+  function ReasoningPartView({ part, showAllThinking }: { part: ReasoningPartType; showAllThinking: boolean }) {
     const t = useLocale();
     const [expanded, setExpanded] = useState(false);
     const isComplete = !!part.time?.end;
+    const visible = showAllThinking || expanded;
     const previousTextLengthRef = useRef(part.text.length);
     const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -289,7 +298,7 @@ const ReasoningPartView = memo(
       if (el && el.textContent !== part.text) {
         el.textContent = part.text;
       }
-    }, [part.text, expanded]);
+    }, [part.text, visible]);
 
     useEffect(() => {
       const previousLength = previousTextLengthRef.current;
@@ -324,13 +333,16 @@ const ReasoningPartView = memo(
             {isComplete ? <InfoCircleIcon /> : <SpinnerIcon className={styles.spinner} width={14} height={14} />}
           </span>
           <span className={styles.reasoningLabel}>{isComplete ? t["message.thought"] : t["message.thinking"]}</span>
-          <span className={`${styles.chevron} ${expanded ? styles.expanded : ""}`}>
+          <span className={`${styles.chevron} ${visible ? styles.expanded : ""}`}>
             <ChevronRightIcon />
           </span>
         </div>
-        {expanded && <div ref={bodyRef} className={styles.reasoningBody} />}
+        {visible && <div ref={bodyRef} className={styles.reasoningBody} />}
       </div>
     );
   },
-  (prev, next) => prev.part.text === next.part.text && prev.part.time?.end === next.part.time?.end,
+  (prev, next) =>
+    prev.part.text === next.part.text &&
+    prev.part.time?.end === next.part.time?.end &&
+    prev.showAllThinking === next.showAllThinking,
 );

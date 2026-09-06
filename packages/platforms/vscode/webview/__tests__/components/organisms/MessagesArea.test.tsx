@@ -55,6 +55,26 @@ describe("MessagesArea", () => {
     });
   });
 
+  it("showAllThinking を reasoning メッセージへ渡すこと", () => {
+    const reasoningMessage: MessageWithParts = {
+      info: createMessage({ role: "assistant", id: "reasoning-message" }),
+      parts: [
+        {
+          id: "reasoning-part",
+          type: "reasoning",
+          text: "Visible reasoning",
+          sessionID: "session-1",
+          messageID: "reasoning-message",
+          time: { created: 1, end: 2 },
+        } as any,
+      ],
+    };
+
+    render(<MessagesArea {...defaultProps} messages={[reasoningMessage]} showAllThinking />, { wrapper });
+
+    expect(screen.getByText("Visible reasoning")).toBeInTheDocument();
+  });
+
   // when session is busy
   context("セッションが busy の場合", () => {
     // renders streaming indicator

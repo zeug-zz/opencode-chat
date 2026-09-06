@@ -23,6 +23,8 @@ type Props = {
   onClose: () => void;
   localeSetting: LocaleSetting;
   onLocaleSettingChange: (setting: LocaleSetting) => void;
+  showAllThinking?: boolean;
+  onShowAllThinkingChange?: (value: boolean) => void;
   soundSettings: SoundSettings;
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
   mcpServers?: McpStatus | null;
@@ -38,6 +40,8 @@ export function ToolConfigPanel({
   onClose,
   localeSetting,
   onLocaleSettingChange,
+  showAllThinking = false,
+  onShowAllThinkingChange = () => {},
   soundSettings,
   onSoundSettingChange,
   mcpServers,
@@ -115,6 +119,18 @@ export function ToolConfigPanel({
               </div>
             )}
           </div>
+        </div>
+
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>{t["config.thinking"]}</div>
+          <label className={styles.toggle}>
+            <input
+              type="checkbox"
+              checked={showAllThinking}
+              onChange={(e) => onShowAllThinkingChange(e.target.checked)}
+            />
+            <span className={styles.toolName}>{t["config.showAllThinking"]}</span>
+          </label>
         </div>
 
         {/* Sound Notification Setting */}

@@ -30,6 +30,8 @@ const sandboxLocaleKeys = [
   "config.sandboxError",
 ] as const;
 
+const thinkingLocaleKeys = ["config.thinking", "config.showAllThinking"] as const;
+
 const localeDictionaries = [en, ja, zhCn, ko, zhTw, es, ptBr, ru];
 
 const defaultProps = {
@@ -73,6 +75,29 @@ describe("ToolConfigPanel", () => {
       const trigger = container.querySelector(`.${"langTrigger"}`);
       if (trigger) await user.click(trigger);
       expect(container.querySelectorAll(`.${"langOption"}`)).toHaveLength(9);
+    });
+
+    it("思考表示チェックボックスはデフォルトで未選択であること", () => {
+      const { getByRole } = render(<ToolConfigPanel {...defaultProps} />);
+
+      expect(getByRole("checkbox", { name: "Show all thinking" })).not.toBeChecked();
+    });
+
+    it("思考表示チェックボックスは制御された値を反映すること", () => {
+      const { getByRole } = render(<ToolConfigPanel {...defaultProps} showAllThinking />);
+
+      expect(getByRole("checkbox", { name: "Show all thinking" })).toBeChecked();
+    });
+
+    it("思考表示チェックボックスの変更時に新しい boolean 値を通知すること", async () => {
+      const onShowAllThinkingChange = vi.fn();
+      const { getByRole } = render(
+        <ToolConfigPanel {...defaultProps} onShowAllThinkingChange={onShowAllThinkingChange} />,
+      );
+
+      await userEvent.setup().click(getByRole("checkbox", { name: "Show all thinking" }));
+
+      expect(onShowAllThinkingChange).toHaveBeenCalledWith(true);
     });
   });
 
@@ -396,6 +421,18 @@ describe("ToolConfigPanel", () => {
         expect(typeof locale["config.sandboxError"]).toBe("function");
         expect(locale["config.sandboxWorkspaceOverride"]("on")).toBeTruthy();
         expect(locale["config.sandboxError"]("host failure")).toContain("host failure");
+      }
+    });
+
+    it("provides matching thinking keys in every locale", () => {
+      for (const locale of localeDictionaries) {
+        expect(
+          Object.keys(locale)
+            .filter((key) => key.startsWith("config.thinking") || key === "config.showAllThinking")
+            .sort(),
+        ).toEqual([...thinkingLocaleKeys].sort());
+        expect(typeof locale["config.thinking"]).toBe("string");
+        expect(typeof locale["config.showAllThinking"]).toBe("string");
       }
     });
 

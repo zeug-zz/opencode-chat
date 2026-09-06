@@ -1,6 +1,7 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getPersistedState } from "../../vscode-api";
 import { createMessage, createSession } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
@@ -28,6 +29,10 @@ async function setupWithReasoningPart(partOverrides: Record<string, unknown> = {
 
 // Reasoning display (ReasoningPartView)
 describe("思考表示（ReasoningPartView）", () => {
+  beforeEach(() => {
+    vi.mocked(getPersistedState).mockReturnValue(undefined);
+  });
+
   // In-progress reasoning part shows spinner and "Thinking..."
   context("進行中のリーズニングパートの場合", () => {
     let part: Element | null;
@@ -50,6 +55,24 @@ describe("思考表示（ReasoningPartView）", () => {
     // Shows spinner
     it("スピナーが表示されること", () => {
       expect(part?.querySelector(".spinner")).toBeInTheDocument();
+    });
+
+    it("デフォルトでは本文が折りたたまれていること", () => {
+      expect(screen.queryByText("Let me think about this step by step...")).not.toBeInTheDocument();
+    });
+  });
+
+  context("すべての思考を表示する設定が有効な場合", () => {
+    beforeEach(async () => {
+      vi.mocked(getPersistedState).mockReturnValue({ showAllThinking: true });
+      await setupWithReasoningPart({
+        text: "Previously hidden reasoning",
+        time: { created: Date.now(), end: Date.now() },
+      });
+    });
+
+    it("既存の完了済み本文をクリックなしで表示すること", () => {
+      expect(screen.getByText("Previously hidden reasoning")).toBeInTheDocument();
     });
   });
 

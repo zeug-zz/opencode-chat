@@ -37,6 +37,7 @@ export type UIPersistedState = {
   recentModels?: Array<{ providerID: string; modelID: string }>;
   /** Per-server MCP connection preference, keyed by server name. Applied after companion ready. */
   mcpEnabledByServer?: Record<string, boolean>;
+  showAllThinking?: boolean;
 };
 
 /** Platform-specific services */

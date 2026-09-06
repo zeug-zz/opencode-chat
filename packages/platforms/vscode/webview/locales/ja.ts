@@ -146,6 +146,9 @@ export const ja: LocaleSchema = {
   "config.langPtBr": "Português (Brasil)",
   "config.langRu": "Русский",
 
+  "config.thinking": "思考",
+  "config.showAllThinking": "すべての思考を表示",
+
   // Sound notification
   "config.sound": "サウンド通知",
   "config.soundResponseComplete": "応答完了",
