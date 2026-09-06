@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Queued prompts submitted while Chat or Write is busy, preserving session-scoped FIFO delivery and showing pending counts in the input
+- Restricted Scout delegation to the extension-injected, read-only `chat-research-worker` for approved research tasks, while keeping arbitrary delegation and Write delegation denied
 
 ## [0.9.0] - 2026-09-03
 
