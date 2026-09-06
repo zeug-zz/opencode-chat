@@ -94,6 +94,43 @@ describe("MessageItem", () => {
     });
   });
 
+  describe("ReasoningPartView の全体表示", () => {
+    const reasoningPart = {
+      id: "reasoning-1",
+      type: "reasoning" as const,
+      text: "A private chain of thought",
+      sessionID: "session-1",
+      messageID: "message-1",
+      time: { created: 1, end: 2 },
+    };
+    const reasoningMessage: MessageWithParts = {
+      info: createMessage({ id: "message-1", role: "assistant" }),
+      parts: [reasoningPart],
+    };
+
+    it("デフォルトでは完了済み本文を折りたたむこと", () => {
+      render(<MessageItem {...defaultProps} message={reasoningMessage} />, { wrapper });
+      expect(screen.queryByText(reasoningPart.text)).not.toBeInTheDocument();
+    });
+
+    it("有効時は既存本文を表示し、無効化すると手動展開状態へ戻ること", () => {
+      const { rerender } = render(<MessageItem {...defaultProps} message={reasoningMessage} showAllThinking />, {
+        wrapper,
+      });
+      expect(screen.getByText(reasoningPart.text)).toBeInTheDocument();
+
+      rerender(<MessageItem {...defaultProps} message={reasoningMessage} showAllThinking={false} />);
+      expect(screen.queryByText(reasoningPart.text)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTitle("Toggle thought details"));
+      expect(screen.getByText(reasoningPart.text)).toBeInTheDocument();
+
+      rerender(<MessageItem {...defaultProps} message={reasoningMessage} showAllThinking />);
+      rerender(<MessageItem {...defaultProps} message={reasoningMessage} showAllThinking={false} />);
+      expect(screen.getByText(reasoningPart.text)).toBeInTheDocument();
+    });
+  });
+
   // when rendered with a shell assistant message
   context("シェルコマンド結果のアシスタントメッセージの場合", () => {
     const shellWrapper = createContextWrapper({ isShellMessage: (id: string) => id === "shell-msg" });

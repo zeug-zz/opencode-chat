@@ -50,9 +50,7 @@ describe("サウンド通知", () => {
     await user.click(screen.getByTitle("Settings"));
 
     // 「Response complete」のチェックボックスをクリック（デフォルト ON → OFF）
-    const checkboxes = screen.getAllByRole("checkbox");
-    // 最初のチェックボックスが responseComplete
-    await user.click(checkboxes[0]);
+    await user.click(screen.getByRole("checkbox", { name: "Response complete" }));
 
     expect(setPersistedState).toHaveBeenCalledWith(
       expect.objectContaining({

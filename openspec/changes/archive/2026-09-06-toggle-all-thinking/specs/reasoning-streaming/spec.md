@@ -1,8 +1,5 @@
-# reasoning-streaming Specification
+## MODIFIED Requirements
 
-## Purpose
-Define the incremental display, filtering, and rendering behavior for reasoning text received from the opencode server, including the optional global show-all-thinking presentation preference.
-## Requirements
 ### Requirement: Streaming reasoning text display
 The system SHALL display reasoning/chain-of-thought text incrementally as it arrives from the opencode server, matching the streaming behavior of the opencode TUI. While reasoning is in progress, the reasoning block SHALL remain collapsed by default when the global show-all-thinking preference is disabled; when that preference is enabled, all current and future reasoning blocks SHALL show their bodies while text streams. Once reasoning completes, the block SHALL retain the same global or per-block visibility behavior while showing "Thought" with a toggle.
 

@@ -144,6 +144,9 @@ export const ko: LocaleSchema = {
   "config.langPtBr": "Português (Brasil)",
   "config.langRu": "Русский",
 
+  "config.thinking": "사고",
+  "config.showAllThinking": "모든 사고 표시",
+
   // Sound notification
   "config.sound": "사운드 알림",
   "config.soundResponseComplete": "응답 완료",

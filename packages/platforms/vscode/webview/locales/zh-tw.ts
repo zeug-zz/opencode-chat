@@ -143,6 +143,9 @@ export const zhTw: LocaleSchema = {
   "config.langPtBr": "Português (Brasil)",
   "config.langRu": "Русский",
 
+  "config.thinking": "思考",
+  "config.showAllThinking": "顯示所有思考",
+
   // Sound notification
   "config.sound": "聲音通知",
   "config.soundResponseComplete": "回應完成",

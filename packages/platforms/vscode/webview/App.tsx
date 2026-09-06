@@ -31,7 +31,7 @@ import { useSession } from "./hooks/useSession";
 import { useSoundNotification } from "./hooks/useSoundNotification";
 import { LocaleProvider } from "./locales";
 import type { FileAttachment, HostToUIMessage, UIToHostMessage } from "./vscode-api";
-import { postMessage } from "./vscode-api";
+import { getPersistedState, postMessage, setPersistedState } from "./vscode-api";
 
 // re-export for consumers that import from App.tsx
 export type { MessageWithParts } from "./hooks/useMessages";
@@ -65,6 +65,11 @@ export function App() {
   const locale = useLocale();
   const fileChanges = useFileChanges(activeSessionRef);
   const sound = useSoundNotification(activeSessionRef);
+  const [showAllThinking, setShowAllThinking] = useState(() => getPersistedState()?.showAllThinking ?? false);
+  const handleShowAllThinkingChange = useCallback((value: boolean) => {
+    setShowAllThinking(value);
+    setPersistedState({ ...getPersistedState(), showAllThinking: value });
+  }, []);
 
   useEffect(() => {
     setContextMemory("");
@@ -694,6 +699,7 @@ export function App() {
                 messages={msg.messages}
                 sessionBusy={session.sessionBusy}
                 activeSessionId={session.activeSession.id}
+                showAllThinking={showAllThinking}
                 questions={quest.questions}
                 onEditAndResend={handleEditAndResend}
                 onRevertToCheckpoint={handleRevertToCheckpoint}
@@ -731,6 +737,8 @@ export function App() {
                   contextMemoryText={contextMemory}
                   localeSetting={locale.localeSetting}
                   onLocaleSettingChange={locale.handleLocaleSettingChange}
+                  showAllThinking={showAllThinking}
+                  onShowAllThinkingChange={handleShowAllThinkingChange}
                   soundSettings={sound.soundSettings}
                   onSoundSettingChange={sound.handleSoundSettingChange}
                   agents={agents}

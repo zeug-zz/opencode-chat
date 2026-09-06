@@ -2,7 +2,7 @@ import type { ChatSandboxStatus } from "@opencode-chat/core";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { postMessage, setPersistedState } from "../../vscode-api";
+import { getPersistedState, postMessage, setPersistedState } from "../../vscode-api";
 import { createSession } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
@@ -68,6 +68,36 @@ describe("設定", () => {
     await user.click(screen.getByRole("option", { name: /日本語|Japanese/i }));
 
     expect(setPersistedState).toHaveBeenCalledWith(expect.objectContaining({ localeSetting: "ja" }));
+  });
+
+  it("思考表示の切り替えが persisted state に true/false として保存されること", async () => {
+    const persistedState = { showAllThinking: false } as NonNullable<ReturnType<typeof getPersistedState>>;
+    vi.mocked(getPersistedState).mockReturnValue(persistedState);
+    vi.mocked(setPersistedState).mockImplementation((state) => Object.assign(persistedState, state));
+    await setupForSettings();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTitle("Settings"));
+    const thinkingCheckbox = screen.getByRole("checkbox", { name: "Show all thinking" });
+    expect(thinkingCheckbox).not.toBeChecked();
+
+    await user.click(thinkingCheckbox);
+    expect(setPersistedState).toHaveBeenLastCalledWith(expect.objectContaining({ showAllThinking: true }));
+    expect(persistedState.showAllThinking).toBe(true);
+
+    await user.click(thinkingCheckbox);
+    expect(setPersistedState).toHaveBeenLastCalledWith(expect.objectContaining({ showAllThinking: false }));
+    expect(persistedState.showAllThinking).toBe(false);
+  });
+
+  it("persisted true の思考表示設定をチェック済みで読み込むこと", async () => {
+    vi.mocked(getPersistedState).mockReturnValue({ showAllThinking: true });
+    await setupForSettings();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTitle("Settings"));
+
+    expect(screen.getByRole("checkbox", { name: "Show all thinking" })).toBeChecked();
   });
 
   // Config file link sends openConfigFile
