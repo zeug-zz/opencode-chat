@@ -108,8 +108,8 @@ const buildOnlyPrimaryAgents = [
 
 const subagentOnlyAgents = [
   {
-    name: "general",
-    description: "General purpose subagent",
+    name: "chat-research-worker",
+    description: "Read-only delegated research worker",
     mode: "subagent",
     builtIn: true,
     permission: { edit: "ask", bash: {} },

@@ -134,6 +134,14 @@
   flex-shrink: 0;
 }
 
+.queuedCount {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  white-space: nowrap;
+  user-select: none;
+}
+
 .chevron {
   display: inline-flex;
   align-items: center;

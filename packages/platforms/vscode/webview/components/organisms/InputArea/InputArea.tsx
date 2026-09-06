@@ -43,6 +43,7 @@ type Props = {
   ) => void;
   onAbort: () => void;
   isBusy: boolean;
+  queuedPromptCount?: number;
   providers: ProviderInfo[];
   allProvidersData: AllProvidersData | null;
   selectedModel: { providerID: string; modelID: string } | null;
@@ -99,6 +100,7 @@ export function InputArea({
   onSend,
   onAbort,
   isBusy,
+  queuedPromptCount = 0,
   providers,
   allProvidersData,
   selectedModel,
@@ -551,7 +553,6 @@ export function InputArea({
       // IME 変換中は送信しない
       if (e.key === "Enter" && !e.shiftKey && !composingRef.current) {
         e.preventDefault();
-        if (isBusy) return;
         // # ポップアップ表示中はファイル選択ではなく送信を優先
         if (hashTrigger.active) {
           setHashTrigger({ active: false, startIndex: -1 });
@@ -573,7 +574,6 @@ export function InputArea({
     },
     [
       handleSend,
-      isBusy,
       hashTrigger.active,
       atTrigger.active,
       hashFocusedIndex,
@@ -847,6 +847,15 @@ export function InputArea({
               </span>
             )}
           </div>
+          {queuedPromptCount > 0 && (
+            <span
+              className={styles.queuedCount}
+              role="status"
+              aria-label={t["input.queuedAriaLabel"](queuedPromptCount)}
+            >
+              {t["input.queued"](queuedPromptCount)}
+            </span>
+          )}
           {isBusy ? (
             <IconButton className={styles.sendButton} onClick={onAbort} title={t["input.stop"]}>
               <StopIcon />

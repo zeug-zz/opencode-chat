@@ -924,6 +924,8 @@ describe("ChatViewProvider", () => {
 
     it("omits missing or unknown bundled commands without blocking ordinary sends", async () => {
       const { sendMessage } = setupProvider(mockAgent, undefined, undefined, undefined, undefined, ["research-answer"]);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
 
       await sendMessage({
         type: "sendMessage",
@@ -931,11 +933,15 @@ describe("ChatViewProvider", () => {
         text: "ordinary",
         bundledCommand: { name: "not-available", arguments: "ignored" },
       });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
       await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "ordinary again" });
 
       expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(1, "sess-1", "ordinary", expect.anything());
       const firstOptions = mockAgent.sendMessage.mock.calls[0][2] as Record<string, unknown>;
       expect(firstOptions.bundledCommand).toBeUndefined();
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(mockAgent.sendMessage.mock.calls[1][1]).toBe("ordinary again");
     });
 
@@ -956,6 +962,210 @@ describe("ChatViewProvider", () => {
         "question",
         expect.objectContaining({ primaryAgent: "build", system: "explicit" }),
       );
+    });
+
+    it("admits an idle prompt immediately and publishes an empty count", async () => {
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "first" });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith("sess-1", "first", expect.anything());
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 0 });
+    });
+
+    it("releases the active guard after the matching idle event when no prompt is pending", async () => {
+      const { sendMessage } = setupProvider(mockAgent);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "first" });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "second" });
+
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(2, "sess-1", "second", expect.anything());
+    });
+
+    it("queues rapid sends before busy status and preserves their FIFO count", async () => {
+      const first = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => first.promise);
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+
+      const firstSend = sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "first" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "second" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "third" });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 1 });
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 2 });
+      first.resolve();
+      await firstSend;
+    });
+
+    it("ignores an idle event before busy status for the admitted prompt", async () => {
+      const first = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => first.promise);
+      const { sendMessage } = setupProvider(mockAgent);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      const firstSend = sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "first" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "second" });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      first.resolve();
+      await firstSend;
+
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(2, "sess-1", "second", expect.anything());
+    });
+
+    it("drains exactly one FIFO item per matching idle transition", async () => {
+      const second = deferred<void>();
+      const third = deferred<void>();
+      mockAgent.sendMessage
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(() => second.promise)
+        .mockImplementationOnce(() => third.promise);
+      const { sendMessage } = setupProvider(mockAgent);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "first" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "second" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "third" });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2);
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2);
+      second.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      expect(mockAgent.sendMessage.mock.calls[2][1]).toBe("third");
+      third.resolve();
+    });
+
+    it("preserves the complete queued payload and original mode", async () => {
+      const first = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => first.promise);
+      const { sendMessage } = setupProvider(mockAgent, undefined, undefined, undefined, undefined, ["research-answer"]);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const files = [{ filePath: "src/a.ts", fileName: "a.ts" }];
+      const effort = { id: "low", label: "Low" };
+      const bundledCommand = { name: "research-answer", arguments: "scope=all" };
+
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "active" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "queued",
+        model: { providerID: "anthropic", modelID: "claude-4" },
+        effort,
+        files,
+        agent: "reviewer",
+        primaryAgent: "build",
+        skill: "research-skill",
+        bundledCommand,
+        system: "explicit system",
+      });
+      files[0].filePath = "mutated.ts";
+      effort.id = "high";
+      bundledCommand.arguments = "mutated";
+      first.resolve();
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(2, "sess-1", "queued", {
+        model: { providerID: "anthropic", modelID: "claude-4" },
+        files: [{ filePath: "src/a.ts", fileName: "a.ts" }],
+        agent: "reviewer",
+        primaryAgent: "build",
+        skill: "research-skill",
+        bundledCommand: { name: "research-answer", arguments: "scope=all" },
+        system: "explicit system",
+        effort: { id: "low", label: "Low" },
+      });
+    });
+
+    it("keeps queued work through abort until the matching idle event", async () => {
+      const first = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => first.promise);
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "active" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "queued" });
+      await sendMessage({ type: "abort", sessionId: "sess-1" });
+      expect(mockAgent.abortSession).toHaveBeenCalledWith("sess-1");
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockAgent.sendMessage.mock.calls[1][1]).toBe("queued");
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 0 });
+      first.resolve();
+    });
+
+    it("isolates foreign status events and discards deleted queues", async () => {
+      const first = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => first.promise);
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "active" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "queued" });
+      eventCallback({ type: "session.status", properties: { sessionID: "other", status: { type: "idle" } } });
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      eventCallback({ type: "session.deleted", properties: { info: { id: "sess-1" } } });
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 0 });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      first.resolve();
+    });
+
+    it("restores the active session count during webview initialization", async () => {
+      const first = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => first.promise);
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "active" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "queued" });
+      postMessage.mockClear();
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 1 });
+      first.resolve();
+    });
+
+    it("retains a failed dispatch at the queue head without advancing later work", async () => {
+      const first = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => first.promise).mockRejectedValueOnce(new Error("failed"));
+      const { postMessage, sendMessage } = setupProvider(mockAgent);
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "active" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "failed" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "later" });
+      first.resolve();
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2);
+      expect(mockAgent.sendMessage.mock.calls[1][1]).toBe("failed");
+      expect(postMessage).toHaveBeenLastCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 2 });
     });
   });
 

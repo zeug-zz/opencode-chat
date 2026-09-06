@@ -25,6 +25,8 @@ export const zhCn: LocaleSchema = {
   "input.settings": "设置",
   "input.stop": "停止",
   "input.send": "发送",
+  "input.queued": (count: number) => `排队中：${count}`,
+  "input.queuedAriaLabel": (count: number) => `有 ${count} 条提示正在排队`,
 
   // MessageItem
   "message.fileFallback": "文件",

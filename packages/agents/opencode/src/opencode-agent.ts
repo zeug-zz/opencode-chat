@@ -71,7 +71,10 @@ const CHAT_AGENT_OVERLAY = {
       permission: {
         edit: "deny",
         bash: "deny",
-        task: "deny",
+        task: {
+          "*": "deny",
+          "chat-research-worker": "allow",
+        },
         read: "allow",
         glob: "allow",
         grep: "allow",
@@ -79,6 +82,22 @@ const CHAT_AGENT_OVERLAY = {
         webfetch: "allow",
         websearch: "allow",
         question: "allow",
+      },
+    },
+    "chat-research-worker": {
+      mode: "subagent",
+      description: "Read-only delegated research worker.",
+      permission: {
+        "*": "deny",
+        read: "allow",
+        glob: "allow",
+        grep: "allow",
+        list: "allow",
+        webfetch: "allow",
+        websearch: "allow",
+        "firecrawl_*": "allow",
+        "context-mode_*": "allow",
+        "paper-search_*": "allow",
       },
     },
     build: {

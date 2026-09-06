@@ -25,6 +25,8 @@ export const ptBr: LocaleSchema = {
   "input.settings": "Configurações",
   "input.stop": "Parar",
   "input.send": "Enviar",
+  "input.queued": (count: number) => `Na fila: ${count}`,
+  "input.queuedAriaLabel": (count: number) => `${count} ${count === 1 ? "prompt na fila" : "prompts na fila"}`,
 
   // MessageItem
   "message.fileFallback": "arquivo",

@@ -90,6 +90,11 @@ export function App() {
 
   const [capabilities, setCapabilities] = useState<AgentCapabilities | undefined>(undefined);
   const [chatSandboxStatus, setChatSandboxStatus] = useState<ChatSandboxStatus | null>(null);
+  const [queuedPromptCount, setQueuedPromptCount] = useState(0);
+
+  useEffect(() => {
+    setQueuedPromptCount(0);
+  }, [session.activeSession?.id]);
 
   const handleChatSandboxSettingsChange = useCallback((settings: ChatSandboxSettings) => {
     const message: Extract<UIToHostMessage, { type: "setChatSandboxSettings" }> = {
@@ -251,6 +256,9 @@ export function App() {
           const changedNonNullSession =
             previousSessionId !== undefined && nextSessionId !== undefined && previousSessionId !== nextSessionId;
           activeSessionRef.current = data.session;
+          if (previousSessionId !== nextSessionId) {
+            setQueuedPromptCount(0);
+          }
           if (changedNonNullSession) {
             msg.clearSessionState();
             fileChanges.clearDiffs();
@@ -345,6 +353,11 @@ export function App() {
           }
           break;
         }
+        case "queuedPrompts":
+          if (data.sessionId === activeSessionRef.current?.id) {
+            setQueuedPromptCount(data.count);
+          }
+          break;
         case "agents": {
           setAgents(data.agents);
           // 初回: まだプライマリエージェントが未選択なら scout を優先し、無ければ最初の primary/all にフォールバックする
@@ -432,7 +445,7 @@ export function App() {
       }
       postMessage(payload);
     },
-    [session.activeSession, prov.selectedModel, prov.selectedModelEffort],
+    [session.activeSession, prov.selectedModel, prov.selectedModelEffort, selectedPrimaryAgent],
   );
 
   const handleAbort = useCallback(() => {
@@ -696,6 +709,7 @@ export function App() {
                   onSend={handleSend}
                   onAbort={handleAbort}
                   isBusy={session.sessionBusy}
+                  queuedPromptCount={queuedPromptCount}
                   providers={prov.providers}
                   allProvidersData={prov.allProvidersData}
                   selectedModel={prov.selectedModel}

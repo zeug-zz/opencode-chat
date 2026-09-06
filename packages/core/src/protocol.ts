@@ -200,6 +200,7 @@ export type HostToUIMessage =
   // --- Sessions ---
   | { type: "sessions"; sessions: ChatSession[] }
   | { type: "activeSession"; session: ChatSession | null }
+  | { type: "queuedPrompts"; sessionId: string; count: number }
 
   // --- Messages ---
   | {

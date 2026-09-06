@@ -33,8 +33,12 @@ This policy covers:
 ## MCP Server Trust Model
 
 The OpenCode Research extension launches an extension-owned OpenCode server with a read-only Scout agent
-(`packages/agents/opencode/src/opencode-agent.ts`). The Scout config overlay denies edit, bash,
-and task permissions. However:
+(`packages/agents/opencode/src/opencode-agent.ts`). Scout's config overlay denies edit and bash, and
+denies task targets with a wildcard default-deny except for the exact extension-injected
+`chat-research-worker` target. That worker runs in `subagent` mode with an explicit wildcard
+tool denial and is read-only. It may use only the reviewed research MCP
+permission prefixes `firecrawl_*`, `context-mode_*`, and `paper-search_*`, and only when the
+corresponding server is enabled through the existing Chat MCP preferences. However:
 
 - **MCP servers remain untrusted.** Local MCP processes launched by the sandboxed server
   inherit its process, filesystem, and network restrictions; remote MCPs follow the network
@@ -45,6 +49,12 @@ and task permissions. However:
 - **The Scout read-only overlay is defense-in-depth**, not a sandbox. It limits the Scout
   agent itself; downstream tool execution through MCP servers is the user's responsibility.
 
+Scout cannot delegate to arbitrary or user-defined agents, including agents merely named with the
+`chat-research-*` prefix. The injected worker cannot edit, use Bash or shell execution, invoke
+`task` recursively, perform coding or package operations, control a terminal, or use unknown or
+unapproved MCP tools. An enabled MCP remains a downstream untrusted trust boundary and does not
+make its tools safe or grant them generally to Chat agents.
+
 ## Extension Write Boundary and Coding Handoff
 
 The extension's user-facing Write mode is backed by OpenCode's `build` agent, with behavioral
@@ -53,9 +63,10 @@ technical report-only path boundary. Write does not receive agent-level Bash or 
 execution. This boundary applies to the extension-owned server process and does not change the independent
 OpenCode TUI's normal Build behavior.
 
-For serious coding or shell work, use the existing terminal handoff to open the active session
-in an independent OpenCode TUI process. The extension remains available, but terminal handoff
-is the supported coding escape hatch rather than an unrestricted command runner in the chat UI.
+For full coding, shell, package, or unrestricted work, use the existing terminal handoff to open
+the active session in an independent OpenCode TUI process. The extension remains available, but
+the independent TUI is the supported escape hatch rather than an unrestricted command runner in
+the chat UI.
 
 ## Chat Sandbox Filesystem Baseline
 

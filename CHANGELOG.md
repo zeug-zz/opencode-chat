@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Pinned the Semgrep CI container to an immutable image digest
 - Strengthened the `main` branch ruleset with pull-request and security-check requirements
 
+## [0.10.1] - 2026-09-06
+
+### Fixed
+
+- Allow sandboxed Chat context-mode tooling to persist indexed content while honoring the `CONTEXT_MODE_DIR` override
+
+## [0.10.0] - 2026-09-06
+
+### Added
+
+- Queued prompts submitted while Chat or Write is busy, preserving session-scoped FIFO delivery and showing pending counts in the input
+
 ## [0.9.0] - 2026-09-03
 
 ### Added
@@ -254,7 +266,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.7.0...v0.8.0
