@@ -88,8 +88,7 @@ describe("キーボード・IME ハンドリング", () => {
     });
   });
 
-  // Enter does not send while isBusy
-  it("isBusy 状態で Enter を押しても送信されないこと", async () => {
+  it("isBusy 状態でも Enter で通常の sendMessage が1回送信されること", async () => {
     await setupInputReady();
 
     const user = userEvent.setup();
@@ -107,12 +106,18 @@ describe("キーボード・IME ハンドリング", () => {
     // Enter を押す
     await user.keyboard("{Enter}");
 
-    // sendMessage が呼ばれていないことを確認
     const sendCalls = vi
       .mocked(postMessage)
       .mock.calls.filter(
         (call) => call[0] && typeof call[0] === "object" && "type" in call[0] && call[0].type === "sendMessage",
       );
-    expect(sendCalls).toHaveLength(0);
+    expect(sendCalls).toHaveLength(1);
+    expect(sendCalls[0][0]).toEqual(
+      expect.objectContaining({
+        type: "sendMessage",
+        sessionId: "s1",
+        text: "test message",
+      }),
+    );
   });
 });

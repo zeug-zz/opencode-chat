@@ -739,6 +739,7 @@ describe("resolveRuntimeCachePaths", () => {
   it("derives POSIX npm and uv defaults without allowing the home root", () => {
     expect(resolveRuntimeCachePaths({}, "/home/tester", "linux")).toEqual([
       "/home/tester/.cache/uv",
+      "/home/tester/.config/opencode/context-mode/content",
       "/home/tester/.config/opencode/context-mode/sessions",
       "/home/tester/.local/share/uv",
       "/home/tester/.local/state/opencode",
@@ -751,6 +752,7 @@ describe("resolveRuntimeCachePaths", () => {
 
     expect(paths).toEqual([
       "/Users/tester/.cache/uv",
+      "/Users/tester/.config/opencode/context-mode/content",
       "/Users/tester/.config/opencode/context-mode/sessions",
       "/Users/tester/.local/share/uv",
       "/Users/tester/.local/state/opencode",
@@ -800,6 +802,7 @@ describe("resolveRuntimeCachePaths", () => {
         "linux",
       ),
     ).toEqual([
+      "/home/tester/.config/opencode/context-mode/content",
       "/home/tester/.config/opencode/context-mode/sessions",
       "/home/tester/.local/state/opencode",
       "/npm/cache",
@@ -820,6 +823,7 @@ describe("resolveRuntimeCachePaths", () => {
     ).toEqual([
       "/Users/tester/.npm",
       "/xdg/cache/uv",
+      "/xdg/config/opencode/context-mode/content",
       "/xdg/config/opencode/context-mode/sessions",
       "/xdg/data/uv",
       "/xdg/state/opencode",
@@ -838,12 +842,26 @@ describe("resolveRuntimeCachePaths", () => {
     expect(policy.readWritePaths).toEqual(
       expect.arrayContaining([
         "/home/tester/.local/state/opencode",
+        "/home/tester/.config/opencode/context-mode/content",
         "/home/tester/.config/opencode/context-mode/sessions",
       ]),
     );
     expect(policy.readWritePaths).not.toContain("/home/tester");
     expect(policy.readWritePaths).not.toContain("/home/tester/.config/opencode");
     expect(policy.readWritePaths).not.toContain("/home/tester/.ssh");
+  });
+
+  it("honors a custom context-mode root for both content and sessions", () => {
+    expect(resolveRuntimeCachePaths({ CONTEXT_MODE_DIR: "/workspace/.context-mode" }, "/home/tester", "linux")).toEqual(
+      [
+        "/home/tester/.cache/uv",
+        "/home/tester/.local/share/uv",
+        "/home/tester/.local/state/opencode",
+        "/home/tester/.npm",
+        "/workspace/.context-mode/content",
+        "/workspace/.context-mode/sessions",
+      ],
+    );
   });
 
   it("derives Windows cache defaults and preserves explicit overrides", () => {

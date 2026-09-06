@@ -23,6 +23,8 @@ export const en = {
   "input.settings": "Settings",
   "input.stop": "Stop",
   "input.send": "Send",
+  "input.queued": (count: number) => `Queued: ${count}`,
+  "input.queuedAriaLabel": (count: number) => `${count} prompt${count === 1 ? "" : "s"} queued`,
 
   // MessageItem
   "message.fileFallback": "file",

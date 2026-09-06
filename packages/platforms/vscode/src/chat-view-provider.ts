@@ -16,6 +16,14 @@ import type {
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
 
+type NormalPrompt = Extract<UIToHostMessage, { type: "sendMessage" }>;
+
+type PromptQueueState = {
+  active: boolean;
+  waitingForBusy: boolean;
+  pending: NormalPrompt[];
+};
+
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "opencode-chat.chatView";
 
@@ -32,6 +40,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly chatMcpPrefs?: ChatMcpPrefsStore;
   private readonly bundledResources: readonly BundledResourceMetadata[];
   private readonly bundledCommandNames: ReadonlySet<string>;
+  private readonly promptQueues = new Map<string, PromptQueueState>();
 
   private getSystemPrompt(primaryAgent: string | undefined, explicitSystem: string | undefined): string | undefined {
     return (
@@ -83,6 +92,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // SSE イベントを Webview に転送する
     this.agent.onEvent((event) => {
       this.postMessage({ type: "event", event });
+
+      if (event.type === "session.status") {
+        this.handleSessionStatus(event.properties.sessionID, event.properties.status.type);
+      } else if (event.type === "session.deleted") {
+        this.clearPromptQueue(event.properties.info.id);
+      }
 
       // コンパクション完了時にセッション + メッセージを再取得して Webview に送信する
       // (compact API は非同期でバックグラウンド実行されるため、完了イベントでリフレッシュする)
@@ -136,7 +151,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "sendMessage": {
-        const system = this.getSystemPrompt(message.primaryAgent, message.system);
         const bundledCommand =
           message.bundledCommand &&
           this.bundledCommandNames.has(message.bundledCommand.name) &&
@@ -146,16 +160,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 arguments: message.bundledCommand.arguments,
               } satisfies BundledCommandInvocation)
             : undefined;
-        await this.agent.sendMessage(message.sessionId, message.text, {
-          model: message.model,
-          files: message.files,
-          agent: message.agent,
-          primaryAgent: message.primaryAgent,
-          skill: message.skill,
-          ...(bundledCommand ? { bundledCommand } : {}),
-          system,
-          ...(message.effort !== undefined && { effort: message.effort }),
-        });
+        const prompt: NormalPrompt = {
+          ...message,
+          model: message.model && { ...message.model },
+          effort: message.effort && { ...message.effort },
+          files: message.files?.map((file) => ({ ...file })),
+          ...(bundledCommand ? { bundledCommand: { ...bundledCommand } } : { bundledCommand: undefined }),
+        };
+        const state = this.promptQueues.get(prompt.sessionId) ?? {
+          active: false,
+          waitingForBusy: false,
+          pending: [],
+        };
+        this.promptQueues.set(prompt.sessionId, state);
+        if (state.active || state.pending.length > 0) {
+          state.pending.push(prompt);
+          this.postQueuedPromptCount(prompt.sessionId, state.pending.length);
+          break;
+        }
+        state.active = true;
+        state.waitingForBusy = true;
+        this.postQueuedPromptCount(prompt.sessionId, 0);
+        await this.dispatchPrompt(prompt, state);
         break;
       }
       case "createSession": {
@@ -197,6 +223,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "deleteSession": {
+        this.clearPromptQueue(message.sessionId);
         const deletesActiveSession = this.activeSession?.id === message.sessionId;
         const operationGeneration = deletesActiveSession
           ? ++this.sessionOperationGeneration
@@ -578,6 +605,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.activeSession = session;
     this.postMessage({ type: "activeSession", session });
     if (!session) return true;
+    this.postQueuedPromptCount(session.id, this.promptQueues.get(session.id)?.pending.length ?? 0);
 
     const messages = await this.agent.getMessages(session.id);
     if (operationGeneration !== this.sessionOperationGeneration || this.activeSession?.id !== session.id) {
@@ -604,6 +632,66 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private postMessage(message: HostToUIMessage): void {
     this.view?.webview.postMessage(message);
+  }
+
+  private postQueuedPromptCount(sessionId: string, count: number): void {
+    this.postMessage({ type: "queuedPrompts", sessionId, count });
+  }
+
+  private handleSessionStatus(sessionId: string, status: "busy" | "idle"): void {
+    if (sessionId !== this.activeSession?.id) return;
+    const state = this.promptQueues.get(sessionId);
+    if (status === "busy") {
+      const activeState = state ?? { active: true, waitingForBusy: false, pending: [] };
+      activeState.active = true;
+      activeState.waitingForBusy = false;
+      this.promptQueues.set(sessionId, activeState);
+      return;
+    }
+    if (!state?.active) return;
+    if (state.waitingForBusy) {
+      return;
+    }
+    if (state.pending.length === 0) {
+      state.active = false;
+      return;
+    }
+    state.active = true;
+    state.waitingForBusy = true;
+    const prompt = state.pending.shift();
+    if (!prompt) return;
+    this.postQueuedPromptCount(sessionId, state.pending.length);
+    void this.dispatchPrompt(prompt, state).catch((err) => {
+      console.error("[OpenCode] Error handling message 'sendMessage':", err);
+    });
+  }
+
+  private clearPromptQueue(sessionId: string): void {
+    if (!this.promptQueues.delete(sessionId)) return;
+    this.postQueuedPromptCount(sessionId, 0);
+  }
+
+  private async dispatchPrompt(prompt: NormalPrompt, state: PromptQueueState): Promise<void> {
+    try {
+      await this.agent.sendMessage(prompt.sessionId, prompt.text, {
+        model: prompt.model,
+        files: prompt.files,
+        agent: prompt.agent,
+        primaryAgent: prompt.primaryAgent,
+        skill: prompt.skill,
+        ...(prompt.bundledCommand ? { bundledCommand: prompt.bundledCommand } : {}),
+        system: this.getSystemPrompt(prompt.primaryAgent, prompt.system),
+        ...(prompt.effort !== undefined && { effort: prompt.effort }),
+      });
+    } catch (err) {
+      if (this.promptQueues.get(prompt.sessionId) === state) {
+        state.active = false;
+        state.waitingForBusy = false;
+        state.pending.unshift(prompt);
+        this.postQueuedPromptCount(prompt.sessionId, state.pending.length);
+      }
+      throw err;
+    }
   }
 
   private postMcpPrefs(): void {

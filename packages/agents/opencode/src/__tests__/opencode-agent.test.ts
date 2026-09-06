@@ -280,7 +280,10 @@ describe("OpenCodeAgent", () => {
               permission: {
                 edit: "deny",
                 bash: "deny",
-                task: "deny",
+                task: {
+                  "*": "deny",
+                  "chat-research-worker": "allow",
+                },
                 read: "allow",
                 glob: "allow",
                 grep: "allow",
@@ -288,6 +291,22 @@ describe("OpenCodeAgent", () => {
                 webfetch: "allow",
                 websearch: "allow",
                 question: "allow",
+              },
+            },
+            "chat-research-worker": {
+              mode: "subagent",
+              description: "Read-only delegated research worker.",
+              permission: {
+                "*": "deny",
+                read: "allow",
+                glob: "allow",
+                grep: "allow",
+                list: "allow",
+                webfetch: "allow",
+                websearch: "allow",
+                "firecrawl_*": "allow",
+                "context-mode_*": "allow",
+                "paper-search_*": "allow",
               },
             },
             build: {
@@ -312,8 +331,10 @@ describe("OpenCodeAgent", () => {
     it("should pass the same MCP overlay to sandboxed and unsandboxed children", async () => {
       const mcpOverlay = {
         mcp: {
-          localMcp: { enabled: true },
-          remoteMcp: { enabled: false },
+          firecrawl: { enabled: true },
+          "context-mode": { enabled: false },
+          "paper-search": { enabled: true },
+          context7: { enabled: false },
         },
       };
       const launchConfiguration = {
@@ -376,7 +397,7 @@ describe("OpenCodeAgent", () => {
       expect(options).toBeDefined();
       if (!options) throw new Error("Expected companion server options");
       const config = options.config;
-      const agents = config?.agent as Record<string, { permission?: Record<string, string> }>;
+      const agents = config?.agent as Record<string, { permission?: Record<string, unknown> }>;
       const writePermission = agents.build.permission;
       const allowedTools = ["read", "glob", "grep", "list", "webfetch", "websearch", "edit"];
       const deniedTools = ["bash", "task", "question", "todowrite", "skill"];
@@ -389,7 +410,10 @@ describe("OpenCodeAgent", () => {
       expect(agents.scout.permission).toEqual({
         edit: "deny",
         bash: "deny",
-        task: "deny",
+        task: {
+          "*": "deny",
+          "chat-research-worker": "allow",
+        },
         read: "allow",
         glob: "allow",
         grep: "allow",
@@ -405,6 +429,50 @@ describe("OpenCodeAgent", () => {
 
       expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
       expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
+    });
+
+    it("should restrict Scout delegation to the injected read-only research worker", async () => {
+      await agent.connect();
+
+      const options = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
+      const agents = options?.config?.agent as Record<string, { mode?: string; permission?: Record<string, unknown> }>;
+      const worker = agents["chat-research-worker"];
+      const workerPermission = worker.permission ?? {};
+      const allowedTools = [
+        "read",
+        "glob",
+        "grep",
+        "list",
+        "webfetch",
+        "websearch",
+        "firecrawl_*",
+        "context-mode_*",
+        "paper-search_*",
+      ];
+
+      expect(agents.scout.permission?.task).toEqual({
+        "*": "deny",
+        "chat-research-worker": "allow",
+      });
+      expect(agents.build.permission?.task).toBeUndefined();
+      expect(worker.mode).toBe("subagent");
+      expect(Object.keys(workerPermission)).toEqual(["*", ...allowedTools]);
+      expect(allowedTools.every((tool) => workerPermission[tool] === "allow")).toBe(true);
+      for (const tool of [
+        "edit",
+        "bash",
+        "task",
+        "question",
+        "todowrite",
+        "skill",
+        "terminal",
+        "context7_*",
+        "unknown",
+      ]) {
+        expect(workerPermission[tool] ?? workerPermission["*"]).toBe("deny");
+      }
+      expect(agents.scout.permission?.task).not.toHaveProperty("chat-research-worker-extra");
+      expect(agents.scout.permission?.task).not.toHaveProperty("chat-research-other");
     });
 
     it("should pass the merged agent and MCP overlay to a sandboxed child", async () => {
@@ -438,8 +506,10 @@ describe("OpenCodeAgent", () => {
         executable: { path: "/usr/local/bin/opencode" },
         mcpOverlay: {
           mcp: {
-            localMcp: { enabled: true },
-            remoteMcp: { enabled: false },
+            firecrawl: { enabled: true },
+            "context-mode": { enabled: false },
+            "paper-search": { enabled: true },
+            context7: { enabled: false },
           },
         },
       });
@@ -467,7 +537,10 @@ describe("OpenCodeAgent", () => {
             permission: {
               edit: "deny",
               bash: "deny",
-              task: "deny",
+              task: {
+                "*": "deny",
+                "chat-research-worker": "allow",
+              },
               read: "allow",
               glob: "allow",
               grep: "allow",
@@ -475,6 +548,22 @@ describe("OpenCodeAgent", () => {
               webfetch: "allow",
               websearch: "allow",
               question: "allow",
+            },
+          },
+          "chat-research-worker": {
+            mode: "subagent",
+            description: "Read-only delegated research worker.",
+            permission: {
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+              webfetch: "allow",
+              websearch: "allow",
+              "firecrawl_*": "allow",
+              "context-mode_*": "allow",
+              "paper-search_*": "allow",
             },
           },
           build: {
@@ -491,8 +580,10 @@ describe("OpenCodeAgent", () => {
           },
         },
         mcp: {
-          localMcp: { enabled: true },
-          remoteMcp: { enabled: false },
+          firecrawl: { enabled: true },
+          "context-mode": { enabled: false },
+          "paper-search": { enabled: true },
+          context7: { enabled: false },
         },
       });
       expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledWith(expect.any(String));

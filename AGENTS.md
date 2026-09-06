@@ -96,9 +96,14 @@ is only for installing a VSIX locally in VS Code.
 - **Pre-commit:** Gitleaks secret scanning (`.pre-commit-config.yaml`). Run `pre-commit run --all-files` to verify.
 - **CI:** Gitleaks, Semgrep SAST, Semgrep OSS, pnpm audit, and CodeQL on every push.
 - **Dependabot:** Enabled for npm and GitHub Actions.
-- **MCP trust model:** The companion Scout agent runs with read-only permissions (edit/bash/task denied
-  via in-memory config overlay in `opencode-agent.ts`). User-installed MCP servers are NOT sandboxed
-  by this extension — verify tool permissions on any connected MCP servers. See `SECURITY.md` for details.
+- **MCP trust model:** The companion Scout agent runs with read-only permissions: edit and Bash are
+  denied, and task delegation is default-deny except for the exact injected `chat-research-worker`
+  subagent. The worker permits only reviewed `firecrawl_*`, `context-mode_*`, and `paper-search_*`
+  MCP prefixes when existing Chat MCP preferences enable those servers; arbitrary or recursive
+  delegation and unapproved MCP tools remain denied. User-installed MCP servers remain downstream
+  untrusted trust boundaries and are NOT sandboxed by this extension — verify their tool permissions.
+  Write remains non-delegating, and full coding, shell, package, or unrestricted work uses the
+  independent TUI handoff. See `SECURITY.md` for details.
 - **Audit trail:** `scripts/security/last-audit.json`. Reports: `plans/security/`.
 
 ## Documentation Source Hierarchy (Doc Contract)
@@ -109,6 +114,53 @@ is only for installing a VSIX locally in VS Code.
 4. `memory-bank/` — deprecated optional legacy context (non-authoritative)
 
 ## Recent Changes
+
+### 2026-09-06: Queued prompts, restricted Scout delegation, and bundled research guidance (archived: `2026-09-06-queue-busy-prompts`, `2026-09-06-allow-restricted-scout-delegation`, `2026-09-06-bundle-research-skills-commands`)
+
+Chat and Write now accept normal prompts while a session is active through a
+host-owned, in-memory, per-session FIFO queue. The matching `session.status:
+idle` boundary drains one prompt at a time, Stop preserves pending prompts for
+the abort-caused idle transition, and the webview shows a localized queued
+count without changing the existing send payload or IME behavior.
+
+Chat/Scout may delegate only narrowly scoped research to the exact injected
+read-only `chat-research-worker`; arbitrary, similarly named, recursive,
+coding, shell, package, terminal, and unapproved MCP delegation remains
+denied. Write/Build remains non-delegating, and the worker is limited to read,
+workspace discovery, web research, and the reviewed `firecrawl_*`,
+`context-mode_*`, and `paper-search_*` MCP prefixes when enabled through Chat
+preferences.
+
+The VSIX now bundles the reviewed research skills and command templates under
+the installed extension resource root, exposes them through the companion's
+process-scoped overlay and slash picker, and keeps guidance loading on demand
+without workspace copies or global/project configuration writes. Sandboxed
+Chat receives a narrow read-only grant for that extension-owned skill path.
+
+**Main specs**: `openspec/specs/prompt-queue/spec.md`,
+`openspec/specs/companion-scoped-scout/spec.md`,
+`openspec/specs/bundled-research-guidance/spec.md`, and
+`openspec/specs/chat-agent-sandbox/spec.md`
+
+**Implementation**: `packages/core/src/protocol.ts`,
+`packages/platforms/vscode/src/chat-view-provider.ts`, the shared input UI,
+`packages/agents/opencode/src/opencode-agent.ts`, bundled-resource staging,
+and sandbox policy/tests.
+
+**Verified**: live Chat delegation and queue/interrupt behavior, 1,792
+webview plus 218 extension tests, Biome, build, targeted strict OpenSpec
+validation, archive validation for all three changes, and `git diff --check`.
+The repository-wide archived validation still reports three older archived
+changes with incomplete historical task lists; they were not modified.
+
+### 2026-09-06: Context-mode sandbox persistence fix (release `0.10.1`)
+
+The supported macOS/Linux Chat sandbox now grants the narrow
+`context-mode/content` and `context-mode/sessions` runtime directories and
+honors `CONTEXT_MODE_DIR`, fixing the `context-mode content directory is not
+writable` failure without broadening home-directory access or adding an
+unsandboxed fallback. The fix is covered by focused policy tests and included
+in `packages/platforms/vscode/opencode-research-0.10.1.vsix`.
 
 ### 2026-09-03: Credential-leaf protection and sandbox denial diagnostics (archived: `2026-09-03-expand-chat-sandbox-credential-leaves-diagnostics`)
 

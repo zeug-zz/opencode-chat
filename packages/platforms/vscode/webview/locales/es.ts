@@ -25,6 +25,8 @@ export const es: LocaleSchema = {
   "input.settings": "Configuración",
   "input.stop": "Detener",
   "input.send": "Enviar",
+  "input.queued": (count: number) => `En cola: ${count}`,
+  "input.queuedAriaLabel": (count: number) => `${count} ${count === 1 ? "mensaje en cola" : "mensajes en cola"}`,
 
   // MessageItem
   "message.fileFallback": "archivo",

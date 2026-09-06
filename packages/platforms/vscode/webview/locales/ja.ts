@@ -25,6 +25,8 @@ export const ja: LocaleSchema = {
   "input.settings": "設定",
   "input.stop": "停止",
   "input.send": "送信",
+  "input.queued": (count: number) => `キュー: ${count}`,
+  "input.queuedAriaLabel": (count: number) => `${count} 件のプロンプトをキューに追加済み`,
 
   // MessageItem
   "message.fileFallback": "ファイル",

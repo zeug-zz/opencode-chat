@@ -65,6 +65,7 @@ export type RuntimeCacheEnvironment = Pick<
   | "XDG_DATA_HOME"
   | "XDG_CACHE_HOME"
   | "XDG_STATE_HOME"
+  | "CONTEXT_MODE_DIR"
   | "npm_config_cache"
   | "NPM_CONFIG_CACHE"
   | "UV_CACHE_DIR"
@@ -371,16 +372,13 @@ export function resolveRuntimeCachePaths(
   const openCodeState = isWindows
     ? undefined
     : pathApi.join(env.XDG_STATE_HOME?.trim() || pathApi.join(homePath, ".local", "state"), "opencode");
-  const contextModeSessions = isWindows
-    ? undefined
-    : pathApi.join(
-        env.XDG_CONFIG_HOME?.trim() || pathApi.join(homePath, ".config"),
-        "opencode",
-        "context-mode",
-        "sessions",
-      );
+  const contextModeRoot =
+    env.CONTEXT_MODE_DIR?.trim() ||
+    pathApi.join(env.XDG_CONFIG_HOME?.trim() || pathApi.join(homePath, ".config"), "opencode", "context-mode");
+  const contextModeContent = isWindows ? undefined : pathApi.join(contextModeRoot, "content");
+  const contextModeSessions = isWindows ? undefined : pathApi.join(contextModeRoot, "sessions");
   return uniqueSorted(
-    [npmCache, uvCache, macUvCache, uvData, posixUvData, openCodeState, contextModeSessions]
+    [npmCache, uvCache, macUvCache, uvData, posixUvData, openCodeState, contextModeContent, contextModeSessions]
       .filter((value): value is string => value !== undefined)
       .map((value) => normalizePath(value, "runtime cache path", platform)),
   );

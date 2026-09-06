@@ -25,6 +25,8 @@ export const ko: LocaleSchema = {
   "input.settings": "설정",
   "input.stop": "중지",
   "input.send": "전송",
+  "input.queued": (count: number) => `대기 중: ${count}`,
+  "input.queuedAriaLabel": (count: number) => `${count}개의 프롬프트가 대기 중`,
 
   // MessageItem
   "message.fileFallback": "파일",

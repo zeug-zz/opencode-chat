@@ -13,8 +13,9 @@ for ordinary users:
 - Make Chat sandboxing default to `on` on supported platforms.
 - Keep `allowNetwork` defaulting to `true` so providers and configured remote or
   local MCPs continue to work.
-- Keep Scout as read-only research and keep Write as a report-authoring profile;
-  neither profile should become a general coding or shell agent.
+- Keep Scout as read-only research with restricted delegation only to the injected
+  `chat-research-worker`, and keep Write as a report-authoring profile; neither
+  profile should become a general coding or shell agent.
 - Preserve the existing MCP inventory and preference model. Do not add a new
   per-MCP security questionnaire or path allowlist.
 - Never silently fall back from a failed sandbox or failed authentication check.
@@ -67,7 +68,7 @@ The product security model should remain a simple capability lattice:
 
 | Profile | Allowed | Denied |
 | --- | --- | --- |
-| Scout | Read, search, web, research MCPs | Edit, Bash, task, unknown MCPs |
+| Scout | Read, search, web, restricted research delegation, reviewed research MCPs | Edit, Bash, arbitrary or recursive task delegation, unknown or unapproved MCPs |
 | Write | Research, report editing, approved report tools | Bash, task, packages, coding loop |
 | TUI | Full coding and advanced tools | Explicit user handoff required |
 
@@ -219,9 +220,12 @@ The validated implementation establishes these boundaries:
   Scout/Build overlay through `OPENCODE_CONFIG_CONTENT`.
 - Both paths currently bind to loopback, but neither path configures server
   authentication.
-- Scout denies `edit`, `bash`, and `task`. Build denies `bash` and `task` while
-  allowing the report-writing edit boundary. These are agent permissions, not an
-  HTTP authorization boundary.
+- Scout denies `edit` and `bash`; its task permission is default-deny except for
+  the exact injected `chat-research-worker` subagent. The worker is read-only and
+  cannot edit, use Bash or shell, recurse through task, perform coding or package
+  operations, control a terminal, or use unknown or unapproved MCP tools. Build
+  denies `bash` and `task` while allowing the report-writing edit boundary. These
+  are agent permissions, not an HTTP authorization boundary.
 - MCP startup is controlled by the inventoried server list and persisted Chat
   preferences. The overlay enables only servers explicitly enabled in Chat and
   does not rewrite `opencode.json`.
@@ -318,7 +322,8 @@ labels remain `chat` and `write` as currently defined by the extension.
 ### Scout: read-only research
 
 Scout is the default research companion. It should be able to gather evidence
-without being able to modify the workspace or start arbitrary commands.
+and delegate bounded research only to the exact injected `chat-research-worker`
+subagent, without being able to modify the workspace or start arbitrary commands.
 
 Allowed built-in capabilities:
 
@@ -331,14 +336,19 @@ Denied built-in capabilities:
 
 - `edit` and every file-write operation.
 - `bash`, shell execution, and command runners.
-- `task` or subagent delegation.
+- Arbitrary or recursive `task`/subagent delegation. The only permitted target is
+  the exact injected `chat-research-worker`; a `chat-research-*` name alone does
+  not grant access.
 - Coding-oriented tools, package management, version-control mutation, and
   terminal control.
 
-Scout requires open outbound network access for providers and research MCPs such
-as paper-search, Firecrawl, Context7, and similar retrieval tools. Network
-access is not itself a grant to edit files or execute commands; the agent tool
-profile and MCP tool allowlist remain the control points.
+Scout requires open outbound network access for providers and reviewed research
+MCPs. The worker may use only `firecrawl_*`, `context-mode_*`, and
+`paper-search_*` permission prefixes when the corresponding servers are enabled
+through existing Chat MCP preferences. Network access is not itself a grant to
+edit files or execute commands; the agent tool profile and MCP tool allowlist
+remain the control points, and enabled MCPs remain downstream untrusted trust
+boundaries.
 
 ### Write: report authoring
 

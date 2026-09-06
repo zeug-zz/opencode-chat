@@ -25,6 +25,8 @@ export const ru: LocaleSchema = {
   "input.settings": "Настройки",
   "input.stop": "Остановить",
   "input.send": "Отправить",
+  "input.queued": (count: number) => `В очереди: ${count}`,
+  "input.queuedAriaLabel": (count: number) => `В очереди ${count} ${count === 1 ? "запрос" : "запросов"}`,
 
   // MessageItem
   "message.fileFallback": "файл",

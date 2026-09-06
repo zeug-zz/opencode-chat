@@ -102,6 +102,23 @@ describe("メッセージング", () => {
     expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
   });
 
+  it("queuedPrompts の件数をアクティブセッションに限定して表示し、変更時にクリアすること", async () => {
+    await setupActiveSession();
+
+    await sendExtMessage({ type: "queuedPrompts", sessionId: "s1", count: 3 });
+    expect(screen.getByRole("status", { name: "3 prompts queued" })).toHaveTextContent("Queued: 3");
+
+    await sendExtMessage({ type: "queuedPrompts", sessionId: "s2", count: 7 });
+    expect(screen.getByRole("status", { name: "3 prompts queued" })).toBeInTheDocument();
+
+    await sendExtMessage({ type: "queuedPrompts", sessionId: "s1", count: 0 });
+    expect(screen.queryByRole("status", { name: /queued/ })).not.toBeInTheDocument();
+
+    await sendExtMessage({ type: "queuedPrompts", sessionId: "s1", count: 2 });
+    await sendExtMessage({ type: "activeSession", session: createSession({ id: "s2", title: "Other" }) });
+    expect(screen.queryByRole("status", { name: /queued/ })).not.toBeInTheDocument();
+  });
+
   // Received messages are displayed
   context("messages を受信した場合", () => {
     beforeEach(async () => {
@@ -229,6 +246,34 @@ describe("メッセージング", () => {
       type: "abort",
       sessionId: session.id,
     });
+  });
+
+  it("保留中のプロンプトを Stop で保持し、idle 後のホスト通知まで送信しないこと", async () => {
+    const session = await setupActiveSession();
+    const user = userEvent.setup();
+
+    await sendExtMessage({
+      type: "event",
+      event: { type: "session.status", properties: { sessionID: session.id, status: { type: "busy" } } } as any,
+    });
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    await user.type(textarea, "queued prompt{Enter}");
+    await sendExtMessage({ type: "queuedPrompts", sessionId: session.id, count: 1 });
+    vi.mocked(postMessage).mockClear();
+
+    await user.click(screen.getByTitle("Stop"));
+    expect(postMessage).toHaveBeenCalledWith({ type: "abort", sessionId: session.id });
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
+
+    await sendExtMessage({
+      type: "event",
+      event: { type: "session.status", properties: { sessionID: session.id, status: { type: "idle" } } } as any,
+    });
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
+    expect(screen.getByRole("status", { name: "1 prompt queued" })).toBeInTheDocument();
+
+    await sendExtMessage({ type: "queuedPrompts", sessionId: session.id, count: 0 });
+    expect(screen.queryByRole("status", { name: /queued/ })).not.toBeInTheDocument();
   });
 
   // message.removed event deletes the message
