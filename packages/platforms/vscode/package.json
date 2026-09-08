@@ -120,10 +120,10 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.7",
     "@types/dompurify": "^3.2.0",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.4.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
-    "@types/vscode": "^1.134.0",
+    "@types/vscode": "^1.136.0",
     "@vitejs/plugin-react": "^6.0.3",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
@@ -133,7 +133,7 @@
     "react-dom": "^19.0.0",
     "typescript": "^6.0.3",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "dependencies": {
     "@opencode-chat/agent-opencode": "workspace:*",
