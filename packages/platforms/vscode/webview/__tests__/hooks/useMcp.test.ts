@@ -34,15 +34,14 @@ describe("computeReapplyActions", () => {
       expect(computeReapplyActions(prefs, status)).toEqual([]);
     });
 
-    it.each([
-      "failed",
-      "needs_auth",
-      "needs_client_registration",
-    ] as const)("does not connect a server in %s lifecycle", (lifecycle) => {
-      expect(
-        computeReapplyActions({ "my-server": true }, { "my-server": { connected: false, status: lifecycle } }),
-      ).toEqual([]);
-    });
+    it.each(["failed", "needs_auth", "needs_client_registration"] as const)(
+      "does not connect a server in %s lifecycle",
+      (lifecycle) => {
+        expect(
+          computeReapplyActions({ "my-server": true }, { "my-server": { connected: false, status: lifecycle } }),
+        ).toEqual([]);
+      },
+    );
 
     it("connects a server in the unknown lifecycle", () => {
       expect(
@@ -319,16 +318,15 @@ describe("useMcp", () => {
   });
 
   context("terminal lifecycle status", () => {
-    it.each([
-      "failed",
-      "needs_auth",
-      "needs_client_registration",
-    ] as const)("does not automatically connect %s", (lifecycle) => {
-      vi.mocked(getPersistedState).mockReturnValue({ mcpEnabledByServer: { "my-server": true } });
-      const { result } = renderHook(() => useMcp());
-      act(() => result.current.handleMcpStatus({ "my-server": { connected: false, status: lifecycle } }));
-      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "connectMcp" }));
-    });
+    it.each(["failed", "needs_auth", "needs_client_registration"] as const)(
+      "does not automatically connect %s",
+      (lifecycle) => {
+        vi.mocked(getPersistedState).mockReturnValue({ mcpEnabledByServer: { "my-server": true } });
+        const { result } = renderHook(() => useMcp());
+        act(() => result.current.handleMcpStatus({ "my-server": { connected: false, status: lifecycle } }));
+        expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "connectMcp" }));
+      },
+    );
   });
 
   // ==========================================================
