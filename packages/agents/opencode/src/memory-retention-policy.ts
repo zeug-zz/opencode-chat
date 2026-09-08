@@ -60,9 +60,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function redactPemBlocks(value: string): string {
+  const beginPattern = /-----BEGIN [^-]+ KEY-----/gi;
+  const endPattern = /-----END [^-]+ KEY-----/gi;
+  let cursor = 0;
+  let redacted = "";
+
+  while (true) {
+    beginPattern.lastIndex = cursor;
+    const begin = beginPattern.exec(value);
+    if (begin === null) return redacted + value.slice(cursor);
+
+    endPattern.lastIndex = begin.index + begin[0].length;
+    const end = endPattern.exec(value);
+    if (end === null) return redacted + value.slice(cursor);
+
+    redacted += `${value.slice(cursor, begin.index)}${REDACTED}`;
+    cursor = end.index + end[0].length;
+  }
+}
+
 function redactSecrets(value: string): string {
-  return value
-    .replace(/-----BEGIN [^-]+ KEY-----[\s\S]*?-----END [^-]+ KEY-----/gi, REDACTED)
+  return redactPemBlocks(value)
     .replace(/\b(?:bearer\s+|authorization\s*[:=]\s*)[^\s,;]+/gi, REDACTED)
     .replace(/\b(?:api[_-]?key|access[_-]?key|secret|password|passwd|token)\s*[:=]\s*(["']?)[^\s,"']+\1/gi, REDACTED)
     .replace(/\b(?:sk|gh[pousr]|xox[baprs])-[A-Za-z0-9_-]{12,}\b/g, REDACTED)

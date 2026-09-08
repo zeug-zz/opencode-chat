@@ -2,6 +2,8 @@
  * extension.ts (activate / deactivate) のユニットテスト。
  * ChatViewProvider と OpenCodeAgent をモックし、起動・停止の振る舞いを検証する。
  */
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenCodePaths, resolveRuntimeCachePaths } from "../chat-sandbox-policy";
 import { classifyConnectError } from "../connect-error";
@@ -21,6 +23,7 @@ const mockHindsightResolution = {
   runtimePaths: [],
   configurationPaths: [],
 };
+const blockedProviderPackageRoot = path.join(os.homedir(), "keychains", "provider");
 const mockResolveHindsightPlugin = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockGetToolIds = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockPublishedSandboxStatuses: unknown[] = [];
@@ -476,8 +479,7 @@ describe("extension", () => {
       mockEffectiveConfig = { plugin: ["hindsight"] };
       mockResolveHindsightPlugin.mockResolvedValue({
         ...mockHindsightResolution,
-        packageRoot:
-          process.platform === "darwin" ? "/Library/Keychains/provider" : "/home/tester/.config/Signal/provider",
+        packageRoot: blockedProviderPackageRoot,
       });
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
         (section: string) =>
@@ -665,7 +667,7 @@ describe("extension", () => {
         }),
       );
 
-      mockHindsightResolution.packageRoot = "/Library/Keychains/provider";
+      mockHindsightResolution.packageRoot = blockedProviderPackageRoot;
       mode = "on";
       configurationListener!({
         affectsConfiguration: vi.fn((section: string) => section === "opencode-chat.chatSandbox.mode"),

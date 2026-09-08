@@ -65,6 +65,14 @@ describe("memory retention policy", () => {
     });
   });
 
+  it("redacts complete PEM blocks", () => {
+    expect(
+      validateMemoryRetentionSummary({
+        summary: "Key:\n-----BEGIN PRIVATE KEY-----\nprivate material\n-----END PRIVATE KEY-----",
+      }),
+    ).toEqual({ accepted: true, value: { summary: "Key: [redacted]" } });
+  });
+
   it("returns bounded provider-neutral reasons", () => {
     const result = validateMemoryRetentionSummary({ summary: "This contains a secret" });
     expect(result.accepted ? result.value : result.reason).toBe("secret-material");
