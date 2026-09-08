@@ -21,6 +21,9 @@ import type {
   FileAttachment,
   FileDiff,
   McpStatus,
+  MemoryProviderStatus,
+  MemoryRetentionPolicy,
+  MemoryRetentionStatus,
   ModelRef,
   ModelVariantRef,
   PermissionResponse,
@@ -167,6 +170,9 @@ export type UIToHostMessage =
   // --- Chat sandbox ---
   | { type: "setChatSandboxSettings"; settings: ChatSandboxSettings }
 
+  // --- Memory retention ---
+  | { type: "setMemoryRetentionPolicy"; policy: MemoryRetentionPolicy }
+
   // --- Legacy (kept during migration) ---
   | {
       type: "revertToMessage";
@@ -201,6 +207,8 @@ export type HostToUIMessage =
   | { type: "sessions"; sessions: ChatSession[] }
   | { type: "activeSession"; session: ChatSession | null }
   | { type: "queuedPrompts"; sessionId: string; count: number }
+  | { type: "memoryStatus"; status: MemoryProviderStatus }
+  | { type: "memoryRetentionStatus"; status: MemoryRetentionStatus }
 
   // --- Messages ---
   | {

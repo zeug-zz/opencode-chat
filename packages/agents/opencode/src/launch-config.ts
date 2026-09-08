@@ -1,3 +1,6 @@
+import type { MemoryRetentionPolicy } from "@opencode-chat/core";
+import type { HindsightCompanionIntegration } from "./hindsight-companion-integration";
+
 export type OpenCodeEffectiveSandboxMode = "on" | "off";
 
 export type OpenCodeFilesystemPolicy = {
@@ -42,4 +45,6 @@ export type OpenCodeLaunchConfiguration = {
   mcpOverlay?: { mcp: Record<string, { enabled: boolean }> };
   mcpTransport?: Readonly<Record<string, import("./mcp-inventory").McpTransport>>;
   guidanceOverlay?: OpenCodeGuidanceOverlay;
+  hindsightCompanionIntegration?: HindsightCompanionIntegration;
+  memoryRetentionPolicy?: MemoryRetentionPolicy;
 };

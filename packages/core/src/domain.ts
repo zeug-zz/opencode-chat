@@ -500,6 +500,83 @@ export type AllProvidersData = {
   connected: string[];
 };
 
+export type MemoryProviderState = "unavailable" | "configured" | "available" | "partial" | "blocked" | "error";
+
+export type MemoryProviderCapabilities = {
+  retain: boolean;
+  recall: boolean;
+  reflect: boolean;
+  /** Whether the provider can retain completed companion sessions automatically. */
+  automaticSessionRetention?: boolean;
+};
+
+export type MemoryProviderStatus = {
+  id: string;
+  displayName: string;
+  state: MemoryProviderState;
+  capabilities: MemoryProviderCapabilities;
+  reason?: string;
+  /** Provider-neutral lifecycle state; provider details are intentionally omitted. */
+  automaticSessionRetention?: MemoryAutomaticRetentionStatus;
+};
+
+export type MemoryOperation = "retain" | "recall" | "reflect";
+
+export type MemoryCapabilities = {
+  retain: boolean;
+  recall: boolean;
+  reflect: boolean;
+  automaticSessionRetention: boolean;
+};
+
+export type MemoryAutomaticRetentionState = "active" | "disabled" | "unavailable" | "blocked" | "error";
+
+export type MemoryAutomaticRetentionStatus = {
+  state: MemoryAutomaticRetentionState;
+  reason?: string;
+};
+
+export type MemoryProviderDescriptor = {
+  id: string;
+  displayName: string;
+  capabilities: MemoryCapabilities;
+  requiresNetwork: boolean;
+  requiresLocalRuntime: boolean;
+};
+
+// ============================================================
+// Memory Retention
+// ============================================================
+
+/** Provider-neutral controls for an explicitly requested durable write. */
+export type MemoryRetentionPolicy = {
+  enabled: boolean;
+  requireConfirmation: boolean;
+  automaticSessionRetention: boolean;
+};
+
+export const DEFAULT_MEMORY_RETENTION_POLICY: Readonly<MemoryRetentionPolicy> = Object.freeze({
+  enabled: false,
+  requireConfirmation: true,
+  automaticSessionRetention: true,
+});
+
+export type MemoryRetentionState =
+  | "disabled"
+  | "awaiting-confirmation"
+  | "available"
+  | "blocked"
+  | "unavailable"
+  | "error";
+
+export type MemoryRetentionStatus = {
+  policy: MemoryRetentionPolicy;
+  state: MemoryRetentionState;
+  reason?: string;
+  /** Automatic lifecycle retention is separate from explicit retention state. */
+  automaticSessionRetention?: MemoryAutomaticRetentionStatus;
+};
+
 // ============================================================
 // Agent Info
 // ============================================================

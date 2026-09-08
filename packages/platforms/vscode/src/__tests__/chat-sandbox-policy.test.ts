@@ -277,6 +277,20 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(linuxPolicy.denyReadPaths).not.toEqual(expect.arrayContaining(broadParents));
   });
 
+  it("keeps provider paths read-only and preserves the requested sandbox boundary", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      platform: "darwin",
+      providerReadPaths: ["/provider/runtime", "/provider/config.json"],
+    });
+
+    expect(policy.readOnlyPaths).toEqual(["/provider/config.json", "/provider/runtime"]);
+    expect(policy.readWritePaths).not.toContain("/provider/runtime");
+    expect(policy.denyReadPaths).not.toContain("/provider/runtime");
+    expect(policy.denyReadPaths).not.toContain(homePath);
+  });
+
   it("does not emit the protected baseline on Windows", () => {
     const policy = buildChatSandboxFilesystemPolicy({
       workspacePath: "C:\\work\\project",
@@ -423,6 +437,66 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readOnlyPaths).toContain("/installed-extension/dist/skills-commands/skills");
     expect(policy.readWritePaths).not.toContain("/installed-extension/dist/skills-commands/skills");
     expect(policy.readWritePaths).not.toContain("/installed-extension");
+  });
+
+  it.each(["darwin", "linux", "win32"] as const)("grants only exact provider paths as reads on %s", (platform) => {
+    const home = platform === "win32" ? "C:\\Users\\tester" : homePath;
+    const workspace = platform === "win32" ? "C:\\workspace\\project" : "/workspace/project";
+    const providerRoot = platform === "win32" ? "C:\\hindsight\\package" : "/opt/hindsight/package";
+    const configPath =
+      platform === "win32" ? "C:\\Users\\tester\\.hindsight\\config.json" : "/home/tester/.hindsight/config.json";
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: workspace,
+      homePath: home,
+      providerReadPaths: [providerRoot, configPath, `${providerRoot}/runtime/../runtime`],
+      platform,
+    });
+
+    const normalizedRuntimePath = platform === "win32" ? `${providerRoot}\\runtime` : `${providerRoot}/runtime`;
+    expect(policy.readOnlyPaths).toEqual(expect.arrayContaining([providerRoot, configPath, normalizedRuntimePath]));
+    expect(policy.readWritePaths).not.toEqual(expect.arrayContaining([providerRoot, configPath]));
+    expect(policy.readOnlyPaths).not.toContain(home);
+  });
+
+  it("deduplicates provider paths and never grants them as writable", () => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath,
+      providerReadPaths: ["/opt/hindsight/./package", "/opt/hindsight/package", "/opt/hindsight/package/../package"],
+    });
+
+    expect(policy.readOnlyPaths).toEqual(["/opt/hindsight/package"]);
+    expect(policy.readWritePaths).not.toContain("/opt/hindsight/package");
+  });
+
+  it.each([
+    "",
+    "   ",
+    "relative/provider",
+    homePath,
+    `${homePath}/.ssh/provider`,
+    "/workspace/project/provider",
+  ])("rejects unsafe provider path %s", (providerReadPath) => {
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath,
+        providerReadPaths: [providerReadPath],
+        platform: "linux",
+      }),
+    ).toThrow();
+  });
+
+  it.each(["darwin", "linux"] as const)("rejects provider paths overlapping protected denies on %s", (platform) => {
+    const protectedPath = platform === "darwin" ? "/Library/Keychains/provider" : `${homePath}/.config/Signal/provider`;
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: platform === "darwin" ? "/Users/tester" : homePath,
+        providerReadPaths: [protectedPath],
+        platform,
+      }),
+    ).toThrow(/deny-read path.*provider read path/);
   });
 
   it.each(["darwin", "linux"] as const)("rejects packaged skills overlapping a protected deny on %s", (platform) => {

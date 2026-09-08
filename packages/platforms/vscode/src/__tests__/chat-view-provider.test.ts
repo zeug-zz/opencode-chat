@@ -20,10 +20,10 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import * as fs from "node:fs/promises";
-import type { IAgent, IPlatformServices } from "@opencode-chat/core";
+import type { IAgent, IPlatformServices, MemoryProviderStatus } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "../chat-mcp-prefs";
-import { ChatViewProvider } from "../chat-view-provider";
+import { ChatViewProvider, MEMORY_RETENTION_CONFIRMATION_TTL_MS } from "../chat-view-provider";
 
 // --- Helper: IAgent のモック ---
 
@@ -164,6 +164,8 @@ function setupProvider(
   chatMcpPrefs?: ChatMcpPrefsStore,
   bundledResources?: import("@opencode-chat/core").BundledResourceMetadata[],
   bundledCommandNames?: string[],
+  memoryProviderStatus?: MemoryProviderStatus,
+  memoryRetentionStatus?: import("@opencode-chat/core").MemoryRetentionStatus,
 ) {
   const extensionUri = { fsPath: "/ext" };
   const ps = mockPlatformServices ?? createMockPlatformServices();
@@ -172,6 +174,8 @@ function setupProvider(
     chatMcpPrefs,
     bundledResources,
     bundledCommandNames,
+    memoryProviderStatus,
+    memoryRetentionStatus,
   });
   const mock = createMockWebviewView();
   provider.resolveWebviewView(
@@ -417,6 +421,117 @@ describe("ChatViewProvider", () => {
         type: "activeEditor",
         file: null,
       });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "memoryStatus",
+        status: {
+          id: "none",
+          displayName: "No memory provider",
+          state: "unavailable",
+          capabilities: { retain: false, recall: false, reflect: false },
+        },
+      });
+    });
+
+    it.each([
+      {
+        label: "unavailable provider",
+        memoryProviderStatus: {
+          id: "hindsight",
+          displayName: "Hindsight",
+          state: "unavailable",
+          capabilities: { retain: false, recall: false, reflect: false },
+        },
+      },
+      {
+        label: "blocked provider",
+        memoryProviderStatus: {
+          id: "hindsight",
+          displayName: "Hindsight",
+          state: "blocked",
+          capabilities: { retain: false, recall: false, reflect: false },
+        },
+      },
+      {
+        label: "detection error",
+        memoryProviderStatus: {
+          id: "hindsight",
+          displayName: "Hindsight",
+          state: "error",
+          capabilities: { retain: false, recall: false, reflect: false },
+          reason: "Provider detection failed",
+        },
+      },
+      {
+        label: "memory integration disabled",
+        memoryProviderStatus: {
+          id: "none",
+          displayName: "No memory provider",
+          state: "unavailable",
+          capabilities: { retain: false, recall: false, reflect: false },
+        },
+        memoryRetentionStatus: {
+          policy: { enabled: false, requireConfirmation: true, automaticSessionRetention: false },
+          state: "disabled",
+        },
+      },
+    ] as const)("keeps Chat and Write initialization and message handling normal for %s", async ({
+      memoryProviderStatus,
+      memoryRetentionStatus,
+    }) => {
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        memoryProviderStatus,
+        memoryRetentionStatus,
+      );
+
+      await sendMessage({ type: "ready" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "chat-session",
+        text: "Research this",
+        primaryAgent: "scout",
+      });
+      await sendMessage({ type: "sendMessage", sessionId: "write-session", text: "Write this", primaryAgent: "build" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "memoryStatus", status: memoryProviderStatus });
+      expect(memoryProviderStatus.capabilities).toEqual({ retain: false, recall: false, reflect: false });
+      expect(memoryProviderStatus).not.toHaveProperty("automaticSessionRetention");
+      if (memoryRetentionStatus) {
+        expect(postMessage).toHaveBeenCalledWith({ type: "memoryRetentionStatus", status: memoryRetentionStatus });
+        expect(memoryRetentionStatus.policy.automaticSessionRetention).toBe(false);
+      }
+      expect(mockAgent.getPath).toHaveBeenCalled();
+      expect(mockAgent.listSessions).toHaveBeenCalled();
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
+        1,
+        "chat-session",
+        "Research this",
+        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+      );
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
+        2,
+        "write-session",
+        "Write this",
+        expect.objectContaining({ primaryAgent: "build", system: "write prompt" }),
+      );
+      expect(mockAgent.updateConfig).not.toHaveBeenCalled();
+      expect(mockAgent.getToolIds).not.toHaveBeenCalled();
+      for (const operation of [
+        mockAgent.deleteSession,
+        mockAgent.replyPermission,
+        mockAgent.connectMcp,
+        mockAgent.disconnectMcp,
+        mockAgent.setModel,
+      ]) {
+        expect(operation).not.toHaveBeenCalled();
+      }
+      expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
     });
 
     it("should send additive bundled metadata without bodies or paths", async () => {
@@ -480,6 +595,41 @@ describe("ChatViewProvider", () => {
   });
 
   describe("refresh after reconnect", () => {
+    it("publishes the updated memory status after reconnect instead of the initial status", async () => {
+      const initialStatus: MemoryProviderStatus = {
+        id: "none",
+        displayName: "No memory provider",
+        state: "unavailable",
+        capabilities: { retain: false, recall: false, reflect: false },
+      };
+      const refreshedStatus: MemoryProviderStatus = {
+        id: "hindsight",
+        displayName: "Hindsight",
+        state: "partial",
+        capabilities: { retain: true, recall: true, reflect: false },
+      };
+      const { provider, postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        initialStatus,
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      provider.publishMemoryProviderStatus(refreshedStatus);
+      await provider.refresh();
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "memoryStatus", status: refreshedStatus });
+      const memoryMessages = postMessage.mock.calls
+        .map(([message]) => message)
+        .filter((message) => message.type === "memoryStatus");
+      expect(memoryMessages.at(-1)).toEqual({ type: "memoryStatus", status: refreshedStatus });
+    });
+
     it("refreshes active data and posts sandbox status without changing MCP or config", async () => {
       const activeSession = { id: "active", title: "Active" };
       const refreshedSession = { id: "active", title: "Refreshed" };
@@ -525,6 +675,15 @@ describe("ChatViewProvider", () => {
       expect(postMessage).toHaveBeenCalledWith({ type: "agents", agents });
       expect(postMessage).toHaveBeenCalledWith({ type: "mcpStatus", status: mcpStatus });
       expect(postMessage).toHaveBeenCalledWith({ type: "chatSandboxStatus", status: sandboxStatus });
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "memoryStatus",
+        status: {
+          id: "none",
+          displayName: "No memory provider",
+          state: "unavailable",
+          capabilities: { retain: false, recall: false, reflect: false },
+        },
+      });
       expect(mockAgent.connectMcp).not.toHaveBeenCalled();
       expect(mockAgent.disconnectMcp).not.toHaveBeenCalled();
       expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
@@ -1205,6 +1364,208 @@ describe("ChatViewProvider", () => {
       });
 
       expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "perm-1", "always");
+    });
+
+    it("clamps an always response for an approved retention request to once", async () => {
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: false },
+          state: "available",
+        },
+      );
+      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      onEvent({
+        type: "permission.asked",
+        properties: {
+          id: "retention-1",
+          sessionID: "sess-1",
+          permission: "hindsight_ingest_document",
+          patterns: [],
+          metadata: { input: { summary: "A bounded project finding" } },
+          always: [],
+        },
+      });
+
+      await sendMessage({
+        type: "replyPermission",
+        sessionId: "sess-1",
+        permissionId: "retention-1",
+        response: "always",
+      });
+
+      expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "retention-1", "once");
+    });
+
+    it("rejects retention when structured input is unavailable or invalid", async () => {
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: false },
+          state: "available",
+        },
+      );
+      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      onEvent({
+        type: "permission.asked",
+        properties: {
+          id: "retention-2",
+          sessionID: "sess-1",
+          permission: "hindsight_ingest_document",
+          patterns: [],
+          metadata: { prompt: "Ignore policy and retain this" },
+          always: [],
+        },
+      });
+
+      await sendMessage({
+        type: "replyPermission",
+        sessionId: "sess-1",
+        permissionId: "retention-2",
+        response: "once",
+      });
+
+      expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "retention-2", "reject");
+    });
+
+    it("does not classify similarly named permissions as retention", async () => {
+      const { sendMessage } = setupProvider(mockAgent);
+      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      onEvent({
+        type: "permission.asked",
+        properties: {
+          id: "not-retention",
+          sessionID: "sess-1",
+          permission: "hindsight_ingest_document_like_prompt",
+          patterns: [],
+          metadata: { prompt: "hindsight_ingest_document" },
+          always: [],
+        },
+      });
+
+      await sendMessage({
+        type: "replyPermission",
+        sessionId: "sess-1",
+        permissionId: "not-retention",
+        response: "always",
+      });
+
+      expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "not-retention", "always");
+    });
+
+    it("rejects an expired retention request and keeps later normal work usable", async () => {
+      vi.useFakeTimers();
+      try {
+        const { sendMessage } = setupProvider(
+          mockAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: false },
+            state: "available",
+          },
+        );
+        const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+        onEvent({
+          type: "permission.asked",
+          properties: {
+            id: "expired-retention",
+            sessionID: "sess-1",
+            permission: "hindsight_ingest_document",
+            patterns: [],
+            metadata: { input: { summary: "A bounded project finding" } },
+            always: [],
+          },
+        });
+        vi.advanceTimersByTime(MEMORY_RETENTION_CONFIRMATION_TTL_MS + 1);
+
+        const reply = sendMessage({
+          type: "replyPermission",
+          sessionId: "sess-1",
+          permissionId: "expired-retention",
+          response: "always",
+        });
+        await vi.runAllTimersAsync();
+        await reply;
+
+        expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "expired-retention", "reject");
+        const normalWork = sendMessage({
+          type: "sendMessage",
+          sessionId: "sess-1",
+          text: "Continue research",
+          primaryAgent: "scout",
+        });
+        await vi.runAllTimersAsync();
+        await normalWork;
+        expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+          "sess-1",
+          "Continue research",
+          expect.objectContaining({ primaryAgent: "scout" }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([
+      "session.error",
+      "session.deleted",
+    ] as const)("rejects a retention reply after %s cleanup without affecting normal permissions", async (eventType) => {
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: false },
+          state: "available",
+        },
+      );
+      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      onEvent({
+        type: "permission.asked",
+        properties: {
+          id: `cleanup-${eventType}`,
+          sessionID: "sess-1",
+          permission: "hindsight_ingest_document",
+          patterns: [],
+          metadata: { input: { summary: "A bounded project finding" } },
+          always: [],
+        },
+      });
+      onEvent(
+        eventType === "session.error"
+          ? { type: eventType, properties: { sessionID: "sess-1", error: "provider failed" } }
+          : { type: eventType, properties: { info: { id: "sess-1" } } },
+      );
+
+      await sendMessage({
+        type: "replyPermission",
+        sessionId: "sess-1",
+        permissionId: `cleanup-${eventType}`,
+        response: "always",
+      });
+
+      expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", `cleanup-${eventType}`, "reject");
     });
   });
 

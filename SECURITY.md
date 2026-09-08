@@ -55,6 +55,35 @@ Scout cannot delegate to arbitrary or user-defined agents, including agents mere
 unapproved MCP tools. An enabled MCP remains a downstream untrusted trust boundary and does not
 make its tools safe or grant them generally to Chat agents.
 
+## Optional Memory Provider and Retention
+
+Memory integration is capability-gated and process-scoped. The companion does
+not inherit the independent TUI's global plugin list or execute arbitrary
+configured plugins. The current approved adapter requires the exact Hindsight
+coding-agent package identity and exposes only exact verified recall/search and
+reflection tools to Chat/Scout and Write/Build.
+
+Explicit retention is a separate durable write. It is available only when the
+workspace policy enables it, the approved provider reports `retain`, and the
+exact retention tool is present in the observed inventory. Every request is
+confirmation-gated when required and passes bounded summary, redaction, and
+secret rejection checks. The research worker never receives retention, and
+deletion, administration, diagnostics, synchronization, wildcard, and unknown
+memory tools remain denied.
+
+Automatic session retention is independent from callable memory tools. Its
+policy is enabled by default, but it becomes active only for a provider that
+passes exact lifecycle, inventory, and sandbox checks; users can disable it per
+workspace. Session summaries are bounded and exclude secrets, credentials, raw
+tool payloads, large documents, untrusted web content, and unrelated private
+data. Provider failures are nonfatal and do not trigger an unsandboxed retry.
+
+When no provider is available or memory integration is disabled, blocked, or
+fails, the companion remains usable with ordinary OpenCode context and
+applicable `AGENTS.md` guidance. `AGENTS.md` is project policy, not durable
+memory, and retrieved/provider content remains untrusted evidence rather than
+instruction authority.
+
 ## Extension Write Boundary and Coding Handoff
 
 The extension's user-facing Write mode is backed by OpenCode's `build` agent, with behavioral

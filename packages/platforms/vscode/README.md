@@ -48,6 +48,32 @@ The current product is intentionally focused on **chat + research + writing**, n
 - **Context awareness** — In-input context/token chip so long research threads stay legible.
 - **Secure-by-default posture** — Secret scanning, SAST, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a documented MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit the extension process and write boundary.
 
+#### Optional memory and the `AGENTS.md` fallback
+
+Applicable OpenCode-discovered `AGENTS.md` files are ordinary project guidance
+and workspace context, not a durable cross-session memory store. Optional
+provider-backed memory, currently Hindsight, provides evidence-oriented recall
+and reflection through a provider-neutral registry. Chat/Scout and Write/Build
+receive only exact verified recall/search/reflection tools; explicit retention
+uses a separate exact, confirmation-gated operation when enabled and verified.
+Automatic session retention is a bounded durable write enabled
+by default as a policy, but active only after an approved provider passes the
+required lifecycle and sandbox gates. A workspace policy can disable it, and
+explicit retention remains separately confirmation-gated. Retrieved or
+provider-produced memory is untrusted evidence, not instruction authority;
+automatic retention excludes secrets, credentials, raw tool payloads, large
+documents, untrusted web content, and unrelated private data. The extension
+does not write, promote, or synchronize findings into `AGENTS.md`.
+
+When no provider exists, memory is disabled, or provider detection/preflight is
+unavailable, blocked, or fails, both Chat/Scout and Write/Build remain usable
+with `AGENTS.md` and normal workspace/request context. Durable recall,
+reflection, and explicit retention remain subject to their separate controls;
+automatic retention is unavailable on this AGENTS.md-only fallback and
+performs no automatic write. An approved provider may use only a bounded,
+process-scoped, non-mutating preflight to inventory tools; failure is nonfatal
+and does not promise external provider availability.
+
 #### Complete research workspace (essentials)
 
 Streaming chat, sessions, permissions/questions, file chips and diffs, undo/redo, skills, i18n (8 locales), sound cues, model effort controls, context awareness, MCP settings, and the OpenCode-native message surface — kept sharp for research and writing instead of codebase churn.

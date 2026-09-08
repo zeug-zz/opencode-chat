@@ -7,12 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-09-08
+
+### Added
+
+- Added a provider-neutral memory registry with the approved Hindsight adapter and an immutable `AGENTS.md`/ordinary-context fallback
+- Added exact capability-gated Hindsight recall, search, and reflection access for Chat/Scout and Write/Build
+- Added workspace-scoped explicit retention controls with confirmation, bounded summaries, secret redaction, and sanitized status
+- Added automatic session retention for approved providers, enabled by policy by default but gated by verified lifecycle and sandbox support and independently disableable per workspace
+- Added real Chat/Scout and Write/Build verification of applicable `AGENTS.md` guidance when memory is unavailable, blocked, disabled, or fails
+
+### Changed
+
+- Routed memory discovery and replacement-provider selection through a deterministic provider registry while keeping Hindsight-specific details outside core and the webview protocol
+- Applied the same process-scoped provider, lifecycle, guidance, MCP, and sandbox policy across SDK-managed and sandboxed companion launches
+
 ### Security
 
 - Patched vulnerable transitive `fast-uri` and `qs` dependencies
 - Added a 24-hour pnpm dependency release-age requirement and pinned CI to pnpm 10.16.0
 - Pinned the Semgrep CI container to an immutable image digest
 - Strengthened the `main` branch ruleset with pull-request and security-check requirements
+- Prevented arbitrary global plugin inheritance and restricted memory access to exact approved tools, bounded retention payloads, and fail-closed sandbox/provider paths
 
 ## [0.11.0] - 2026-09-06
 
@@ -273,7 +289,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.12.5...HEAD
+[0.12.5]: https://github.com/zeug-zz/opencode-chat/compare/v0.11.0...v0.12.5
 [0.11.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.9.0...v0.10.0

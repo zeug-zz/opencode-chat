@@ -41,6 +41,8 @@ export type ChatSandboxPolicyInput = {
   };
   runtimeCachePaths?: readonly string[];
   temporaryPaths?: readonly string[];
+  /** Exact provider-owned paths that may be read by a sandboxed companion. */
+  providerReadPaths?: readonly string[];
   executablePath?: string;
   executablePaths?: readonly string[];
   homePath?: string;
@@ -244,6 +246,36 @@ function assertNarrowPath(
   }
 }
 
+function assertProviderReadPath(
+  candidate: string,
+  workspacePath: string,
+  label: string,
+  platform: NodeJS.Platform,
+): void {
+  if (isWithin(candidate, workspacePath, platform) || isWithin(workspacePath, candidate, platform)) {
+    throw new Error(`${label} must not overlap the workspace boundary`);
+  }
+}
+
+function collectProviderReadPaths(
+  paths: readonly string[],
+  homePath: string,
+  workspacePath: string,
+  platform: NodeJS.Platform,
+): string[] {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  for (const value of paths) {
+    if (!value.trim() || !pathApi.isAbsolute(value)) {
+      throw new Error("provider read path must be an absolute, non-empty path");
+    }
+  }
+  const normalized = collectPaths(paths, "provider read path", homePath, workspacePath, platform);
+  for (const providerReadPath of normalized) {
+    assertProviderReadPath(providerReadPath, workspacePath, "provider read path", platform);
+  }
+  return normalized;
+}
+
 function collectPaths(
   paths: readonly string[],
   label: string,
@@ -428,6 +460,8 @@ export function buildChatSandboxFilesystemPolicy(input: ChatSandboxPolicyInput):
       ? []
       : collectPaths([packagedSkillDirectory], "packaged skill directory", homePath, workspacePath, platform);
   readOnlyPaths.push(...packagedSkillPaths);
+  const providerReadPaths = collectProviderReadPaths(input.providerReadPaths ?? [], homePath, workspacePath, platform);
+  readOnlyPaths.push(...providerReadPaths);
   const readWritePaths = collectPaths(
     [
       workspacePath,
@@ -463,7 +497,11 @@ export function buildChatSandboxFilesystemPolicy(input: ChatSandboxPolicyInput):
     [
       ...readOnlyPaths.map((path) => ({
         path,
-        label: packagedSkillPaths.includes(path) ? "packaged skill directory" : "read-only filesystem policy path",
+        label: packagedSkillPaths.includes(path)
+          ? "packaged skill directory"
+          : providerReadPaths.includes(path)
+            ? "provider read path"
+            : "read-only filesystem policy path",
       })),
       ...readWritePaths.map((path) => ({ path, label: "filesystem policy path" })),
     ],

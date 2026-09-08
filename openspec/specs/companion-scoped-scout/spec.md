@@ -25,7 +25,7 @@ The VS Code extension SHALL start its companion-owned OpenCode server with an SD
 - **AND** it MAY present the companion-scoped Scout agent
 
 ### Requirement: Keep companion Scout read-only
-The companion-scoped Scout configuration SHALL deny editing and shell execution. Scout SHALL be allowed to use task delegation only for the exact extension-injected agent named `chat-research-worker`; all other task targets SHALL remain denied by a wildcard default. Scout SHALL retain read-only workspace discovery, documentation, web research, and clarification capabilities. The GUI SHALL retain `build` as the explicit agent for editing and command execution.
+The companion-scoped Scout configuration SHALL deny editing and shell execution. Scout SHALL be allowed to use task delegation only for the exact extension-injected agent named `chat-research-worker`; all other task targets SHALL remain denied by a wildcard default. Scout SHALL retain read-only workspace discovery, documentation, web research, clarification, and only the exact capability-gated Hindsight recall/search and reflection tools when the approved provider is enabled. When the retention policy is explicitly enabled and a verified provider exposes the exact confirmation-gated retention operation, Scout MAY request that durable-memory operation only through the user confirmation boundary; this exception SHALL not grant local file editing, shell execution, general writes, task recursion, package control, terminal control, provider administration, deletion, or unknown tools. The GUI SHALL retain `build` as the explicit agent for editing and command execution. Build-backed Write SHALL receive only the same exact capability-gated Hindsight recall/search/reflection tools and, when the retention policy and exact verified operation permit it, the same exact confirmation-gated retention operation; it SHALL retain its deny-by-default boundary and receive no other escalation.
 
 #### Scenario: Default chat agent
 - **WHEN** the companion receives its server agent list after startup
@@ -51,8 +51,26 @@ The companion-scoped Scout configuration SHALL deny editing and shell execution.
 
 - **WHEN** Scout operates in the companion server
 - **THEN** edit and shell execution SHALL remain denied
-- **AND** read, workspace discovery, web research, and clarification tools SHALL remain available
+- **AND** read, workspace discovery, web research, clarification, and only the exact detected Hindsight recall/search and reflection tools SHALL be available
+- **AND** Hindsight write/retention, deletion, administration, diagnostic, synchronization, and unknown tools SHALL remain denied except for the exact retention exception below
 - **AND** the independent OpenCode TUI behavior SHALL remain unchanged
+
+#### Scenario: Retention is an exact confirmation-gated exception
+
+- **WHEN** the workspace retention policy is disabled or the provider retain capability/tool is unavailable
+- **THEN** Scout SHALL not receive any retention operation
+- **AND** Build SHALL not receive any retention operation
+- **WHEN** the workspace retention policy is enabled and the exact provider retention operation is verified
+- **THEN** Scout and Build SHALL receive only that exact operation through confirmation
+- **AND** the research worker SHALL not receive the retention operation
+- **AND** Scout and Build SHALL retain their existing shell, edit, task, package, terminal, deletion, administration, and unknown-tool denials
+
+#### Scenario: Build-backed Write receives no escalation from Hindsight
+
+- **WHEN** the approved Hindsight provider is enabled for the companion
+- **THEN** Build-backed Write MAY receive only the exact detected Hindsight recall/search and reflection tools
+- **AND** Write SHALL retain its wildcard denial for shell, task, package, terminal, and unknown tools
+- **AND** Write SHALL not receive Hindsight write/retention, deletion, administration, diagnostic, synchronization, or unknown tools except for the exact retention exception above
 
 ### Requirement: Inject a read-only research worker
 
