@@ -52,6 +52,10 @@ opencode-research
 |-----------|------|
 | `opencode-agent.ts` | `IAgent` を実装する `OpenCodeAgent` クラス — ライフサイクル管理、イベント転送、全エージェント操作 |
 | `mappers.ts` | SDK 型 → core ドメイン型への変換関数群 (`mapSession`, `mapMessage`, `mapParts` 等) |
+| `memory-provider-discovery.ts` | プロバイダー検出、状態のサニタイズ、`none` フォールバック、既存検出 API の互換アダプター |
+| `memory-provider-registry.ts` | 承認済みプロバイダーの決定論的な登録・選択境界と置換プロバイダー対応 |
+| `hindsight-plugin-resolver.ts` / `hindsight-companion-integration.ts` | 承認済み Hindsight の完全一致検証、ツール在庫ゲート、起動オーバーレイ、ライフサイクル状態 |
+| `memory-retention-policy.ts` | 明示的・自動保持ポリシーの正規化、境界付き要約、秘密情報の除去と検証 |
 
 ### `opencode-research`
 
@@ -129,6 +133,17 @@ type AgentCapabilities = {
 };
 ```
 
+### メモリプロバイダー境界
+
+メモリ統合は Core のプロバイダー中立な契約と Agent パッケージのアダプターを分離します。
+
+- `packages/core` は操作、能力、プロバイダー状態の正規化された型だけを公開し、Hindsight のツール名、パス、認証情報、ペイロード形式を持ちません。
+- `packages/agents/opencode` は決定論的なプロバイダーレジストリ、`none` フォールバック、完全一致した Hindsight アダプター、明示的保持の境界を管理します。
+- Extension Host は検出・在庫確認・保持ポリシーを起動ごとに組み立て、SDK 管理起動とサンドボックス起動へ同じプロセススコープのオーバーレイを渡します。
+- Hindsight の利用可能なツールは能力と実際の在庫に一致する完全なツール ID のみです。グローバル TUI プラグインの継承や `hindsight_*` ワイルドカードはありません。
+- プロバイダーがない、失敗した、ブロックされた、または無効化された場合は、通常の OpenCode コンテキストと適用可能な `AGENTS.md` がフォールバックになります。`AGENTS.md` は永続メモリではなくプロジェクトガイダンスです。
+- 明示的保持と自動セッション保持は別の能力です。自動保持は承認済みプロバイダーのライフサイクル・サンドボックス検証後だけ有効になり、ワークスペース設定で無効化できます。
+
 ### IBridge
 
 Webview（React）とホストプロセス間の通信チャネル。
@@ -186,6 +201,7 @@ Webview と Extension Host 間の通信は型付き判別共用体を使用し�
 | `getOpenEditors` | 開いているエディタファイルの取得 |
 | `openConfig` | 設定ファイルを開く |
 | `revertToMessage` | 特定メッセージへの巻き戻し（レガシー） |
+| `setMemoryRetentionPolicy` | ワークスペースのメモリ保持ポリシーを更新 |
 
 ### Host -> UI (`HostToUIMessage`)
 
@@ -207,6 +223,8 @@ Webview と Extension Host 間の通信は型付き判別共用体を使用し�
 | `searchResults` | ファイル検索結果 |
 | `openEditors` | 現在開いているエディタファイル |
 | `activeEditor` | フォーカス中のエディタ変更通知 |
+| `memoryStatus` | サニタイズ済みメモリプロバイダー状態 |
+| `memoryRetentionStatus` | 明示的・自動保持ポリシーと状態 |
 
 ---
 

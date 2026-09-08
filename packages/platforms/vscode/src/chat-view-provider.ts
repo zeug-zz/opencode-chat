@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { validateMemoryRetentionSummary } from "@opencode-chat/agent-opencode";
 import type {
   AppPaths,
   BundledCommandInvocation,
@@ -11,6 +12,9 @@ import type {
   HostToUIMessage,
   IAgent,
   IPlatformServices,
+  MemoryProviderStatus,
+  MemoryRetentionPolicy,
+  MemoryRetentionStatus,
   UIToHostMessage,
 } from "@opencode-chat/core";
 import * as vscode from "vscode";
@@ -24,6 +28,25 @@ type PromptQueueState = {
   pending: NormalPrompt[];
 };
 
+const MEMORY_RETENTION_PERMISSION = "hindsight_ingest_document";
+export const MEMORY_RETENTION_CONFIRMATION_TTL_MS = 30_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getStructuredRetentionSummary(metadata: Record<string, unknown>): unknown {
+  if ("input" in metadata) return metadata.input;
+  if ("summary" in metadata) {
+    return {
+      summary: metadata.summary,
+      ...("title" in metadata ? { title: metadata.title } : {}),
+      ...("tags" in metadata ? { tags: metadata.tags } : {}),
+    };
+  }
+  return undefined;
+}
+
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "opencode-chat.chatView";
 
@@ -34,13 +57,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private sessionOperationGeneration = 0;
   private sessionListRequestGeneration = 0;
   private chatSandboxStatus: ChatSandboxStatus | undefined;
+  private memoryProviderStatus: MemoryProviderStatus;
+  private memoryRetentionStatus: MemoryRetentionStatus;
   private readonly chatSystemPrompt: string | null;
   private readonly writeSystemPrompt: string | null;
   private readonly setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
+  private readonly setMemoryRetentionPolicy?: (policy: MemoryRetentionPolicy) => Promise<MemoryRetentionStatus>;
   private readonly chatMcpPrefs?: ChatMcpPrefsStore;
   private readonly bundledResources: readonly BundledResourceMetadata[];
   private readonly bundledCommandNames: ReadonlySet<string>;
   private readonly promptQueues = new Map<string, PromptQueueState>();
+  private readonly retentionPermissions = new Map<
+    string,
+    { sessionId: string; validPayload: boolean; expiresAt: number }
+  >();
+  private readonly invalidatedRetentionPermissions = new Set<string>();
+
+  private clearRetentionPermissions(sessionId: string): void {
+    for (const [permissionId, permission] of this.retentionPermissions) {
+      if (permission.sessionId !== sessionId) continue;
+      this.retentionPermissions.delete(permissionId);
+      this.invalidatedRetentionPermissions.add(permissionId);
+      setTimeout(() => this.invalidatedRetentionPermissions.delete(permissionId), MEMORY_RETENTION_CONFIRMATION_TTL_MS);
+    }
+  }
 
   private getSystemPrompt(primaryAgent: string | undefined, explicitSystem: string | undefined): string | undefined {
     return (
@@ -60,6 +100,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly platformServices: IPlatformServices,
     options?: {
       setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
+      memoryProviderStatus?: MemoryProviderStatus;
+      memoryRetentionStatus?: MemoryRetentionStatus;
+      setMemoryRetentionPolicy?: (policy: MemoryRetentionPolicy) => Promise<MemoryRetentionStatus>;
       chatMcpPrefs?: ChatMcpPrefsStore;
       bundledCommandNames?: readonly string[];
       bundledResources?: readonly BundledResourceMetadata[];
@@ -68,6 +111,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.chatSystemPrompt = this.loadSystemPrompt("CHAT_SYSTEM.md");
     this.writeSystemPrompt = this.loadSystemPrompt("WRITE_SYSTEM.md");
     this.setChatSandboxSettings = options?.setChatSandboxSettings;
+    this.memoryProviderStatus = options?.memoryProviderStatus ?? {
+      id: "none",
+      displayName: "No memory provider",
+      state: "unavailable",
+      capabilities: { retain: false, recall: false, reflect: false },
+    };
+    this.memoryRetentionStatus = options?.memoryRetentionStatus ?? {
+      policy: { enabled: false, requireConfirmation: true, automaticSessionRetention: false },
+      state: "disabled",
+    };
+    this.setMemoryRetentionPolicy = options?.setMemoryRetentionPolicy;
     this.chatMcpPrefs = options?.chatMcpPrefs;
     this.bundledResources = options?.bundledResources ?? [];
     this.bundledCommandNames = new Set(options?.bundledCommandNames ?? []);
@@ -91,12 +145,39 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // SSE イベントを Webview に転送する
     this.agent.onEvent((event) => {
-      this.postMessage({ type: "event", event });
+      let eventForWebview = event;
+      if (event.type === "permission.asked" && event.properties.permission === MEMORY_RETENTION_PERMISSION) {
+        const metadata = event.properties.metadata;
+        const input = isRecord(metadata) ? getStructuredRetentionSummary(metadata) : undefined;
+        const expiresAt = Date.now() + MEMORY_RETENTION_CONFIRMATION_TTL_MS;
+        this.retentionPermissions.set(event.properties.id, {
+          sessionId: event.properties.sessionID,
+          validPayload: validateMemoryRetentionSummary(input).accepted,
+          expiresAt,
+        });
+        setTimeout(() => {
+          const pending = this.retentionPermissions.get(event.properties.id);
+          if (!pending || pending.expiresAt !== expiresAt) return;
+          this.retentionPermissions.delete(event.properties.id);
+          this.invalidatedRetentionPermissions.add(event.properties.id);
+          setTimeout(
+            () => this.invalidatedRetentionPermissions.delete(event.properties.id),
+            MEMORY_RETENTION_CONFIRMATION_TTL_MS,
+          );
+        }, MEMORY_RETENTION_CONFIRMATION_TTL_MS);
+        // Permission metadata can contain the proposed write. It is not a
+        // provider-neutral UI surface, so never forward it to the webview.
+        eventForWebview = { ...event, properties: { ...event.properties, metadata: {} } };
+      }
+      this.postMessage({ type: "event", event: eventForWebview });
 
       if (event.type === "session.status") {
         this.handleSessionStatus(event.properties.sessionID, event.properties.status.type);
       } else if (event.type === "session.deleted") {
         this.clearPromptQueue(event.properties.info.id);
+        this.clearRetentionPermissions(event.properties.info.id);
+      } else if (event.type === "session.error") {
+        this.clearRetentionPermissions(event.properties.sessionID);
       }
 
       // コンパクション完了時にセッション + メッセージを再取得して Webview に送信する
@@ -257,6 +338,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "replyPermission": {
+        const retention = this.retentionPermissions.get(message.permissionId);
+        if (retention) {
+          this.retentionPermissions.delete(message.permissionId);
+          if (Date.now() >= retention.expiresAt) {
+            this.invalidatedRetentionPermissions.add(message.permissionId);
+            await this.agent.replyPermission(message.sessionId, message.permissionId, "reject");
+            break;
+          }
+          if (!this.memoryRetentionStatus.policy.enabled || !retention.validPayload) {
+            await this.agent.replyPermission(message.sessionId, message.permissionId, "reject");
+            break;
+          }
+          const response =
+            this.memoryRetentionStatus.policy.requireConfirmation && message.response === "always"
+              ? "once"
+              : message.response;
+          await this.agent.replyPermission(message.sessionId, message.permissionId, response);
+          break;
+        }
+        if (this.invalidatedRetentionPermissions.delete(message.permissionId)) {
+          await this.agent.replyPermission(message.sessionId, message.permissionId, "reject");
+          break;
+        }
         await this.agent.replyPermission(message.sessionId, message.permissionId, message.response);
         break;
       }
@@ -421,6 +525,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         break;
       }
+      case "setMemoryRetentionPolicy": {
+        if (!this.setMemoryRetentionPolicy) break;
+        try {
+          const status = await this.setMemoryRetentionPolicy(message.policy);
+          this.memoryRetentionStatus = status;
+          this.postMessage({ type: "memoryRetentionStatus", status });
+        } catch {
+          const status: MemoryRetentionStatus = {
+            ...this.memoryRetentionStatus,
+            state: "error",
+            reason: "Retention settings could not be updated",
+          };
+          this.memoryRetentionStatus = status;
+          this.postMessage({ type: "memoryRetentionStatus", status });
+        }
+        break;
+      }
       case "forkSession": {
         const operationGeneration = ++this.sessionOperationGeneration;
         const listRequestGeneration = ++this.sessionListRequestGeneration;
@@ -579,6 +700,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
     this.postMessage({ type: "agents", agents });
     this.postMessage({ type: "mcpStatus", status: mcpStatus });
+    this.postMessage({ type: "memoryStatus", status: this.memoryProviderStatus });
+    this.postMessage({ type: "memoryRetentionStatus", status: this.memoryRetentionStatus });
     if (chatSandboxStatus) {
       this.postMessage({ type: "chatSandboxStatus", status: chatSandboxStatus });
     }
@@ -587,6 +710,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   publishChatSandboxStatus(status: ChatSandboxStatus): void {
     this.chatSandboxStatus = status;
     this.postMessage({ type: "chatSandboxStatus", status });
+  }
+
+  publishMemoryProviderStatus(status: MemoryProviderStatus): void {
+    this.memoryProviderStatus = status;
+    this.postMessage({ type: "memoryStatus", status });
+  }
+
+  publishMemoryRetentionStatus(status: MemoryRetentionStatus): void {
+    this.memoryRetentionStatus = status;
+    this.postMessage({ type: "memoryRetentionStatus", status });
   }
 
   private async publishActiveSession(

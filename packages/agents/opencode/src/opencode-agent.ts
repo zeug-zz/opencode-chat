@@ -27,6 +27,7 @@ import type {
   FileDiff,
   IAgent,
   McpStatus,
+  MemoryRetentionPolicy,
   ModelRef,
   PermissionResponse,
   ProviderInfo,
@@ -37,6 +38,12 @@ import type {
   ToolListItem,
 } from "@opencode-chat/core";
 import { SandboxManager, type SandboxRuntimeConfig } from "@vscode/sandbox-runtime";
+import {
+  HINDSIGHT_DISABLE_HOOKS_ENV,
+  HINDSIGHT_RECALL_TOOL_IDS,
+  HINDSIGHT_REFLECT_TOOL_IDS,
+  HINDSIGHT_RETENTION_TOOL_ID,
+} from "./hindsight-companion-integration";
 import type { OpenCodeGuidanceOverlay, OpenCodeLaunchConfiguration } from "./launch-config";
 import {
   mapAgents,
@@ -118,12 +125,70 @@ const CHAT_AGENT_OVERLAY = {
 function buildChatOverlay(
   mcpOverlay: OpenCodeLaunchConfiguration["mcpOverlay"],
   guidanceOverlay: OpenCodeGuidanceOverlay | undefined,
+  hindsightCompanionIntegration: OpenCodeLaunchConfiguration["hindsightCompanionIntegration"] = undefined,
+  retentionPolicy?: MemoryRetentionPolicy,
 ): Record<string, unknown> {
+  const safeHindsightToolPatterns = new Set<string>([...HINDSIGHT_RECALL_TOOL_IDS, ...HINDSIGHT_REFLECT_TOOL_IDS]);
+  const hindsightPermissions = (hindsightCompanionIntegration?.toolPatterns ?? [])
+    .filter((toolPattern) => safeHindsightToolPatterns.has(toolPattern))
+    .reduce<Record<string, "allow">>((permissions, toolPattern) => {
+      permissions[toolPattern] = "allow";
+      return permissions;
+    }, {});
+  const retentionPermission =
+    retentionPolicy?.enabled === true
+      ? hindsightCompanionIntegration?.retentionPermission?.[HINDSIGHT_RETENTION_TOOL_ID]
+      : undefined;
+  const safeRetentionPermissions =
+    retentionPermission === "ask" || retentionPermission === "allow"
+      ? { [HINDSIGHT_RETENTION_TOOL_ID]: retentionPermission }
+      : {};
+  const mergedHindsightPermissions = { ...hindsightPermissions, ...safeRetentionPermissions };
+  const agentOverlay = Object.keys(mergedHindsightPermissions).length
+    ? {
+        ...CHAT_AGENT_OVERLAY,
+        agent: {
+          ...CHAT_AGENT_OVERLAY.agent,
+          scout: {
+            ...CHAT_AGENT_OVERLAY.agent.scout,
+            permission: { ...CHAT_AGENT_OVERLAY.agent.scout.permission, ...mergedHindsightPermissions },
+          },
+          build: {
+            ...CHAT_AGENT_OVERLAY.agent.build,
+            permission: { ...CHAT_AGENT_OVERLAY.agent.build.permission, ...mergedHindsightPermissions },
+          },
+        },
+      }
+    : CHAT_AGENT_OVERLAY;
+
   return {
-    ...CHAT_AGENT_OVERLAY,
+    ...agentOverlay,
+    ...(hindsightCompanionIntegration ? { plugin: [hindsightCompanionIntegration.pluginReference] } : {}),
     ...(guidanceOverlay ?? {}),
     ...(mcpOverlay ?? {}),
   };
+}
+
+async function createUnsandboxedServer(
+  config: Record<string, unknown>,
+  hindsightCompanionIntegration: OpenCodeLaunchConfiguration["hindsightCompanionIntegration"],
+): Promise<Awaited<ReturnType<typeof createOpencodeServer>>> {
+  const previousValue = process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
+  if (hindsightCompanionIntegration?.automaticSessionRetention === true) {
+    delete process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
+  } else {
+    process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = "1";
+  }
+  try {
+    const serverPromise = createOpencodeServer({ port: 0, config });
+    return serverPromise;
+  } finally {
+    if (previousValue === undefined) {
+      delete process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
+    } else {
+      process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = previousValue;
+    }
+  }
 }
 
 function shellQuote(value: string): string {
@@ -407,10 +472,16 @@ export class OpenCodeAgent implements IAgent {
     }
     // Port 0: let OS assign a free port to avoid conflicts
     // In-memory Scout overlay scoped to this child process via OPENCODE_CONFIG_CONTENT.
-    const server = await createOpencodeServer({
-      port: 0,
-      config: buildChatOverlay(this.launchConfiguration?.mcpOverlay, this.launchConfiguration?.guidanceOverlay),
-    });
+    const hindsightCompanionIntegration = this.launchConfiguration?.hindsightCompanionIntegration;
+    const server = await createUnsandboxedServer(
+      buildChatOverlay(
+        this.launchConfiguration?.mcpOverlay,
+        this.launchConfiguration?.guidanceOverlay,
+        hindsightCompanionIntegration,
+        this.launchConfiguration?.memoryRetentionPolicy,
+      ),
+      hindsightCompanionIntegration,
+    );
     this.server = server;
     this.client = createOpencodeClient({
       baseUrl: server.url,
@@ -468,12 +539,23 @@ export class OpenCodeAgent implements IAgent {
       this.sandboxCommand = command;
       this.sandboxChildReady = false;
       this.sandboxChildExit = undefined;
+      const childEnvironment = { ...process.env };
+      if (configuration.hindsightCompanionIntegration?.automaticSessionRetention === true) {
+        delete childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV];
+      } else {
+        childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV] = "1";
+      }
       const child = spawn(wrappedCommand, {
         cwd: configuration.workspacePath,
         env: {
-          ...process.env,
+          ...childEnvironment,
           OPENCODE_CONFIG_CONTENT: JSON.stringify(
-            buildChatOverlay(configuration.mcpOverlay, configuration.guidanceOverlay),
+            buildChatOverlay(
+              configuration.mcpOverlay,
+              configuration.guidanceOverlay,
+              configuration.hindsightCompanionIntegration,
+              configuration.memoryRetentionPolicy,
+            ),
           ),
         },
         detached: true,

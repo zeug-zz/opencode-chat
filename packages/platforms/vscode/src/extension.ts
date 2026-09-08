@@ -1,11 +1,21 @@
 import * as path from "node:path";
 import {
+  buildHindsightCompanionIntegration,
   buildMcpOverlay,
+  detectMemoryProvider,
   OpenCodeAgent,
   type OpenCodeLaunchConfiguration,
+  readEffectiveOpenCodeConfiguration,
+  readHindsightPackageMetadata,
+  resolveHindsightPlugin,
   resolveMcpInventory,
 } from "@opencode-chat/agent-opencode";
-import type { BundledResourceMetadata, ChatSandboxSettings, ChatSandboxStatus } from "@opencode-chat/core";
+import type {
+  BundledResourceMetadata,
+  ChatSandboxSettings,
+  ChatSandboxStatus,
+  MemoryProviderStatus,
+} from "@opencode-chat/core";
 import * as vscode from "vscode";
 import { type BundledResource, loadBundledResearchResources } from "./bundled-research-resources";
 import { VscodeChatMcpPrefsStore } from "./chat-mcp-prefs";
@@ -19,10 +29,21 @@ import {
 import { resolveChatSandboxSettings, updateChatSandboxSettings } from "./chat-sandbox-settings";
 import { ChatViewProvider } from "./chat-view-provider";
 import { classifyConnectError } from "./connect-error";
+import {
+  loadMemoryRetentionSettings,
+  resolveMemoryRetentionStatus,
+  updateMemoryRetentionSettings,
+} from "./memory-retention-settings";
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent = new OpenCodeAgent();
 let sandboxController: ChatSandboxController<ChatSandboxStatus> | undefined;
+let memoryProviderStatus: MemoryProviderStatus = {
+  id: "none",
+  displayName: "No memory provider",
+  state: "unavailable",
+  capabilities: { retain: false, recall: false, reflect: false },
+};
 const MCP_INVENTORY_ERROR_MESSAGE =
   "OpenCode Research could not resolve its MCP inventory. Repair the OpenCode configuration and reload the extension.";
 
@@ -44,6 +65,7 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   const workspaceUri = vscode.Uri.file(workspaceFolder);
+  let memoryRetentionSettings = loadMemoryRetentionSettings(workspaceUri);
   const chatMcpPrefs = new VscodeChatMcpPrefsStore(context.workspaceState);
   const sandboxSettings = resolveChatSandboxSettings(workspaceUri);
   const executablePath = resolveOpencodeBinary();
@@ -77,6 +99,30 @@ export async function activate(context: vscode.ExtensionContext) {
       : {}),
   };
   const openCodePaths = resolveOpenCodePaths();
+  let hindsightResolution: Awaited<ReturnType<typeof resolveHindsightPlugin>>;
+  let hindsightResolutionFailed = false;
+  try {
+    const effectiveConfig = readEffectiveOpenCodeConfiguration(openCodePaths.config, workspaceFolder);
+    hindsightResolution = await resolveHindsightPlugin(effectiveConfig, readHindsightPackageMetadata);
+  } catch {
+    hindsightResolutionFailed = true;
+    hindsightResolution = undefined;
+  }
+  // The preflight launch must use the effective lifecycle decision.  It is
+  // still only a bounded, approved-provider startup; inventory verification
+  // below decides whether the provider remains active.
+  let activeHindsightCompanionIntegration =
+    hindsightResolution &&
+    (memoryRetentionSettings.policy.automaticSessionRetention || memoryRetentionSettings.policy.enabled)
+      ? {
+          ...hindsightResolution,
+          toolPatterns: [] as const,
+          automaticSessionRetention: memoryRetentionSettings.policy.automaticSessionRetention,
+          environment: memoryRetentionSettings.policy.automaticSessionRetention
+            ? ({} as const)
+            : { HINDSIGHT_DISABLE_HOOKS: "1" as const },
+        }
+      : undefined;
   let initialMcpOverlay: ReturnType<typeof buildMcpOverlay> = { mcp: {} };
   let initialMcpTransport: OpenCodeLaunchConfiguration["mcpTransport"] = {};
   let inventoryError: McpInventoryError | undefined;
@@ -91,38 +137,120 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   const runtimeCachePaths = resolveRuntimeCachePaths();
   const executablePaths = (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":").filter(Boolean);
-  const filesystemPolicy = buildChatSandboxFilesystemPolicy({
-    workspacePath: workspaceFolder,
-    ...(bundledSkills.length ? { packagedSkillDirectory: path.join(bundledResourceRoot, "skills") } : {}),
-    openCodePaths,
-    runtimeCachePaths,
-    temporaryPaths: [openCodePaths.temp],
-    executablePath: resolvedExecutablePath,
-    executablePaths,
-  });
+  const providerReadPaths = () =>
+    hindsightResolution
+      ? [
+          ...(hindsightResolution.packageRoot ? [hindsightResolution.packageRoot] : []),
+          ...hindsightResolution.runtimePaths,
+          ...hindsightResolution.configurationPaths,
+        ]
+      : [];
+  let currentLaunchProviderBlocked = false;
+  let initialLaunchProviderAvailable = true;
   const createLaunchConfiguration = (
     settings: typeof sandboxSettings,
     mcpOverlay = initialMcpOverlay,
     mcpTransport = initialMcpTransport,
-  ): OpenCodeLaunchConfiguration => ({
-    workspacePath: workspaceFolder,
-    sandbox: {
-      mode: settings.enabled ? "on" : "off",
-      enabled: settings.enabled,
-      allowNetwork: settings.allowNetwork,
-      filesystemPolicy,
-      networkPolicy: buildChatSandboxNetworkPolicy({
+    hindsightIntegration:
+      | OpenCodeLaunchConfiguration["hindsightCompanionIntegration"]
+      | null = activeHindsightCompanionIntegration,
+    recordAsInitialLaunch = false,
+  ): OpenCodeLaunchConfiguration => {
+    const baseInput = {
+      workspacePath: workspaceFolder,
+      ...(bundledSkills.length ? { packagedSkillDirectory: path.join(bundledResourceRoot, "skills") } : {}),
+      openCodePaths,
+      runtimeCachePaths,
+      temporaryPaths: [openCodePaths.temp],
+      executablePath: resolvedExecutablePath,
+      executablePaths,
+    };
+    let providerPathsAvailable = true;
+    let filesystemPolicy: OpenCodeLaunchConfiguration["sandbox"]["filesystemPolicy"];
+    if (settings.enabled && hindsightIntegration) {
+      try {
+        filesystemPolicy = buildChatSandboxFilesystemPolicy({ ...baseInput, providerReadPaths: providerReadPaths() });
+      } catch {
+        providerPathsAvailable = false;
+        currentLaunchProviderBlocked = true;
+        memoryProviderStatus = blockedHindsightStatus();
+        filesystemPolicy = buildChatSandboxFilesystemPolicy(baseInput);
+      }
+    } else {
+      filesystemPolicy = buildChatSandboxFilesystemPolicy(baseInput);
+    }
+    if (!providerPathsAvailable) currentLaunchProviderBlocked = true;
+    else currentLaunchProviderBlocked = false;
+    if (recordAsInitialLaunch) initialLaunchProviderAvailable = providerPathsAvailable;
+    return {
+      workspacePath: workspaceFolder,
+      sandbox: {
+        mode: settings.enabled ? "on" : "off",
+        enabled: settings.enabled,
         allowNetwork: settings.allowNetwork,
-        platform: process.platform,
-      }),
-    },
-    executable: { path: executablePath },
-    mcpOverlay: { mcp: mcpOverlay.mcp },
-    mcpTransport,
-    ...(Object.keys(guidanceOverlay).length ? { guidanceOverlay } : {}),
-  });
-  const launchConfiguration = createLaunchConfiguration(sandboxSettings);
+        filesystemPolicy,
+        networkPolicy: buildChatSandboxNetworkPolicy({
+          allowNetwork: settings.allowNetwork,
+          platform: process.platform,
+        }),
+      },
+      executable: { path: executablePath },
+      mcpOverlay: { mcp: mcpOverlay.mcp },
+      mcpTransport,
+      ...(Object.keys(guidanceOverlay).length ? { guidanceOverlay } : {}),
+      memoryRetentionPolicy: memoryRetentionSettings.policy,
+      ...(hindsightIntegration && providerPathsAvailable
+        ? { hindsightCompanionIntegration: hindsightIntegration }
+        : {}),
+    };
+  };
+  const launchConfiguration = createLaunchConfiguration(
+    sandboxSettings,
+    initialMcpOverlay,
+    initialMcpTransport,
+    activeHindsightCompanionIntegration,
+    true,
+  );
+  const baseLaunchConfiguration = createLaunchConfiguration(
+    sandboxSettings,
+    initialMcpOverlay,
+    initialMcpTransport,
+    null,
+  );
   agent = new OpenCodeAgent(launchConfiguration);
+  const refreshHindsightIntegration = async (): Promise<void> => {
+    if (!hindsightResolution) {
+      activeHindsightCompanionIntegration = undefined;
+      memoryProviderStatus = noHindsightProviderStatus();
+      return;
+    }
+    try {
+      const toolIds = (await agent.getToolIds()).map((tool) => tool.id);
+      const observedToolIds = toolIds;
+      const detectedStatus = await detectCompanionMemoryProviderFromInventory(observedToolIds);
+      const result = buildHindsightCompanionIntegration(
+        detectedStatus,
+        observedToolIds,
+        hindsightResolution,
+        memoryRetentionSettings.policy,
+      );
+      // A lifecycle integration is usable only when the normalized provider
+      // status explicitly advertises that capability. Explicit recall/reflect
+      // and retention permissions remain governed by the adapter result.
+      activeHindsightCompanionIntegration =
+        result.integration &&
+        (!result.integration.automaticSessionRetention ||
+          detectedStatus.capabilities.automaticSessionRetention === true)
+          ? result.integration
+          : undefined;
+      memoryProviderStatus = activeHindsightCompanionIntegration
+        ? result.status
+        : automaticRetentionUnavailableStatus(result.status);
+    } catch {
+      activeHindsightCompanionIntegration = undefined;
+      memoryProviderStatus = hindsightErrorStatus();
+    }
+  };
   let chatViewProvider: ChatViewProvider | undefined;
   let initialSandboxStatus: ChatSandboxStatus = sandboxSettings;
   const reportSandboxError = (error: unknown, status?: ChatSandboxStatus) => {
@@ -183,39 +311,116 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
       await connectAgent(sandboxSettings.enabled);
     } catch (error) {
-      const kind = classifyConnectError(error);
-      if (kind === "not-found") {
-        vscode.window.showWarningMessage(
-          vscode.l10n.t(
-            'OpenCode Research: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
-          ),
-        );
-        return;
+      let fallbackConnected = false;
+      let connectionError: unknown = error;
+      if (activeHindsightCompanionIntegration) {
+        agent.disconnect();
+        agent = new OpenCodeAgent(baseLaunchConfiguration);
+        try {
+          await connectAgent(sandboxSettings.enabled);
+          fallbackConnected = true;
+        } catch (fallbackError) {
+          connectionError = fallbackError;
+        }
+        if (fallbackConnected) {
+          connectFailed = false;
+        }
       }
-      connectFailed = true;
-      if (sandboxSettings.enabled) {
-        initialSandboxStatus = {
-          ...sandboxSettings,
-          enabled: false,
-          applying: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-      if (kind === "database-locked") {
-        vscode.window.showErrorMessage(
-          vscode.l10n.t(
-            "OpenCode Research: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
-          ),
-        );
-      } else {
-        const message = error instanceof Error ? error.message : String(error);
-        const truncated = message.length > 500 ? `${message.slice(0, 500)}...` : message;
-        vscode.window.showErrorMessage(
-          vscode.l10n.t("OpenCode Research: Failed to start OpenCode server. {0}", truncated),
-        );
+      if (!fallbackConnected) {
+        const kind = classifyConnectError(connectionError);
+        if (kind === "not-found") {
+          vscode.window.showWarningMessage(
+            vscode.l10n.t(
+              'OpenCode Research: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
+            ),
+          );
+          return;
+        }
+        connectFailed = true;
+        if (sandboxSettings.enabled) {
+          initialSandboxStatus = {
+            ...sandboxSettings,
+            enabled: false,
+            applying: false,
+            error: connectionError instanceof Error ? connectionError.message : String(connectionError),
+          };
+        }
+        if (kind === "database-locked") {
+          vscode.window.showErrorMessage(
+            vscode.l10n.t(
+              "OpenCode Research: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
+            ),
+          );
+        } else {
+          const message = connectionError instanceof Error ? connectionError.message : String(connectionError);
+          const truncated = message.length > 500 ? `${message.slice(0, 500)}...` : message;
+          vscode.window.showErrorMessage(
+            vscode.l10n.t("OpenCode Research: Failed to start OpenCode server. {0}", truncated),
+          );
+        }
       }
     }
   }
+
+  if (!initialLaunchProviderAvailable) {
+    memoryProviderStatus = blockedHindsightStatus();
+  } else if (activeHindsightCompanionIntegration && !connectFailed) {
+    try {
+      const toolIds = await agent.getToolIds();
+      const observedToolIds = toolIds.map((tool) => tool.id);
+      const detectedStatus = await detectCompanionMemoryProviderFromInventory(observedToolIds);
+      const result = buildHindsightCompanionIntegration(
+        detectedStatus,
+        observedToolIds,
+        hindsightResolution,
+        memoryRetentionSettings.policy,
+      );
+      const verifiedIntegration =
+        result.integration &&
+        (!result.integration.automaticSessionRetention ||
+          detectedStatus.capabilities.automaticSessionRetention === true)
+          ? result.integration
+          : undefined;
+      memoryProviderStatus = verifiedIntegration ? result.status : automaticRetentionUnavailableStatus(result.status);
+      if (verifiedIntegration) {
+        activeHindsightCompanionIntegration = verifiedIntegration;
+        await agent.stopForReconnect();
+        const finalConfiguration = createLaunchConfiguration(
+          sandboxSettings,
+          initialMcpOverlay,
+          initialMcpTransport,
+          result.integration,
+        );
+        agent.updateLaunchConfiguration(finalConfiguration);
+        await connectAgent(sandboxSettings.enabled);
+      } else {
+        activeHindsightCompanionIntegration = undefined;
+        await agent.stopForReconnect();
+        agent.updateLaunchConfiguration(
+          createLaunchConfiguration(sandboxSettings, initialMcpOverlay, initialMcpTransport, null),
+        );
+        await connectAgent(sandboxSettings.enabled);
+      }
+    } catch {
+      activeHindsightCompanionIntegration = undefined;
+      memoryProviderStatus = hindsightErrorStatus();
+      try {
+        await agent.stopForReconnect();
+        agent.updateLaunchConfiguration(
+          createLaunchConfiguration(sandboxSettings, initialMcpOverlay, initialMcpTransport, null),
+        );
+        await connectAgent(sandboxSettings.enabled);
+      } catch {
+        // Keep the original connection error handling nonfatal.
+      }
+    }
+  } else if (hindsightResolutionFailed) {
+    memoryProviderStatus = hindsightErrorStatus();
+  } else {
+    memoryProviderStatus = noHindsightProviderStatus();
+  }
+
+  let memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus);
 
   const platformServices = new VscodePlatformServices();
 
@@ -223,6 +428,8 @@ export async function activate(context: vscode.ExtensionContext) {
   let lastResolvedKey = resolvedSettingsKey(sandboxSettings);
   chatViewProvider = new ChatViewProvider(context.extensionUri, agent, platformServices, {
     chatMcpPrefs,
+    memoryProviderStatus,
+    memoryRetentionStatus,
     bundledResources: bundledResourceMetadata,
     bundledCommandNames: bundledCommands.map((resource) => resource.name),
     setChatSandboxSettings: async (settings: ChatSandboxSettings) => {
@@ -245,6 +452,23 @@ export async function activate(context: vscode.ExtensionContext) {
         panelUpdateInProgress = false;
       }
     },
+    setMemoryRetentionPolicy: async (policy) => {
+      const previous = memoryRetentionSettings;
+      try {
+        await updateMemoryRetentionSettings(policy, workspaceUri);
+        memoryRetentionSettings = loadMemoryRetentionSettings(workspaceUri);
+        memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus);
+        const resolved = resolveChatSandboxSettings(workspaceUri);
+        await refreshHindsightIntegration();
+        agent.updateLaunchConfiguration(createLaunchConfiguration(resolved));
+        await sandboxController?.update(resolved);
+        return memoryRetentionStatus;
+      } catch {
+        memoryRetentionSettings = previous;
+        memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus, true);
+        throw new Error("Retention settings could not be updated");
+      }
+    },
   });
   sandboxController = new ChatSandboxController<ChatSandboxStatus>({
     stop: () => agent.stopForReconnect(),
@@ -261,12 +485,30 @@ export async function activate(context: vscode.ExtensionContext) {
       } catch {
         throw new McpInventoryError();
       }
-      agent.updateLaunchConfiguration(createLaunchConfiguration(resolved, mcpOverlay, mcpTransport));
+      const launchIntegration = activeHindsightCompanionIntegration;
+      agent.updateLaunchConfiguration(createLaunchConfiguration(resolved, mcpOverlay, mcpTransport, launchIntegration));
       await connectAgent(resolved.enabled);
+      // Inventory is authoritative after every reconnect. If the provider
+      // failed or became unsafe, reconnect once on the same requested
+      // sandbox mode with the ordinary fallback rather than leaving stale
+      // lifecycle state attached to the agent.
+      const providerBlockedForLaunch = currentLaunchProviderBlocked;
+      if (!providerBlockedForLaunch) await refreshHindsightIntegration();
+      if (launchIntegration && !providerBlockedForLaunch && !activeHindsightCompanionIntegration) {
+        await agent.stopForReconnect();
+        agent.updateLaunchConfiguration(createLaunchConfiguration(resolved, mcpOverlay, mcpTransport, null));
+        await connectAgent(resolved.enabled);
+      }
       return resolveChatSandboxSettings(workspaceUri);
     },
     publishStatus: (status) => chatViewProvider?.publishChatSandboxStatus(status),
-    onReconnected: (status) => chatViewProvider?.refresh(status),
+    onReconnected: async (status) => {
+      if (currentLaunchProviderBlocked) memoryProviderStatus = blockedHindsightStatus();
+      chatViewProvider?.publishMemoryProviderStatus(memoryProviderStatus);
+      memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus);
+      chatViewProvider?.publishMemoryRetentionStatus?.(memoryRetentionStatus);
+      await chatViewProvider?.refresh(status);
+    },
     onError: (error, status) => reportSandboxError(error, status),
   });
   chatViewProvider.publishChatSandboxStatus(initialSandboxStatus);
@@ -291,10 +533,25 @@ export async function activate(context: vscode.ExtensionContext) {
         event.affectsConfiguration("opencode-chat.chatSandbox.mode", workspaceUri) ||
         event.affectsConfiguration("opencode-chat.chatSandbox.allowNetwork", workspaceUri);
       const nativeChanged = event.affectsConfiguration("chat.agent.sandbox.enabled", workspaceUri);
-      if (!chatChanged && !nativeChanged) return;
+      const retentionChanged =
+        event.affectsConfiguration("opencode-chat.memoryRetention.enabled", workspaceUri) ||
+        event.affectsConfiguration("opencode-chat.memoryRetention.requireConfirmation", workspaceUri) ||
+        event.affectsConfiguration("opencode-chat.memoryRetention.automaticSessionRetention", workspaceUri);
+      if (!chatChanged && !nativeChanged && !retentionChanged) return;
       if (panelUpdateInProgress) return;
 
       const resolved = resolveChatSandboxSettings(workspaceUri);
+      if (retentionChanged && !chatChanged && !nativeChanged) {
+        memoryRetentionSettings = loadMemoryRetentionSettings(workspaceUri);
+        memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus);
+        void (async () => {
+          await refreshHindsightIntegration();
+          await sandboxController?.update(resolved);
+        })().catch((error) => {
+          console.error("[OpenCode] Failed to apply memory retention configuration change:", error);
+        });
+        return;
+      }
       if (nativeChanged && !chatChanged && resolved.mode !== "inherit") return;
       const nextKey = resolvedSettingsKey(resolved);
       if (nextKey === lastResolvedKey) return;
@@ -316,6 +573,86 @@ export async function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   sandboxController = undefined;
   agent.disconnect();
+}
+
+export function getMemoryProviderStatus(): MemoryProviderStatus {
+  return memoryProviderStatus;
+}
+
+async function safelyDetectMemoryProvider(
+  context: Parameters<typeof detectMemoryProvider>[0],
+): Promise<MemoryProviderStatus> {
+  try {
+    return await detectMemoryProvider(context);
+  } catch {
+    return {
+      id: "hindsight",
+      displayName: "Hindsight",
+      state: "error",
+      capabilities: { retain: false, recall: false, reflect: false },
+      reason: "Provider detection failed",
+    };
+  }
+}
+
+function noHindsightProviderStatus(): MemoryProviderStatus {
+  return {
+    id: "none",
+    displayName: "No memory provider",
+    state: "unavailable",
+    capabilities: { retain: false, recall: false, reflect: false },
+  };
+}
+
+async function detectCompanionMemoryProviderFromInventory(toolIds: readonly string[]): Promise<MemoryProviderStatus> {
+  return safelyDetectMemoryProvider({
+    hindsight: {
+      configured: true,
+      probe: async () => ({
+        reachable: true,
+        capabilities: {
+          retain: toolIds.includes("hindsight_ingest_document"),
+          recall: [
+            "hindsight_search_knowledge_pages",
+            "hindsight_list_knowledge_pages",
+            "hindsight_read_knowledge_page",
+          ].every((id) => toolIds.includes(id)),
+          reflect: toolIds.includes("hindsight_reflect"),
+          // The exact approved companion inventory is the lifecycle-support
+          // verification gate. No provider operation is performed here.
+          automaticSessionRetention: true,
+        },
+      }),
+    },
+  });
+}
+
+function blockedHindsightStatus(): MemoryProviderStatus {
+  return {
+    id: "hindsight",
+    displayName: "Hindsight",
+    state: "blocked",
+    capabilities: { retain: false, recall: false, reflect: false },
+    reason: "Provider blocked by companion policy",
+  };
+}
+
+function hindsightErrorStatus(): MemoryProviderStatus {
+  return {
+    id: "hindsight",
+    displayName: "Hindsight",
+    state: "error",
+    capabilities: { retain: false, recall: false, reflect: false },
+    reason: "Provider detection failed",
+  };
+}
+
+function automaticRetentionUnavailableStatus(status: MemoryProviderStatus): MemoryProviderStatus {
+  return {
+    ...status,
+    capabilities: { ...status.capabilities, automaticSessionRetention: false },
+    automaticSessionRetention: { state: "unavailable", reason: "No usable retention provider is available" },
+  };
 }
 
 function resolvedSettingsKey(settings: { mode: string; enabled: boolean; allowNetwork: boolean }): string {

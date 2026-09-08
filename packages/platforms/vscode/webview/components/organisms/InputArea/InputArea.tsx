@@ -4,6 +4,7 @@ import type {
   ChatSandboxSettings,
   ChatSandboxStatus,
   McpStatus,
+  MemoryRetentionStatus,
   ModelVariantRef,
   ProviderInfo,
   SkillInfo,
@@ -96,6 +97,8 @@ type Props = {
   onMcpRefresh?: () => void;
   chatSandboxStatus?: ChatSandboxStatus;
   onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
+  memoryRetentionStatus?: MemoryRetentionStatus;
+  onMemoryRetentionPolicyChange?: (policy: MemoryRetentionStatus["policy"]) => void;
 };
 
 export function InputArea({
@@ -136,6 +139,8 @@ export function InputArea({
   onMcpRefresh,
   chatSandboxStatus,
   onChatSandboxSettingsChange,
+  memoryRetentionStatus,
+  onMemoryRetentionPolicyChange,
 }: Props) {
   const t = useLocale();
   const [text, setText] = useState("");
@@ -835,6 +840,8 @@ export function InputArea({
                     sandboxStatus={chatSandboxStatus}
                     onChatSandboxSettingsChange={onChatSandboxSettingsChange}
                     sandboxControlsDisabled={isBusy}
+                    memoryRetentionStatus={memoryRetentionStatus}
+                    onMemoryRetentionPolicyChange={onMemoryRetentionPolicyChange}
                   />
                 )}
               />

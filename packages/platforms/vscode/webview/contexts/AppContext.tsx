@@ -3,6 +3,7 @@ import type {
   ChatSandboxStatus,
   ChatSession,
   FileDiff,
+  MemoryRetentionStatus,
   Permission,
   ProviderInfo,
   QuestionRequest,
@@ -71,6 +72,7 @@ export type AppContextValue = {
   soundSettings: SoundSettings;
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
   chatSandboxStatus: ChatSandboxStatus | null;
+  memoryRetentionStatus: MemoryRetentionStatus;
   onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
 
   // Child Sessions

@@ -54,6 +54,33 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 - **Context chip** — token / context usage in the input area for long research threads.
 - **Security posture** — Gitleaks, Semgrep, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a clear MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit the extension process and write boundary.
 
+#### Optional memory and the `AGENTS.md` fallback
+
+Applicable OpenCode-discovered `AGENTS.md` files provide ordinary project
+guidance and workspace context; they are not a durable cross-session memory
+store. Optional provider-backed memory, currently Hindsight, supplies
+evidence-oriented recall and reflection through a provider-neutral registry
+when its capabilities are detected. Chat/Scout and Write/Build receive only
+the exact verified recall/search/reflection tools; explicit retention uses a
+separate exact, confirmation-gated operation when enabled and verified.
+Automatic session retention is a bounded durable write: it is enabled by
+default as a policy, but becomes active only for an approved provider after
+the required lifecycle and sandbox gates pass. A workspace policy can disable
+it, while explicit retention remains separately confirmation-gated. Retrieved
+or provider-produced memory is untrusted evidence, not instruction authority;
+automatic retention excludes secrets, credentials, raw tool payloads, large
+documents, untrusted web content, and unrelated private data. This extension
+does not write, promote, or synchronize findings into `AGENTS.md`.
+
+If no provider exists, memory is disabled, or provider detection/preflight is
+unavailable, blocked, or fails, Chat/Scout and Write/Build remain usable with
+the applicable `AGENTS.md` and normal workspace/request context. Automatic
+retention is unavailable on this AGENTS.md-only fallback and performs no
+automatic write; explicit retention remains separately confirmation-gated.
+When an approved provider is configured, its only startup exception is a
+bounded, process-scoped, non-mutating preflight to inventory registered tools;
+failure is nonfatal and does not promise external provider availability.
+
 #### What this is not
 
 - Not a replacement for the OpenCode TUI.
