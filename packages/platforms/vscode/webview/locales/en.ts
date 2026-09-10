@@ -1,11 +1,11 @@
 export const en = {
   // ChatHeader
   "header.sessions": "Sessions",
-  "header.title.fallback": "OpenCode Research",
+  "header.title.fallback": "OpenCode Scribe",
   "header.newChat": "New chat",
 
   // EmptyState
-  "empty.title": "OpenCode Research",
+  "empty.title": "OpenCode Scribe",
   "empty.description": "Start a new conversation to get started.",
   "empty.newChat": "New Chat",
 

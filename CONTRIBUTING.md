@@ -1,8 +1,8 @@
-# Contributing to OpenCode Research
+# Contributing to OpenCode Scribe
 
 > **Forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui).** This fork maintains its own review process. Upstream maintainer [@ktmage](https://github.com/ktmage) retains credit for the original project.
 
-OpenCode Research へのコントリビュートについて
+OpenCode Scribe へのコントリビュートについて
 
 ## Table of Contents / 目次
 

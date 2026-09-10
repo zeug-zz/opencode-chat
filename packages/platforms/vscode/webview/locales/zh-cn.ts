@@ -3,11 +3,11 @@ import type { LocaleSchema } from "./en";
 export const zhCn: LocaleSchema = {
   // ChatHeader
   "header.sessions": "会话列表",
-  "header.title.fallback": "OpenCode Research",
+  "header.title.fallback": "OpenCode Scribe",
   "header.newChat": "新建聊天",
 
   // EmptyState
-  "empty.title": "OpenCode Research",
+  "empty.title": "OpenCode Scribe",
   "empty.description": "开始新的对话吧。",
   "empty.newChat": "新建聊天",
 

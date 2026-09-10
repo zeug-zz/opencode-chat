@@ -32,7 +32,7 @@ This policy covers:
 
 ## MCP Server Trust Model
 
-The OpenCode Research extension launches an extension-owned OpenCode server with a read-only Scout agent
+The OpenCode Scribe extension launches an extension-owned OpenCode server with a read-only Scout agent
 (`packages/agents/opencode/src/opencode-agent.ts`). Scout's config overlay denies edit and bash, and
 denies task targets with a wildcard default-deny except for the exact extension-injected
 `chat-research-worker` target. That worker runs in `subagent` mode with an explicit wildcard

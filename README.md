@@ -1,7 +1,7 @@
-# OpenCode Research
+# OpenCode Scribe
 
 [![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.134.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
-[![Version](https://img.shields.io/visual-studio-marketplace/v/zeug-zz.opencode-research?label=version&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=zeug-zz.opencode-research)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/drmrStudio.opencode-scribe?label=version&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=drmrStudio.opencode-scribe)
 [![License](https://img.shields.io/github/license/zeug-zz/opencode-chat)](LICENSE)
 [![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
 [![Security Audit](<https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github>)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
@@ -198,7 +198,13 @@ Streaming sessions, permissions and questions, file chips and diffs, undo/redo, 
 
 ### Installation
 
-Search for **OpenCode Research** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+Search for **OpenCode Scribe** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+
+**OpenCode Scribe** (`drmrStudio.opencode-scribe`) is a new, separate
+Marketplace listing from the legacy `zeug-zz.opencode-research` extension. VS
+Code will not automatically upgrade the legacy extension to the new
+publisher/name; install OpenCode Scribe separately if you used the legacy
+listing.
 
 ### Development
 
@@ -221,10 +227,10 @@ pnpm run build
 pnpm run build
 
 # Extension only (from packages/platforms/vscode)
-pnpm --filter opencode-research run build:ext
+pnpm --filter opencode-scribe run build:ext
 
 # Webview only (from packages/platforms/vscode)
-pnpm --filter opencode-research run build:webview
+pnpm --filter opencode-scribe run build:webview
 ```
 
 #### Watch Mode
@@ -233,10 +239,10 @@ Open two terminals and run each:
 
 ```sh
 # Terminal 1: Extension watch
-pnpm --filter opencode-research run watch:ext
+pnpm --filter opencode-scribe run watch:ext
 
 # Terminal 2: Webview watch
-pnpm --filter opencode-research run watch:webview
+pnpm --filter opencode-scribe run watch:webview
 ```
 
 #### Lint & Format
@@ -277,7 +283,7 @@ packages/
         mappers.ts        # SDK ↔ domain type mappers
 
   platforms/
-    vscode/               # opencode-research — VS Code extension
+    vscode/               # opencode-scribe — VS Code extension
       src/
         extension.ts      # Extension entry point
         chat-view-provider.ts   # Webview panel & messaging
