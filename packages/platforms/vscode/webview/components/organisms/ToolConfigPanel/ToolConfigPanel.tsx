@@ -3,7 +3,6 @@ import type {
   ChatSandboxStatus,
   McpServerStatus,
   McpStatus,
-  MemoryRetentionStatus,
   SoundEventSetting,
   SoundEventType,
   SoundSettings,
@@ -33,8 +32,6 @@ type Props = {
   sandboxStatus?: ChatSandboxStatus;
   onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
   sandboxControlsDisabled?: boolean;
-  memoryRetentionStatus?: MemoryRetentionStatus;
-  onMemoryRetentionPolicyChange?: (policy: MemoryRetentionStatus["policy"]) => void;
 };
 
 export function ToolConfigPanel({
@@ -52,8 +49,6 @@ export function ToolConfigPanel({
   sandboxStatus,
   onChatSandboxSettingsChange,
   sandboxControlsDisabled = false,
-  memoryRetentionStatus,
-  onMemoryRetentionPolicyChange,
 }: Props) {
   const t = useLocale();
   const [langMenuOpen, setLangMenuOpen] = useState(false);
@@ -188,10 +183,6 @@ export function ToolConfigPanel({
           />
         )}
 
-        {memoryRetentionStatus && (
-          <MemoryRetentionSection status={memoryRetentionStatus} onPolicyChange={onMemoryRetentionPolicyChange} />
-        )}
-
         {/* MCP Setting */}
         {mcpServers != null && (
           <div className={styles.section}>
@@ -234,69 +225,6 @@ export function ToolConfigPanel({
           </LinkButton>
         </div>
       )}
-    </div>
-  );
-}
-
-function MemoryRetentionSection({
-  status,
-  onPolicyChange,
-}: {
-  status: MemoryRetentionStatus;
-  onPolicyChange?: (policy: MemoryRetentionStatus["policy"]) => void;
-}) {
-  const t = useLocale();
-  const explicitStateLabel = {
-    disabled: t["config.memoryRetentionDisabled"],
-    "awaiting-confirmation": t["config.memoryRetentionAwaitingConfirmation"],
-    available: t["config.memoryRetentionAvailable"],
-    blocked: t["config.memoryRetentionBlocked"],
-    unavailable: t["config.memoryRetentionUnavailable"],
-    error: t["config.memoryRetentionError"],
-  }[status.state];
-  const automaticStateLabel = status.automaticSessionRetention
-    ? {
-        active: t["config.memoryRetentionAutomaticActive"],
-        disabled: t["config.memoryRetentionAutomaticDisabled"],
-        unavailable: t["config.memoryRetentionAutomaticUnavailable"],
-        blocked: t["config.memoryRetentionAutomaticBlocked"],
-        error: t["config.memoryRetentionAutomaticError"],
-      }[status.automaticSessionRetention.state]
-    : t["config.memoryRetentionAutomaticUnavailable"];
-  return (
-    <div className={styles.section} data-testid="memory-retention-section">
-      <div className={styles.sectionTitle}>{t["config.memoryRetention"]}</div>
-      <div className={styles.sectionTitle}>{t["config.memoryRetentionAutomatic"]}</div>
-      <label className={styles.toggle}>
-        <input
-          data-testid="memory-retention-automatic"
-          type="checkbox"
-          checked={status.policy.automaticSessionRetention}
-          onChange={(event) => onPolicyChange?.({ ...status.policy, automaticSessionRetention: event.target.checked })}
-        />
-        <span className={styles.toolName}>{t["config.memoryRetentionAutomaticEnabled"]}</span>
-      </label>
-      <div className={styles.sandboxStatus}>{t["config.memoryRetentionAutomaticDescription"]}</div>
-      <div className={styles.sandboxStatus} data-testid="memory-retention-automatic-status">
-        {t["config.memoryRetentionAutomaticStatus"]}: {automaticStateLabel}
-      </div>
-      <div className={styles.sectionTitle}>{t["config.memoryRetentionExplicit"]}</div>
-      <label className={styles.toggle}>
-        <input
-          data-testid="memory-retention-explicit"
-          type="checkbox"
-          checked={status.policy.enabled}
-          onChange={(event) => onPolicyChange?.({ ...status.policy, enabled: event.target.checked })}
-        />
-        <span className={styles.toolName}>{t["config.memoryRetentionEnabled"]}</span>
-      </label>
-      <div className={styles.sandboxStatus}>
-        {t["config.memoryRetentionConfirmation"]}:{" "}
-        {status.policy.requireConfirmation ? t["config.required"] : t["config.notRequired"]}
-      </div>
-      <div className={styles.sandboxStatus}>{explicitStateLabel}</div>
-      {status.reason && <div className={styles.sandboxError}>{status.reason}</div>}
-      <div className={styles.trustNotice}>{t["config.memoryRetentionEvidenceWarning"]}</div>
     </div>
   );
 }

@@ -98,6 +98,7 @@ function compatibilityFilesystemConfig(
   workspacePath: string,
   deniedPath: string,
   allowNetwork: boolean,
+  supportedWritePaths: readonly string[] = [],
 ): SandboxRuntimeConfig {
   const network = {
     enabled: !allowNetwork,
@@ -107,7 +108,7 @@ function compatibilityFilesystemConfig(
   };
 
   const filesystem = {
-    allowWrite: [workspacePath],
+    allowWrite: [workspacePath, ...supportedWritePaths],
     denyWrite: [deniedPath],
   };
 
@@ -436,6 +437,57 @@ describe.sequential.skipIf(!canRun)(
         }
       },
       timeoutMs * 2,
+    );
+
+    it(
+      "keeps Context Mode and a future-plugin-shaped child on supported runtime paths",
+      async (context) => {
+        const runtimeStatePath = path.join(root, "runtime-state");
+        const contextContentPath = path.join(root, "context-mode", "content");
+        const contextSessionsPath = path.join(root, "context-mode", "sessions");
+        const temporaryRootPath = path.join(root, "temp", "opencode");
+        const pluginPath = path.join(root, "future-plugin", "node_modules", "runtime.js");
+        const unsupportedPath = path.join(root, "unsupported", "plugin-state.json");
+        await fs.mkdir(path.dirname(pluginPath), { recursive: true });
+        await fs.writeFile(pluginPath, "future-plugin-runtime-ok");
+
+        const childScript = [
+          "const fs = require('node:fs');",
+          `for (const directory of ${JSON.stringify([runtimeStatePath, contextContentPath, contextSessionsPath, temporaryRootPath])}) fs.mkdirSync(directory, { recursive: true });`,
+          `fs.writeFileSync(${JSON.stringify(path.join(runtimeStatePath, "lock"))}, "state-ok");`,
+          `fs.writeFileSync(${JSON.stringify(path.join(contextContentPath, "indexed-content"))}, "content-ok");`,
+          `fs.writeFileSync(${JSON.stringify(path.join(contextSessionsPath, "session.db"))}, "session-ok");`,
+          `fs.mkdirSync(${JSON.stringify(path.join(temporaryRootPath, ".ctx-mode-child"))});`,
+          `if (fs.readFileSync(${JSON.stringify(pluginPath)}, "utf8") !== "future-plugin-runtime-ok") process.exit(2);`,
+          `try { fs.writeFileSync(${JSON.stringify(unsupportedPath)}, "must-be-denied"); process.exit(3); } catch { process.stdout.write("runtime-boundary-ok"); }`,
+        ].join(" ");
+        const parentScript = [
+          "const { spawn } = require('node:child_process');",
+          `const child = spawn(${JSON.stringify(process.execPath)}, ['-e', ${JSON.stringify(childScript)}], { stdio: ['ignore', 'pipe', 'pipe'] });`,
+          "let output = ''; child.stdout.on('data', chunk => output += chunk); child.stderr.on('data', chunk => output += chunk); child.on('exit', (code, signal) => { process.stdout.write(output); process.exit(code ?? (signal ? 1 : 2)); });",
+        ].join(" ");
+        const result = await runSandboxedOrSkip(
+          context,
+          `${shellQuote(process.execPath)} -e ${shellQuote(parentScript)}`,
+          compatibilityFilesystemConfig(workspacePath, unsupportedPath, true, [
+            runtimeStatePath,
+            contextContentPath,
+            contextSessionsPath,
+            temporaryRootPath,
+          ]),
+          workspacePath,
+        );
+        if (!result) return;
+
+        expect(result.code).toBe(0);
+        expect(result.stdout).toContain("runtime-boundary-ok");
+        await expect(fs.readFile(path.join(runtimeStatePath, "lock"), "utf8")).resolves.toBe("state-ok");
+        await expect(fs.readFile(path.join(contextContentPath, "indexed-content"), "utf8")).resolves.toBe("content-ok");
+        await expect(fs.readFile(path.join(contextSessionsPath, "session.db"), "utf8")).resolves.toBe("session-ok");
+        await expect(fs.stat(path.join(temporaryRootPath, ".ctx-mode-child"))).resolves.toBeTruthy();
+        await expect(fs.access(unsupportedPath)).rejects.toThrow();
+      },
+      timeoutMs,
     );
   },
 );

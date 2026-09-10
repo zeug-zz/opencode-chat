@@ -107,28 +107,6 @@ export const ko: LocaleSchema = {
   // ShellResultView
   "shell.title": "셸",
 
-  // MCP setting
-  "config.memoryRetention": "메모리 보존",
-  "config.memoryRetentionAutomatic": "세션 자동 보존",
-  "config.memoryRetentionAutomaticEnabled": "자동 보존 사용",
-  "config.memoryRetentionAutomaticDescription":
-    "승인된 제공자에서 기본적으로 사용됩니다. 제한된 세션 요약을 영구 메모리에 기록할 수 있으며, 이 작업 영역의 자동 기록을 막으려면 끄세요.",
-  "config.memoryRetentionAutomaticStatus": "자동 상태",
-  "config.memoryRetentionAutomaticActive": "활성",
-  "config.memoryRetentionAutomaticDisabled": "비활성",
-  "config.memoryRetentionAutomaticUnavailable": "사용할 수 없음(승인된 제공자 없음)",
-  "config.memoryRetentionAutomaticBlocked": "차단됨",
-  "config.memoryRetentionAutomaticError": "오류",
-  "config.memoryRetentionExplicit": "명시적 보존",
-  "config.memoryRetentionEnabled": "명시적 보존 허용",
-  "config.memoryRetentionConfirmation": "확인",
-  "config.memoryRetentionDisabled": "보존이 비활성화됨",
-  "config.memoryRetentionAwaitingConfirmation": "매 요청 확인 후 사용 가능",
-  "config.memoryRetentionAvailable": "사용 가능",
-  "config.memoryRetentionBlocked": "컴패니언 정책으로 차단됨",
-  "config.memoryRetentionUnavailable": "사용할 수 없음",
-  "config.memoryRetentionError": "상태를 사용할 수 없음",
-  "config.memoryRetentionEvidenceWarning": "검색된 메모리는 지침이 아니라 증거입니다.",
   "config.yes": "예",
   "config.no": "아니요",
   "config.required": "필수",

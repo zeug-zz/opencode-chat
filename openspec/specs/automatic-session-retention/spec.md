@@ -2,19 +2,19 @@
 
 ## Purpose
 
-This capability enables approved provider lifecycle retention for companion Chat and Write sessions by default, while keeping automatic retention independently disableable, bounded, sandbox-aware, and unavailable when no safe provider is present.
+This capability enables approved provider lifecycle retention for companion Chat and Write sessions by default, while keeping it bounded, sandbox-aware, provider-neutral, and unavailable for provider operations when no safe provider is present.
 
 ## Requirements
 
 ### Requirement: Automatic retention is enabled by default for an approved provider
 
-The companion SHALL resolve automatic session retention as enabled by default when the workspace has no invalid or explicit disable setting. The effective automatic policy SHALL remain independent from explicit user-requested retention and from recall/reflect tool availability. When no approved usable provider is available, the enabled policy SHALL be a no-op and SHALL not block ordinary Chat, Write, AGENTS.md, or workspace-context behavior.
+The companion SHALL resolve automatic session retention as enabled whenever an exact approved provider passes capability, observed-inventory, lifecycle, and sandbox checks. There SHALL be no extension workspace setting or settings-panel checkbox that disables the effective policy. Legacy disable values SHALL be ignored without writes. When no approved usable provider is available, the enabled policy SHALL be a no-op and SHALL not block ordinary Chat, Write, AGENTS.md, or workspace-context behavior.
 
 #### Scenario: First use with an approved usable provider
 
 - **WHEN** a workspace has no automatic-retention setting and the companion resolves an exact approved provider that supports verified lifecycle retention
 - **THEN** automatic session retention SHALL be active by default for supported companion sessions
-- **AND** explicit retention SHALL retain its separate enablement and confirmation policy
+- **AND** explicit retention SHALL use the always-on, confirmation-required policy
 - **AND** recall and reflect capabilities SHALL remain independently represented
 
 #### Scenario: First use without a provider
@@ -27,27 +27,27 @@ The companion SHALL resolve automatic session retention as enabled by default wh
 #### Scenario: User explicitly disables automatic retention
 
 - **WHEN** the workspace automatic-retention setting is explicitly false
-- **THEN** automatic session retention SHALL be disabled for the companion process
-- **AND** explicit user-requested retention SHALL remain independently configurable
+- **THEN** the companion SHALL ignore the legacy disable value and keep the provider-gated automatic policy enabled internally
+- **AND** automatic retention SHALL still be a no-op when no approved usable provider is available
 - **AND** the independent OpenCode TUI lifecycle configuration SHALL not be changed
 
 ### Requirement: Lifecycle retention is gated by approved provider and sandbox capability
 
-Automatic retention SHALL activate only after the provider passes the existing exact identity, capability, observed-inventory, lifecycle-support, and sandbox-path checks. The companion SHALL use a process-scoped lifecycle configuration for its own server and SHALL never inherit unrelated global plugins or alter the independent TUI configuration. A provider that is unavailable, blocked, errored, unverified, or outside the approved integration boundary SHALL not receive automatic-retention startup.
+Automatic retention SHALL activate only after the provider passes the existing exact identity, capability, observed-inventory, lifecycle-support, and sandbox-path checks. The companion SHALL use a process-scoped lifecycle configuration for its own server and SHALL not alter the independent TUI configuration; inherited plugins SHALL not gain Hindsight lifecycle authority unless they are the exact approved integration. A provider that is unavailable, blocked, errored, unverified, or outside the approved integration boundary SHALL not receive automatic-retention startup.
 
 #### Scenario: Approved Hindsight lifecycle is activated
 
 - **WHEN** the exact approved Hindsight integration is resolved
 - **AND** its companion lifecycle-retention support passes the provider verification contract
 - **AND** the requested sandbox policy can grant only its exact required runtime/configuration paths
-- **AND** automatic retention is enabled
+- **AND** the fixed automatic policy is enabled
 - **THEN** the companion process SHALL activate the provider-native lifecycle retention path
 - **AND** it SHALL not set the companion’s lifecycle-suppression flag
 - **AND** the TUI process and its configuration SHALL remain unchanged
 
 #### Scenario: Lifecycle retention is disabled or unsafe
 
-- **WHEN** automatic retention is disabled, provider identity/capability verification fails, required paths are unsafe, or the provider is blocked/error/unavailable
+- **WHEN** provider identity/capability verification fails, required paths are unsafe, or the provider is blocked/error/unavailable
 - **THEN** the companion SHALL suppress provider lifecycle retention for its process
 - **AND** it SHALL not retry by weakening or removing the sandbox
 - **AND** ordinary Chat/Write startup and existing safe recall/reflect behavior SHALL continue when available
@@ -97,15 +97,15 @@ When automatic retention is active, the same provider lifecycle policy SHALL be 
 - **WHEN** the same workspace/provider/policy is launched once through the SDK-managed path and once through the sandboxed child path
 - **THEN** both paths SHALL agree on whether automatic retention is active
 - **AND** both paths SHALL use the same exact provider identity and runtime/configuration read grants
-- **AND** neither path SHALL inherit unrelated plugins or change the independent TUI
+- **AND** neither path SHALL grant unrelated plugins Hindsight authority or change the independent TUI
 
 ### Requirement: Automatic retention status is provider-neutral and independently surfaced
 
-The typed host/UI status SHALL distinguish automatic retention active, disabled, unavailable, blocked, and error states independently from explicit retention and recall/reflect status. Status SHALL not include provider credentials, paths, raw payloads, lifecycle hook output, or unbounded errors.
+The host SHALL retain provider-neutral automatic-retention state for enforcement and bounded diagnostics independently from explicit retention and recall/reflect status. The removed settings surface SHALL not expose automatic enablement controls or provider internals. Status SHALL not include provider credentials, paths, raw payloads, lifecycle hook output, or unbounded errors.
 
 #### Scenario: Status reports active automatic retention
 
 - **WHEN** an approved provider passes lifecycle and sandbox checks and the effective automatic policy is enabled
-- **THEN** the settings/status surface SHALL report automatic retention as active
+- **THEN** the host SHALL retain an active provider-neutral automatic-retention state
 - **AND** it SHALL continue to report explicit retention confirmation and recall/reflect capabilities separately
-- **AND** the status SHALL contain only bounded provider-neutral fields
+- **AND** the removed settings surface SHALL not expose provider internals

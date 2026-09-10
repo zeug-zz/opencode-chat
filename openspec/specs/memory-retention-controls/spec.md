@@ -2,37 +2,50 @@
 
 ## Purpose
 
-This capability gives Chat and Write a user-controlled, confirmation-gated path for retaining bounded project findings in an approved memory provider without weakening the no-provider fallback, sandbox, or agent permission boundaries.
+This capability gives Chat and Write a provider-gated, confirmation-required path for retaining bounded project findings in an approved memory provider without weakening the no-provider fallback, sandbox, or agent permission boundaries. Automatic session retention uses the same fixed policy when its lifecycle checks pass.
 
 ## Requirements
 
 ### Requirement: Persist a safe workspace retention policy
 
-The extension SHALL expose a workspace-scoped memory retention policy with explicit retention disabled by default, confirmation required by default, and automatic session retention disabled by default. Invalid, missing, or organization-managed values SHALL resolve to the safest effective policy. The policy SHALL be independent from the existing read/reflect capability status and SHALL not require a memory provider for ordinary Chat or Write operation.
+The companion SHALL use the fixed provider-neutral policy `{ enabled: true, requireConfirmation: true, automaticSessionRetention: true }` after the exact approved Hindsight provider passes identity, capability, observed-tool, lifecycle, and sandbox checks. The policy SHALL not be workspace-configurable or controlled by an extension settings checkbox. Missing or unsafe providers SHALL make the policy a no-op for provider operations while ordinary Chat, Write, recall, reflect, and AGENTS.md behavior remain available. Previously stored workspace retention disable values SHALL be ignored without being deleted or rewritten.
+
+#### Scenario: First use with an approved provider
+
+- **WHEN** a workspace has no usable retention provider settings and the exact approved Hindsight provider passes verification
+- **THEN** automatic session retention SHALL be enabled
+- **AND** explicit retention SHALL be available
+- **AND** every explicit retention request SHALL require confirmation
+- **AND** normal Chat, Write, recall, reflect, and AGENTS.md behavior SHALL remain available
+
+#### Scenario: Legacy disable values are present
+
+- **WHEN** a workspace contains a previously stored retention disable value
+- **THEN** the companion SHALL ignore that value
+- **AND** it SHALL use the fixed always-on policy after provider verification
+- **AND** it SHALL not write or delete the stored configuration value
 
 #### Scenario: First use has safe defaults
 
 - **WHEN** a workspace has no retention policy configured
-- **THEN** explicit retention SHALL be unavailable until the user enables it
-- **AND** every explicit retention request SHALL require confirmation
-- **AND** automatic session retention SHALL remain disabled
+- **THEN** the fixed provider-gated policy SHALL keep confirmation required and enable automatic retention when the approved provider passes verification
+- **AND** explicit retention SHALL remain unavailable when no safe provider is present
 - **AND** normal Chat, Write, recall, reflect, and AGENTS.md behavior SHALL remain available
 
 #### Scenario: Invalid or managed settings are encountered
 
 - **WHEN** a retention setting is malformed or controlled by organization policy
-- **THEN** the effective policy SHALL fail closed for durable writes
-- **AND** the extension SHALL not overwrite the managed value
+- **THEN** the extension SHALL ignore it without overwriting the managed value
+- **AND** the effective policy SHALL still require confirmation and remain provider-gated
 - **AND** the user SHALL receive only a bounded, provider-neutral status or explanation
 
 ### Requirement: Gate explicit retention by policy and observed provider capability
 
-The companion SHALL expose an exact provider retention operation only when explicit retention is enabled, the selected provider is approved and available or partially available with `retain: true`, and the exact retention tool is present in the observed provider inventory. The companion SHALL never expose a retention wildcard. Provider deletion, administration, diagnostics, synchronization, unknown tools, and retention tools absent from the verified inventory SHALL remain denied.
+The companion SHALL expose the exact `hindsight_ingest_document` operation by default only when the approved provider is available or partially available with `retain: true` and the exact operation is present in the observed tool inventory. The companion SHALL never expose a retention wildcard. Provider deletion, administration, diagnostics, synchronization, unknown tools, and unobserved retention tools SHALL remain denied.
 
 #### Scenario: Explicit retention is enabled for a capable Hindsight provider
 
-- **WHEN** the user enables explicit retention for the workspace
-- **AND** the approved Hindsight provider reports retain capability
+- **WHEN** the approved Hindsight provider reports retain capability
 - **AND** the exact Hindsight retention tool is observed
 - **THEN** Chat and Write SHALL receive only that exact retention operation
 - **AND** the operation SHALL not be granted to the research worker
@@ -40,14 +53,14 @@ The companion SHALL expose an exact provider retention operation only when expli
 
 #### Scenario: Retention prerequisites are not satisfied
 
-- **WHEN** explicit retention is disabled, the provider is unavailable/blocked/error, retain capability is false, or the exact retention tool is absent
+- **WHEN** the provider is unavailable, blocked, errored, retain capability is false, or the exact retention tool is absent
 - **THEN** no retention operation SHALL be exposed
 - **AND** no provider write operation SHALL be attempted
 - **AND** ordinary Chat and Write behavior SHALL continue with the existing read-only memory and AGENTS.md fallback where available
 
 ### Requirement: Require confirmation for every explicit retention
 
-Every explicit retention operation SHALL require a user confirmation at the time of the request when confirmation is enabled. A confirmation response SHALL authorize at most the current bounded retention request; choosing an “always” or equivalent permission response SHALL not permanently bypass confirmation while the policy requires confirmation. Rejecting or timing out a request SHALL leave the provider unchanged and SHALL not be reported as successful retention.
+Every explicit retention operation SHALL require a user confirmation at request time. A confirmation response SHALL authorize at most the current bounded retention request; an “always” response SHALL not permanently bypass confirmation. Rejecting or timing out a request SHALL leave the provider unchanged and SHALL not be reported as successful retention.
 
 #### Scenario: User confirms one retention request
 
@@ -83,13 +96,13 @@ Before an explicit retention request crosses the provider boundary, the extensio
 
 ### Requirement: Keep automatic retention disabled and preserve fallback behavior
 
-This change SHALL not enable provider lifecycle hooks or automatic session/transcript retention. The companion SHALL continue to suppress automatic Hindsight lifecycle behavior, and enabling explicit retention SHALL not grant automatic retention. If retention policy loading or provider integration fails, the extension SHALL preserve normal Chat and Write startup, applicable AGENTS.md guidance, and the existing sandbox mode without unsandboxed fallback.
+Automatic session retention SHALL be active only for the exact approved provider after capability, lifecycle, and sandbox verification. If provider integration fails, the extension SHALL preserve normal Chat and Write startup, applicable AGENTS.md guidance, and the existing sandbox mode without unsandboxed fallback; without a safe provider the fixed policy SHALL be a no-op.
 
-#### Scenario: Automatic retention remains disabled
+#### Scenario: Automatic retention is provider-gated
 
-- **WHEN** the companion starts with an approved Hindsight provider and explicit retention enabled
-- **THEN** lifecycle hooks and automatic session retention SHALL remain disabled
-- **AND** only an explicitly confirmed retention request may write durable memory
+- **WHEN** the companion starts with an approved Hindsight provider that passes lifecycle and sandbox verification
+- **THEN** automatic session retention SHALL be active
+- **AND** only explicitly confirmed requests may use the explicit retention operation
 - **AND** the independent TUI configuration SHALL remain unchanged
 
 #### Scenario: No provider or sandbox-safe provider path exists
@@ -101,12 +114,10 @@ This change SHALL not enable provider lifecycle hooks or automatic session/trans
 
 ### Requirement: Surface sanitized retention state
 
-The extension SHALL expose retention policy and availability through the existing typed host/UI boundary or equivalent settings surface using provider-neutral fields. The surfaced state SHALL distinguish disabled, awaiting confirmation, available, blocked, unavailable, and error conditions without exposing provider paths, credentials, raw payloads, raw tool output, or unbounded error text.
+The extension SHALL retain provider-neutral host-side enforcement and bounded diagnostics without rendering retention enablement, automatic-retention, or confirmation controls in the Chat settings panel. It SHALL not expose a webview policy-update message for retention or contribute the legacy workspace retention settings. Provider paths, credentials, raw payloads, raw tool output, and unbounded error text SHALL remain outside the webview boundary.
 
 #### Scenario: Settings surface reports retention state
 
-- **WHEN** the settings/status surface is rendered
-- **THEN** it SHALL show whether explicit retention is enabled and whether confirmation is required
-- **AND** it SHALL show a safe availability state derived from the provider status
-- **AND** it SHALL explain that retrieved memory is evidence rather than instructions
-- **AND** it SHALL not reveal provider internals
+- **WHEN** the Chat settings panel is opened
+- **THEN** it SHALL not render the former retention section or its checkboxes
+- **AND** the MCP, sandbox, language, thinking, sound, and configuration-link controls SHALL remain available

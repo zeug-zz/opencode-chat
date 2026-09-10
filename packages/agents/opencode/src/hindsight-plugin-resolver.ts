@@ -21,6 +21,7 @@ export type HindsightPackageMetadataReader = (
 ) => HindsightPackageMetadata | undefined | Promise<HindsightPackageMetadata | undefined>;
 
 export type HindsightPluginResolution = Readonly<{
+  readonly packageName: typeof APPROVED_HINDSIGHT_PACKAGE;
   readonly pluginReference: string;
   readonly packageRoot?: string;
   readonly runtimePaths: readonly string[];
@@ -206,6 +207,7 @@ export async function resolveHindsightPlugin(
     if (runtimePaths === undefined || configurationPaths === undefined) continue;
 
     return Object.freeze({
+      packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: reference,
       ...(metadata ? { packageRoot: metadata.packageRoot } : {}),
       runtimePaths,

@@ -1,9 +1,10 @@
 import type { MemoryProviderStatus } from "@opencode-chat/core";
 import { describe, expect, it } from "vitest";
 import { buildHindsightCompanionIntegration, HINDSIGHT_RETENTION_TOOL_ID } from "../hindsight-companion-integration";
-import type { HindsightPluginResolution } from "../hindsight-plugin-resolver";
+import { APPROVED_HINDSIGHT_PACKAGE, type HindsightPluginResolution } from "../hindsight-plugin-resolver";
 
 const resolution: HindsightPluginResolution = {
+  packageName: APPROVED_HINDSIGHT_PACKAGE,
   pluginReference: "@vectorize-io/hindsight-coding-agents",
   packageRoot: "/Users/test/.hindsight/coding-agents",
   runtimePaths: ["/Users/test/.hindsight/coding-agents/runtime"],
@@ -67,6 +68,7 @@ describe("Hindsight companion integration", () => {
         automaticSessionRetention: false,
       }).integration,
     ).toEqual({
+      packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: resolution.pluginReference,
       packageRoot: resolution.packageRoot,
       runtimePaths: resolution.runtimePaths,
@@ -135,6 +137,7 @@ describe("Hindsight companion integration", () => {
     );
 
     expect(result.integration).toEqual({
+      packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: resolution.pluginReference,
       packageRoot: resolution.packageRoot,
       runtimePaths: resolution.runtimePaths,
@@ -145,6 +148,7 @@ describe("Hindsight companion integration", () => {
         "hindsight_read_knowledge_page",
         "hindsight_reflect",
       ],
+      retentionPermission: { [HINDSIGHT_RETENTION_TOOL_ID]: "ask" },
       automaticSessionRetention: true,
       environment: {},
     });
@@ -156,9 +160,18 @@ describe("Hindsight companion integration", () => {
     expect(buildHindsightCompanionIntegration(status("available"), allTools, undefined).integration).toBeUndefined();
   });
 
+  it("rejects a resolution without the exact approved package identity", () => {
+    expect(
+      buildHindsightCompanionIntegration(status("available"), allTools, {
+        ...resolution,
+        packageName: "@vectorize-io/hindsight-coding-agents-extra" as typeof APPROVED_HINDSIGHT_PACKAGE,
+      }),
+    ).toEqual(expect.not.objectContaining({ integration: expect.anything() }));
+  });
+
   it.each([
     ["enabled and confirmation required", { enabled: true, requireConfirmation: true }, "ask"],
-    ["enabled without confirmation", { enabled: true, requireConfirmation: false }, "allow"],
+    ["enabled without confirmation", { enabled: true, requireConfirmation: false }, "ask"],
   ] as const)("recognizes the exact retention tool when %s", (_label, policy, permission) => {
     const result = buildHindsightCompanionIntegration(
       status("available", { retain: true, recall: false, reflect: false }),

@@ -6,7 +6,6 @@ import type {
   ChatSandboxSettings,
   ChatSandboxStatus,
   ChatSession,
-  MemoryRetentionStatus,
   SkillInfo,
   TodoItem,
 } from "@opencode-chat/core";
@@ -96,11 +95,6 @@ export function App() {
 
   const [capabilities, setCapabilities] = useState<AgentCapabilities | undefined>(undefined);
   const [chatSandboxStatus, setChatSandboxStatus] = useState<ChatSandboxStatus | null>(null);
-  const [memoryRetentionStatus, setMemoryRetentionStatus] = useState<MemoryRetentionStatus>({
-    policy: { enabled: false, requireConfirmation: true, automaticSessionRetention: true },
-    state: "disabled",
-    automaticSessionRetention: { state: "unavailable" },
-  });
   const [queuedPromptCount, setQueuedPromptCount] = useState(0);
 
   useEffect(() => {
@@ -113,10 +107,6 @@ export function App() {
       settings,
     };
     postMessage(message);
-  }, []);
-
-  const handleMemoryRetentionPolicyChange = useCallback((policy: MemoryRetentionStatus["policy"]) => {
-    postMessage({ type: "setMemoryRetentionPolicy", policy });
   }, []);
 
   const mcp = useMcp(capabilities);
@@ -404,9 +394,6 @@ export function App() {
         case "chatSandboxStatus":
           setChatSandboxStatus(data.status);
           break;
-        case "memoryRetentionStatus":
-          setMemoryRetentionStatus(data.status);
-          break;
       }
     };
     window.addEventListener("message", handler);
@@ -677,7 +664,6 @@ export function App() {
     onNavigateToChild: handleNavigateToChild,
     onNavigateToParent: handleNavigateToParent,
     chatSandboxStatus,
-    memoryRetentionStatus,
     onChatSandboxSettingsChange: handleChatSandboxSettingsChange,
   };
 
@@ -763,8 +749,6 @@ export function App() {
                   onMcpRefresh={capabilities?.mcp ? mcp.refresh : undefined}
                   chatSandboxStatus={chatSandboxStatus ?? undefined}
                   onChatSandboxSettingsChange={handleChatSandboxSettingsChange}
-                  memoryRetentionStatus={memoryRetentionStatus}
-                  onMemoryRetentionPolicyChange={handleMemoryRetentionPolicyChange}
                 />
               )}
             </>

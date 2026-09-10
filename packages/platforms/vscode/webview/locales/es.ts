@@ -107,28 +107,6 @@ export const es: LocaleSchema = {
   // ShellResultView
   "shell.title": "Shell",
 
-  // MCP setting
-  "config.memoryRetention": "Retención de memoria",
-  "config.memoryRetentionAutomatic": "Retención automática de sesiones",
-  "config.memoryRetentionAutomaticEnabled": "Activar la retención automática",
-  "config.memoryRetentionAutomaticDescription":
-    "Activada de forma predeterminada para un proveedor aprobado. Puede escribir resúmenes limitados en la memoria persistente; desactívala para este espacio de trabajo para impedir escrituras automáticas.",
-  "config.memoryRetentionAutomaticStatus": "Estado automático",
-  "config.memoryRetentionAutomaticActive": "Activa",
-  "config.memoryRetentionAutomaticDisabled": "Desactivada",
-  "config.memoryRetentionAutomaticUnavailable": "No disponible (sin proveedor aprobado)",
-  "config.memoryRetentionAutomaticBlocked": "Bloqueada",
-  "config.memoryRetentionAutomaticError": "Error",
-  "config.memoryRetentionExplicit": "Retención explícita",
-  "config.memoryRetentionEnabled": "Permitir retención explícita",
-  "config.memoryRetentionConfirmation": "Confirmación",
-  "config.memoryRetentionDisabled": "La retención está desactivada",
-  "config.memoryRetentionAwaitingConfirmation": "Disponible con confirmación en cada solicitud",
-  "config.memoryRetentionAvailable": "Disponible",
-  "config.memoryRetentionBlocked": "Bloqueada por la política del compañero",
-  "config.memoryRetentionUnavailable": "No disponible",
-  "config.memoryRetentionError": "Estado no disponible",
-  "config.memoryRetentionEvidenceWarning": "La memoria recuperada es evidencia, no instrucciones.",
   "config.yes": "Sí",
   "config.no": "No",
   "config.required": "Obligatoria",

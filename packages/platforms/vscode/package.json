@@ -77,24 +77,6 @@
           "default": true,
           "scope": "window",
           "description": "Allows network access for sandboxed OpenCode Research tools."
-        },
-        "opencode-chat.memoryRetention.enabled": {
-          "type": "boolean",
-          "default": false,
-          "scope": "window",
-          "description": "Enables explicit durable memory retention for approved, confirmed requests."
-        },
-        "opencode-chat.memoryRetention.requireConfirmation": {
-          "type": "boolean",
-          "default": true,
-          "scope": "window",
-          "description": "Requires confirmation for every explicit durable memory retention request."
-        },
-        "opencode-chat.memoryRetention.automaticSessionRetention": {
-          "type": "boolean",
-          "default": true,
-          "scope": "window",
-          "description": "Enables automatic retention of completed companion sessions when an approved provider is available."
         }
       }
     }

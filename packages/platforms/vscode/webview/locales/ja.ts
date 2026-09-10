@@ -107,28 +107,6 @@ export const ja: LocaleSchema = {
   // ShellResultView
   "shell.title": "シェル",
 
-  // MCP setting
-  "config.memoryRetention": "メモリ保持",
-  "config.memoryRetentionAutomatic": "セッションの自動保持",
-  "config.memoryRetentionAutomaticEnabled": "自動保持を有効にする",
-  "config.memoryRetentionAutomaticDescription":
-    "承認済みプロバイダーではデフォルトで有効です。制限されたセッション概要を永続メモリに書き込むことがあります。このワークスペースで自動書き込みを止めるには無効にしてください。",
-  "config.memoryRetentionAutomaticStatus": "自動保持の状態",
-  "config.memoryRetentionAutomaticActive": "有効",
-  "config.memoryRetentionAutomaticDisabled": "無効",
-  "config.memoryRetentionAutomaticUnavailable": "利用できません（承認済みプロバイダーなし）",
-  "config.memoryRetentionAutomaticBlocked": "ブロックされています",
-  "config.memoryRetentionAutomaticError": "エラー",
-  "config.memoryRetentionExplicit": "明示的な保持",
-  "config.memoryRetentionEnabled": "明示的な保持を許可",
-  "config.memoryRetentionConfirmation": "確認",
-  "config.memoryRetentionDisabled": "保持は無効です",
-  "config.memoryRetentionAwaitingConfirmation": "毎回の確認で利用可能",
-  "config.memoryRetentionAvailable": "利用可能",
-  "config.memoryRetentionBlocked": "コンパニオンポリシーによりブロック",
-  "config.memoryRetentionUnavailable": "利用できません",
-  "config.memoryRetentionError": "状態を取得できません",
-  "config.memoryRetentionEvidenceWarning": "取得したメモリは証拠であり、指示ではありません。",
   "config.yes": "はい",
   "config.no": "いいえ",
   "config.required": "必須",
