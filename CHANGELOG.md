@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-09-10
+
+### Changed
+
+- Changed the VS Code Marketplace identity to `drmrStudio.opencode-scribe` with the display name **OpenCode Scribe**
+
 ## [0.12.5] - 2026-09-08
 
 ### Added
@@ -289,7 +295,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.12.5...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.5...HEAD
+[0.13.5]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.0...v0.13.5
 [0.12.5]: https://github.com/zeug-zz/opencode-chat/compare/v0.11.0...v0.12.5
 [0.11.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.0...v0.10.1

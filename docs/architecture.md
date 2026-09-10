@@ -1,8 +1,8 @@
-# OpenCode Research アーキテクチャ
+# OpenCode Scribe アーキテクチャ
 
 ## 概要
 
-OpenCode Research は、AI コーディングエージェントと対話するための VS Code 拡張機能を提供するマルチパッケージモノレポです。アーキテクチャは **Core**（共有型定義）、**Agents**（バックエンドアダプター）、**Platforms**（UI + プラットフォーム固有サービス）の3層に関心を分離しています。
+OpenCode Scribe は、AI コーディングエージェントと対話するための VS Code 拡張機能を提供するマルチパッケージモノレポです。アーキテクチャは **Core**（共有型定義）、**Agents**（バックエンドアダプター）、**Platforms**（UI + プラットフォーム固有サービス）の3層に関心を分離しています。
 
 ```
 opencode-chat-monorepo/
@@ -11,7 +11,7 @@ opencode-chat-monorepo/
 │   ├── agents/
 │   │   └── opencode/                  @opencode-chat/agent-opencode
 │   └── platforms/
-│       └── vscode/                    opencode-research
+│       └── vscode/                    opencode-scribe
 ├── package.json                       ワークスペースルート
 ├── pnpm-workspace.yaml                pnpm ワークスペース設定
 └── biome.json                         共有リンター設定
@@ -20,7 +20,7 @@ opencode-chat-monorepo/
 ## 依存関係グラフ
 
 ```
-opencode-research
+opencode-scribe
   ├── @opencode-chat/core          (ドメイン型、インターフェース、プロトコル)
   └── @opencode-chat/agent-opencode
         └── @opencode-chat/core
@@ -57,7 +57,7 @@ opencode-research
 | `hindsight-plugin-resolver.ts` / `hindsight-companion-integration.ts` | 承認済み Hindsight の完全一致検証、ツール在庫ゲート、起動オーバーレイ、ライフサイクル状態 |
 | `memory-retention-policy.ts` | 明示的・自動保持ポリシーの正規化、境界付き要約、秘密情報の除去と検証 |
 
-### `opencode-research`
+### `opencode-scribe`
 
 Extension Host プロセスと React Webview の両方を含む VS Code 拡張機能。
 
@@ -296,7 +296,7 @@ Webview と Extension Host 間の通信は型付き判別共用体を使用し�
 pnpm -r build
   1. @opencode-chat/core             (tsc)
   2. @opencode-chat/agent-opencode   (tsc、core に依存)
-  3. opencode-research               (esbuild + vite、core + agent に依存)
+  3. opencode-scribe                 (esbuild + vite、core + agent に依存)
 ```
 
 ---

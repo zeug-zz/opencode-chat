@@ -3,11 +3,11 @@ import type { LocaleSchema } from "./en";
 export const ru: LocaleSchema = {
   // ChatHeader
   "header.sessions": "Сессии",
-  "header.title.fallback": "OpenCode Research",
+  "header.title.fallback": "OpenCode Scribe",
   "header.newChat": "Новый чат",
 
   // EmptyState
-  "empty.title": "OpenCode Research",
+  "empty.title": "OpenCode Scribe",
   "empty.description": "Начните новый разговор.",
   "empty.newChat": "Новый чат",
 

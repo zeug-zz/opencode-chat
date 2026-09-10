@@ -27,5 +27,5 @@ labels: bug
 
 - OS: 
 - VS Code version: 
-- OpenCode Research version:
+- OpenCode Scribe version:
 - OpenCode version: 

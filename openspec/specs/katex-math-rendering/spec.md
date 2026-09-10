@@ -82,7 +82,7 @@ KaTeX styles SHALL be imported from the webview entry module and the webview CSP
 
 #### Scenario: CSS bundled by Vite
 
-- **WHEN** `pnpm --filter opencode-research build` is run
+- **WHEN** `pnpm --filter opencode-scribe build` is run
 - **THEN** the emitted `dist/webview/assets/index.css` SHALL contain KaTeX's base styles
 - **AND** no separate `<link rel="stylesheet">` for KaTeX SHALL be present in the webview HTML
 

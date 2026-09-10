@@ -1,9 +1,9 @@
 {
-  "name": "opencode-research",
+  "name": "opencode-scribe",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.12.5",
-  "publisher": "zeug-zz",
+  "version": "0.13.5",
+  "publisher": "drmrStudio",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -59,7 +59,7 @@
       ]
     },
     "configuration": {
-      "title": "OpenCode Research",
+      "title": "OpenCode Scribe",
       "properties": {
         "opencode-chat.chatSandbox.mode": {
           "type": "string",
@@ -70,13 +70,13 @@
           ],
           "default": "inherit",
           "scope": "window",
-          "description": "Controls sandboxing for OpenCode Research tools."
+          "description": "Controls sandboxing for OpenCode Scribe tools."
         },
         "opencode-chat.chatSandbox.allowNetwork": {
           "type": "boolean",
           "default": true,
           "scope": "window",
-          "description": "Allows network access for sandboxed OpenCode Research tools."
+          "description": "Allows network access for sandboxed OpenCode Scribe tools."
         }
       }
     }
@@ -94,8 +94,7 @@
     "test:watch": "vitest --config vitest.config.ts",
     "package": "vsce package --no-dependencies",
     "verify-package": "node --experimental-strip-types scripts/verify-bundled-research-package.ts",
-    "package:verify": "npm run package && npm run verify-package",
-    "publish": "vsce publish --no-dependencies"
+    "package:verify": "npm run package && npm run verify-package"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",
@@ -105,7 +104,7 @@
     "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.0.0",
-    "@types/vscode": "^1.136.0",
+    "@types/vscode": "^1.134.0",
     "@vitejs/plugin-react": "^6.0.3",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",

@@ -35,13 +35,8 @@ jobs:
         run: cp LICENSE CHANGELOG.md THIRD_PARTY_NOTICES.md packages/platforms/vscode/
 
       - name: Package extension
-        run: pnpm --filter opencode-research run package
+        run: pnpm --filter opencode-scribe run package
         working-directory: .
-
-      - name: Publish to Marketplace
-        run: pnpm --filter opencode-research run publish
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Upload .vsix to GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3

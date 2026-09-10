@@ -41,7 +41,7 @@ let memoryProviderStatus: MemoryProviderStatus = {
   capabilities: { retain: false, recall: false, reflect: false },
 };
 const MCP_INVENTORY_ERROR_MESSAGE =
-  "OpenCode Research could not resolve its MCP inventory. Repair the OpenCode configuration and reload the extension.";
+  "OpenCode Scribe could not resolve its MCP inventory. Repair the OpenCode configuration and reload the extension.";
 
 class McpInventoryError extends Error {
   constructor() {
@@ -56,7 +56,7 @@ process.on("exit", () => agent?.disconnect());
 export async function activate(context: vscode.ExtensionContext) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspaceFolder) {
-    vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Research requires an open workspace folder."));
+    vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Scribe requires an open workspace folder."));
     return;
   }
 
@@ -259,7 +259,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     const message = error instanceof Error ? error.message : String(error);
     if (message.startsWith("Inherited OpenCode plugins were unavailable during startup")) {
-      vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Research: {0}", message));
+      vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Scribe: {0}", message));
       return;
     }
     const sandboxStatus: ChatSandboxStatus = status ?? {
@@ -270,7 +270,7 @@ export async function activate(context: vscode.ExtensionContext) {
     };
     initialSandboxStatus = sandboxStatus;
     chatViewProvider?.publishChatSandboxStatus(sandboxStatus);
-    vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Research: {0}", message));
+    vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Scribe: {0}", message));
   };
   agent.onAvailabilityError = (error) => reportSandboxError(error);
 
@@ -310,7 +310,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (kind === "not-found") {
         vscode.window.showWarningMessage(
           vscode.l10n.t(
-            'OpenCode Research: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
+            'OpenCode Scribe: "opencode" command not found. Please install OpenCode first: https://github.com/anomalyco/opencode',
           ),
         );
         return;
@@ -327,14 +327,14 @@ export async function activate(context: vscode.ExtensionContext) {
       if (kind === "database-locked") {
         vscode.window.showErrorMessage(
           vscode.l10n.t(
-            "OpenCode Research: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
+            "OpenCode Scribe: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
           ),
         );
       } else {
         const message = error instanceof Error ? error.message : String(error);
         const truncated = message.length > 500 ? `${message.slice(0, 500)}...` : message;
         vscode.window.showErrorMessage(
-          vscode.l10n.t("OpenCode Research: Failed to start OpenCode server. {0}", truncated),
+          vscode.l10n.t("OpenCode Scribe: Failed to start OpenCode server. {0}", truncated),
         );
       }
     }

@@ -66,7 +66,7 @@ describe("ChatHeader", () => {
     // renders fallback title
     it("フォールバックタイトルを表示すること", () => {
       const { container } = render(<ChatHeader {...defaultProps} activeSession={null} />);
-      expect(container.querySelector(".title")?.textContent).toBe("OpenCode Research");
+      expect(container.querySelector(".title")?.textContent).toBe("OpenCode Scribe");
     });
 
     // does not render share button

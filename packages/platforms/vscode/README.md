@@ -1,6 +1,6 @@
-# OpenCode Research
+# OpenCode Scribe
 
-> **Historical lineage:** Originally forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui). This package is now maintained as the distinct OpenCode Research extension focused on research and writing.
+> **Historical lineage:** Originally forked from [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui). This package is now maintained as the distinct OpenCode Scribe extension focused on research and writing.
 
 An unofficial VS Code chat, research, and report-writing extension for [OpenCode](https://github.com/anomalyco/opencode), designed to sit alongside the OpenCode TUI rather than replace it.
 
@@ -15,7 +15,7 @@ OpenCode TUI と併用するための、調査とレポート執筆を中心と�
 
 ## English
 
-### OpenCode Research
+### OpenCode Scribe
 
 A research-first OpenCode **chat and writing harness** for VS Code. It runs beside the OpenCode TUI: Scout-based **chat** for reading, reasoning, and research; Build-backed **write** for sourced reports and requested file edits; serious coding stays in the TUI via clean handoff.
 
@@ -186,7 +186,13 @@ The following optional, user-installed runtime/tooling integrations can support 
 
 ### Installation
 
-Search for **OpenCode Research** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+Search for **OpenCode Scribe** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+
+**OpenCode Scribe** (`drmrStudio.opencode-scribe`) is a new, separate
+Marketplace listing from the legacy `zeug-zz.opencode-research` extension. VS
+Code will not automatically upgrade the legacy extension to the new
+publisher/name; install OpenCode Scribe separately if you used the legacy
+listing.
 
 ### Contributing
 

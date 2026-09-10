@@ -89,9 +89,9 @@ export function readZipArchiveEntries(archive: Uint8Array): string[] {
 
 async function resolveArchivePath(argument: string | undefined, packageRoot: string): Promise<string> {
   if (argument) return path.resolve(packageRoot, argument);
-  const candidates = (await readdir(packageRoot)).filter((entry) => /^opencode-research-.+\.vsix$/.test(entry)).sort();
+  const candidates = (await readdir(packageRoot)).filter((entry) => /^opencode-scribe-.+\.vsix$/.test(entry)).sort();
   const archive = candidates.at(-1);
-  if (!archive) throw new Error("No opencode-research VSIX found; run npm run package first");
+  if (!archive) throw new Error("No opencode-scribe VSIX found; run npm run package first");
   return path.join(packageRoot, archive);
 }
 

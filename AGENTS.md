@@ -1,8 +1,8 @@
-# OpenCode Research
+# OpenCode Scribe
 
 Unofficial VS Code chat, research, and report-writing extension for OpenCode.
 Repository: https://github.com/zeug-zz/opencode-chat
-Extension ID: `zeug-zz.opencode-research`
+Extension ID: `drmrStudio.opencode-scribe`
 
 This is a distinct product, not a general coding-agent GUI. It runs alongside
 the OpenCode TUI; use the TUI handoff for unrestricted coding, shell, package,

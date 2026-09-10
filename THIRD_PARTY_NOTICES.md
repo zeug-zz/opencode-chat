@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 This file contains the licenses and copyright notices for third-party software
-included in the distributed build artifacts (VSIX package) of OpenCode Research.
+included in the distributed build artifacts (VSIX package) of OpenCode Scribe.
 
 ---
 
