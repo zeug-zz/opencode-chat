@@ -2,19 +2,35 @@
 
 ## Purpose
 
-This capability gives the extension-owned Chat and Write agents explicit, capability-gated access to the approved Hindsight recall/search and reflection tools while preserving the companion’s existing isolation, fallback, and sandbox boundaries.
+This capability gives the extension-owned Chat and Write agents capability-gated access to the approved Hindsight recall/search, reflection, and confirmation-gated retention tools while preserving the companion’s existing isolation, fallback, and sandbox boundaries.
 
 ## Requirements
 
 ### Requirement: Load only the approved Hindsight integration
 
-The companion SHALL load at most one Hindsight integration identified by the exact approved Hindsight coding-agent package identity. It SHALL resolve the configured entry without executing arbitrary plugins, discard provider-specific plugin options at the companion boundary, and SHALL not inherit or copy the complete global OpenCode plugin list.
+The companion MAY inherit the native OpenCode plugin surface, but SHALL identify
+at most one Hindsight integration by the exact approved Hindsight coding-agent
+package identity. It SHALL resolve the configured entry without executing
+arbitrary plugins. Plugin entries and their options SHALL remain opaque to the
+extension. It SHALL use that identity only for Hindsight capability,
+observed-tool inventory, lifecycle, retention, sandbox-path, and exact
+permission gates. Unrelated or merely Hindsight-like plugins SHALL not gain
+Hindsight authority.
 
 #### Scenario: Approved Hindsight entry is configured
 
 - **WHEN** the effective OpenCode configuration contains an entry that resolves to the approved Hindsight coding-agent package
 - **THEN** the companion SHALL use only that entry for Hindsight integration
-- **AND** unrelated global plugin entries SHALL not be loaded by the companion overlay
+- **AND** unrelated inherited plugin entries SHALL not participate in Hindsight capability, observed-tool inventory, lifecycle, retention, or path gating
+- **AND** the independent TUI configuration SHALL remain unchanged
+
+#### Scenario: Approved Hindsight entry is configured with other plugins
+
+- **WHEN** the effective OpenCode configuration contains the approved Hindsight
+  entry and unrelated user plugins
+- **THEN** the companion MAY load the native plugin set
+- **AND** only the exact approved Hindsight entry SHALL participate in Hindsight
+  capability detection and retention policy
 - **AND** the independent TUI configuration SHALL remain unchanged
 
 #### Scenario: Hindsight-like but unapproved entry is configured
@@ -24,18 +40,31 @@ The companion SHALL load at most one Hindsight integration identified by the exa
 - **AND** no Hindsight tool SHALL be exposed
 - **AND** normal Chat and Write operation SHALL remain available
 
+### Requirement: Unrelated plugins cannot gain Hindsight authority
+
+Only the exact approved Hindsight identity and independently verified observed
+tool inventory SHALL participate in Hindsight capability, lifecycle, retention,
+and path gates. Unrelated or merely Hindsight-like inherited plugins SHALL not
+gain Hindsight administration, deletion, synchronization, or unknown authority.
+
+#### Scenario: Unrelated plugin cannot impersonate Hindsight authority
+
+- **WHEN** an inherited plugin exposes Hindsight-like names, administration, deletion, synchronization, or unknown tools
+- **THEN** those tools SHALL not be treated as Hindsight capabilities
+- **AND** only the exact approved identity and independently verified observed inventory SHALL participate in Hindsight gates
+
 ### Requirement: Gate Hindsight tools by detected capabilities
 
 The companion SHALL expose only exact, non-administrative Hindsight tool names that correspond to detected capabilities. A detected `recall` capability SHALL allow `hindsight_search_knowledge_pages`, `hindsight_list_knowledge_pages`, and `hindsight_read_knowledge_page`; a detected `reflect` capability SHALL allow `hindsight_reflect`. The companion SHALL not use a broad `hindsight_*` wildcard.
 
-The companion SHALL keep `hindsight_ingest_document`, `hindsight_capture_initiative`, `hindsight_diagnose`, `hindsight_sync_status`, deletion tools, provider administration, and unknown Hindsight tool names unavailable in this change. Explicit retention/write tooling and automatic session retention SHALL remain disabled until a later retention-controls change.
+The companion SHALL expose `hindsight_ingest_document` only when `retain: true` and the exact operation is observed, and SHALL keep `hindsight_capture_initiative`, `hindsight_diagnose`, `hindsight_sync_status`, deletion tools, provider administration, and unknown Hindsight tool names unavailable. Explicit retention SHALL remain confirmation-gated and automatic session retention SHALL remain bounded and provider/lifecycle/sandbox-gated.
 
 #### Scenario: Fully capable Hindsight provider
 
-- **WHEN** the approved provider is loaded and detection reports `recall: true` and `reflect: true`
+- **WHEN** the approved provider is loaded and detection reports `recall: true`, `reflect: true`, and `retain: true` with the exact observed tools
 - **THEN** Chat and Write SHALL receive the exact recall/search and reflection allows
-- **AND** the provider’s write, diagnostic, synchronization, deletion, and unknown tools SHALL remain denied
-- **AND** automatic session retention SHALL remain disabled
+- **AND** the exact retention operation SHALL remain confirmation-gated
+- **AND** the provider’s diagnostic, synchronization, deletion, administration, and unknown tools SHALL remain denied
 
 #### Scenario: Partially capable Hindsight provider
 
@@ -64,7 +93,13 @@ The Hindsight plugin reference, capability-derived tool permissions, existing Sc
 
 ### Requirement: Integrate with sandbox policy without weakening it
 
-When the companion is sandboxed, the approved Hindsight plugin and only the exact provider runtime/configuration paths required for its initialization SHALL receive read access through the existing filesystem policy. The integration SHALL not grant the home-directory root, broad credential directories, unrestricted writes, or new unsandboxed fallback behavior. Any protected-path conflict, unsupported runtime requirement, or unsafe path resolution SHALL fail closed and report the provider as blocked or unavailable while preserving ordinary Chat and Write operation.
+When the companion is sandboxed, Hindsight and all other inherited plugins SHALL
+use the existing generic compatibility filesystem policy. The integration SHALL
+not grant the home-directory root, broad credential directories, unrestricted
+writes, plugin-specific write exceptions, or new unsandboxed fallback behavior.
+Any protected-path conflict, unsupported runtime requirement, or unsafe path
+resolution SHALL fail closed and report Hindsight as blocked or unavailable while
+preserving ordinary Chat and Write operation.
 
 #### Scenario: Exact provider paths are safe to grant
 

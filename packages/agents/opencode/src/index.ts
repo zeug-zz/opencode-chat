@@ -32,6 +32,7 @@ export type {
   OpenCodeFilesystemPolicy,
   OpenCodeGuidanceOverlay,
   OpenCodeLaunchConfiguration,
+  OpenCodePluginEntry,
 } from "./launch-config";
 export * from "./mappers";
 export type { McpInventory, McpTransport } from "./mcp-inventory";

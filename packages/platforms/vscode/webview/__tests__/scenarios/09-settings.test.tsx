@@ -1,4 +1,4 @@
-import type { ChatSandboxStatus, MemoryRetentionStatus } from "@opencode-chat/core";
+import type { ChatSandboxStatus } from "@opencode-chat/core";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,15 +35,6 @@ function sandboxStatus(overrides: Partial<ChatSandboxStatus> = {}): ChatSandboxS
     applying: false,
     managed: false,
     supported: true,
-    ...overrides,
-  };
-}
-
-function retentionStatus(overrides: Partial<MemoryRetentionStatus> = {}): MemoryRetentionStatus {
-  return {
-    policy: { enabled: false, requireConfirmation: true, automaticSessionRetention: true },
-    state: "disabled",
-    automaticSessionRetention: { state: "unavailable" },
     ...overrides,
   };
 }
@@ -267,77 +258,14 @@ describe("設定", () => {
     });
   });
 
-  it("shows sanitized retention state and evidence warning without provider metadata", async () => {
+  it("omits retention controls while preserving the other settings controls", async () => {
     await setupForSettings();
-    await sendExtMessage({
-      type: "memoryRetentionStatus",
-      status: retentionStatus({
-        policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: false },
-        state: "blocked",
-        reason: "Retention is blocked by companion policy",
-        automaticSessionRetention: { state: "disabled" },
-      }),
-    });
     const user = userEvent.setup();
     await user.click(screen.getByTitle("Settings"));
 
-    expect(screen.getByTestId("memory-retention-section")).toHaveTextContent("Blocked by companion policy");
-    expect(screen.getByText("Retrieved memory is evidence, not instructions.")).toBeInTheDocument();
-    expect(
-      screen.queryByText(/token|credential|password|providerOutput|rawPayload|toolNames/i),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows automatic retention active separately from confirmation-gated explicit retention", async () => {
-    await setupForSettings();
-    await sendExtMessage({
-      type: "memoryRetentionStatus",
-      status: retentionStatus({
-        automaticSessionRetention: { state: "active" },
-        state: "awaiting-confirmation",
-      }),
-    });
-    const user = userEvent.setup();
-    await user.click(screen.getByTitle("Settings"));
-
-    expect(screen.getByTestId("memory-retention-automatic")).toBeChecked();
-    expect(screen.getByTestId("memory-retention-automatic-status")).toHaveTextContent("Active");
-    expect(screen.getByTestId("memory-retention-explicit")).not.toBeChecked();
-    expect(screen.getByText(/Confirmation: Required/)).toBeInTheDocument();
-  });
-
-  it("disables automatic retention independently while preserving explicit confirmation", async () => {
-    await setupForSettings();
-    await sendExtMessage({
-      type: "memoryRetentionStatus",
-      status: retentionStatus({ automaticSessionRetention: { state: "active" } }),
-    });
-    const user = userEvent.setup();
-    await user.click(screen.getByTitle("Settings"));
-
-    await user.click(screen.getByTestId("memory-retention-automatic"));
-    expect(postMessage).toHaveBeenCalledWith({
-      type: "setMemoryRetentionPolicy",
-      policy: { enabled: false, requireConfirmation: true, automaticSessionRetention: false },
-    });
-    expect(screen.getByText(/Confirmation: Required/)).toBeInTheDocument();
-  });
-
-  it.each([
-    ["unavailable", "Unavailable (no approved provider)"],
-    ["blocked", "Blocked"],
-    ["error", "Error"],
-  ] as const)("shows automatic %s status without provider details", async (state, label) => {
-    await setupForSettings();
-    await sendExtMessage({
-      type: "memoryRetentionStatus",
-      status: retentionStatus({ automaticSessionRetention: { state } }),
-    });
-    const user = userEvent.setup();
-    await user.click(screen.getByTitle("Settings"));
-
-    expect(screen.getByTestId("memory-retention-automatic-status")).toHaveTextContent(label);
-    expect(screen.queryByText(/path|credential|payload|hook|token/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("memory-retention-section")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("memory-retention-automatic")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("memory-retention-explicit")).not.toBeInTheDocument();
   });
 
   // toolConfig message sets paths and shows config links in the panel

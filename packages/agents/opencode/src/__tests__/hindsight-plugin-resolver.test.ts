@@ -35,6 +35,7 @@ describe("resolveHindsightPlugin", () => {
     await expect(
       resolveHindsightPlugin({ plugin: [[APPROVED_HINDSIGHT_PACKAGE, { secret: "not copied" }]] }, readMetadata),
     ).resolves.toEqual({
+      packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: APPROVED_HINDSIGHT_PACKAGE,
       runtimePaths: [],
       configurationPaths: [],
@@ -48,6 +49,7 @@ describe("resolveHindsightPlugin", () => {
     await expect(
       resolveHindsightPlugin({ plugin: [["/Users/test/.hindsight/coding-agents", { arbitrary: true }]] }, readMetadata),
     ).resolves.toEqual({
+      packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: "/Users/test/.hindsight/coding-agents",
       packageRoot: approvedMetadata.packageRoot,
       runtimePaths: ["/Users/test/.hindsight/coding-agents/runtime"],

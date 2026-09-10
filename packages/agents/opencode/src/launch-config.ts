@@ -27,6 +27,8 @@ export type OpenCodeCommandDefinition = {
   template: string;
 };
 
+export type OpenCodePluginEntry = string | readonly [string, ...(readonly unknown[])];
+
 export type OpenCodeGuidanceOverlay = {
   skills?: { paths: readonly string[] };
   command?: Record<string, OpenCodeCommandDefinition>;
@@ -42,6 +44,7 @@ export type OpenCodeLaunchConfiguration = {
     networkPolicy?: OpenCodeNetworkPolicy;
   };
   executable: OpenCodeExecutableSelection;
+  pluginSources?: readonly OpenCodePluginEntry[];
   mcpOverlay?: { mcp: Record<string, { enabled: boolean }> };
   mcpTransport?: Readonly<Record<string, import("./mcp-inventory").McpTransport>>;
   guidanceOverlay?: OpenCodeGuidanceOverlay;

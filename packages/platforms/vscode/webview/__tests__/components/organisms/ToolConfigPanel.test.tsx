@@ -110,6 +110,31 @@ describe("ToolConfigPanel", () => {
     });
   });
 
+  it("omits retention controls while preserving the other settings sections", () => {
+    const mcpServers: McpStatus = { github: { connected: false, status: "disabled" } };
+    const sandboxStatus: ChatSandboxStatus = {
+      mode: "inherit",
+      enabled: true,
+      inherited: true,
+      allowNetwork: true,
+      applying: false,
+      managed: false,
+      supported: true,
+    };
+    const { container } = render(
+      <ToolConfigPanel {...defaultProps} mcpServers={mcpServers} sandboxStatus={sandboxStatus} />,
+    );
+
+    expect(container.querySelector('[data-testid="memory-retention-section"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-testid="memory-retention-automatic"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-testid="memory-retention-explicit"]')).not.toBeInTheDocument();
+    expect(container.textContent).toContain("MCP");
+    expect(container.textContent).toContain("Sandbox");
+    expect(container.textContent).toContain("Thinking");
+    expect(container.textContent).toContain("Sound Notification");
+    expect(container.textContent).toContain("Project Config");
+  });
+
   // when paths are null
   context("paths が null の場合", () => {
     // does not render config file links

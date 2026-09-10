@@ -31,7 +31,7 @@ const SAFE_DEFAULT_POLICY: MemoryRetentionPolicy = {
 };
 
 const DEFAULT_POLICY: MemoryRetentionPolicy = {
-  enabled: false,
+  enabled: true,
   requireConfirmation: true,
   automaticSessionRetention: true,
 };
@@ -101,7 +101,8 @@ function containsIncompleteCredentialMarker(value: string): boolean {
 function containsUnsupportedContent(value: string): boolean {
   return (
     /(?:raw|tool|payload|transcript|full document|provider output|configuration|config)\s*[:=]/i.test(value) ||
-    /(?:^|\s)(?:\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\)/.test(value)
+    /\b(?:retrieved|web|mcp|untrusted)\s+(?:content|document|page|result|output|evidence)\b/i.test(value) ||
+    /(?:^|\s)(?:\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\|file:\/\/|~\/)/.test(value)
   );
 }
 
@@ -132,8 +133,11 @@ export function validateMemoryRetentionSummary(input: unknown): MemoryRetentionV
   if (input.title !== undefined) {
     if (typeof input.title !== "string") return { accepted: false, reason: "invalid-summary" };
     title = redactSecrets(input.title).replace(/\s+/g, " ").trim();
-    if (title.length > MAX_MEMORY_RETENTION_TITLE_LENGTH || containsResidualSecretMarker(title)) {
-      return { accepted: false, reason: "secret-material" };
+    if (title.length > MAX_MEMORY_RETENTION_TITLE_LENGTH) return { accepted: false, reason: "secret-material" };
+    if (containsUnsupportedContent(title)) return { accepted: false, reason: "unsupported-content" };
+    if (containsResidualSecretMarker(title)) return { accepted: false, reason: "secret-material" };
+    if (!title) {
+      return { accepted: false, reason: "invalid-summary" };
     }
   }
 
@@ -147,6 +151,10 @@ export function validateMemoryRetentionSummary(input: unknown): MemoryRetentionV
       return { accepted: false, reason: "invalid-summary" };
     }
     tags = input.tags.map((tag) => tag.replace(/\s+/g, " ").trim());
+    if (tags.some((tag) => !tag || containsUnsupportedContent(tag))) {
+      return { accepted: false, reason: "unsupported-content" };
+    }
+    if (tags.some((tag) => containsResidualSecretMarker(tag))) return { accepted: false, reason: "secret-material" };
   }
 
   return { accepted: true, value: { summary, ...(title ? { title } : {}), ...(tags ? { tags } : {}) } };

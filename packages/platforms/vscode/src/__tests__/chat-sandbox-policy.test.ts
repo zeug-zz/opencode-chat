@@ -368,6 +368,32 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readWritePaths).not.toContain("/home/tester/.npm");
   });
 
+  it.each(["darwin", "linux"] as const)(
+    "uses generic compatibility semantics for inherited plugin source and dependency reads on %s",
+    (platform) => {
+      const pluginSource =
+        platform === "darwin"
+          ? "/Users/tester/.local/share/plugins/research/index.js"
+          : "/opt/plugins/research/index.js";
+      const pluginDependency =
+        platform === "darwin"
+          ? "/Users/tester/.local/share/plugins/research/node_modules/runtime/index.js"
+          : "/opt/plugins/research/node_modules/runtime/index.js";
+      const home = platform === "darwin" ? "/Users/tester" : homePath;
+      const policy = buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: home,
+        platform,
+      });
+
+      expect(policy.denyReadPaths).not.toEqual(expect.arrayContaining([pluginSource, pluginDependency]));
+      expect(policy.readOnlyPaths).not.toEqual(expect.arrayContaining([pluginSource, pluginDependency]));
+      expect(policy.readWritePaths).not.toEqual(expect.arrayContaining([pluginSource, pluginDependency]));
+      expect(policy.readWritePaths).not.toContain(`${home}/Documents`);
+      expect(policy.denyReadPaths).toContain(`${home}/.ssh`);
+    },
+  );
+
   it("preserves runtime cache and temporary write paths while excluding unrelated paths", () => {
     const policy = buildChatSandboxFilesystemPolicy({
       workspacePath: "/workspace/project",
@@ -927,6 +953,45 @@ describe("resolveRuntimeCachePaths", () => {
     expect(policy.readWritePaths).not.toContain("/home/tester");
     expect(policy.readWritePaths).not.toContain("/home/tester/.config/opencode");
     expect(policy.readWritePaths).not.toContain("/home/tester/.ssh");
+  });
+
+  it("keeps a future-plugin runtime on generic cache and temporary grants", () => {
+    const runtimePaths = resolveRuntimeCachePaths(
+      {
+        CONTEXT_MODE_DIR: "/home/tester/.config/opencode/context-mode",
+        npm_config_cache: "/home/tester/.npm",
+      },
+      "/home/tester",
+      "linux",
+    );
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath: "/home/tester",
+      openCodePaths: {
+        state: "/home/tester/.local/state/opencode",
+        cache: "/home/tester/.cache/opencode",
+        temp: "/home/tester/.cache/opencode/tmp",
+      },
+      runtimeCachePaths: runtimePaths,
+      temporaryPaths: ["/workspace/project/.tmp/plugin-child"],
+      platform: "linux",
+    });
+
+    expect(policy.readWritePaths).toEqual(
+      expect.arrayContaining([
+        "/home/tester/.cache/uv",
+        "/home/tester/.config/opencode/context-mode/content",
+        "/home/tester/.config/opencode/context-mode/sessions",
+        "/home/tester/.local/state/opencode",
+        "/home/tester/.npm",
+        "/workspace/project/.tmp/plugin-child",
+      ]),
+    );
+    expect(policy.readWritePaths).not.toContain("/home/tester");
+    expect(policy.readWritePaths).not.toContain("/home/tester/.config/opencode");
+    expect(policy.readWritePaths).not.toContain("/home/tester/.config/opencode/auth.json");
+    expect(policy.readWritePaths).not.toContain("/tmp");
+    expect(policy.readWritePaths).not.toContain("/private/tmp");
   });
 
   it("honors a custom context-mode root for both content and sessions", () => {

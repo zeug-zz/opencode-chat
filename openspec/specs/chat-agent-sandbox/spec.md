@@ -145,9 +145,11 @@ sandbox.
 ### Requirement: Sandboxed filesystem policy
 
 When Chat sandboxing is enabled, the companion SHALL use a compatibility-first
-filesystem policy. The policy SHALL permit read access required by the
-companion, configured local MCPs, and their installed runtimes without
-requiring MCP-specific path grants, except for the protected read baseline
+filesystem policy for OpenCode, inherited plugins, configured local MCPs, and
+their installed runtimes. The policy SHALL permit read access required by the
+companion, inherited plugins, configured local MCPs, and their installed
+runtimes without requiring plugin-specific or MCP-specific path grants, except
+for the protected read baseline
 specified below. The policy SHALL constrain writes to the active workspace and
 the OpenCode state, runtime-cache, and temporary paths required for Chat
 operation. The sandboxed Chat MUST be able to write the narrow OpenCode
@@ -248,6 +250,18 @@ not become a technical report-only restriction.
   work
 - **AND** the existing Scout and Build agent permission behavior SHALL remain
   unchanged
+
+#### Scenario: Inherited plugin reads use generic compatibility access
+
+- **WHEN** an inherited plugin requires its source, dependency, or configuration to be read
+- **THEN** the compatibility policy SHALL permit the non-protected read using the same generic semantics as a local MCP runtime
+- **AND** no plugin-specific read grant SHALL be required
+
+#### Scenario: Inherited plugin writes remain bounded
+
+- **WHEN** an inherited plugin requires a write path outside the active workspace or existing OpenCode, runtime-cache, or temporary grants
+- **THEN** the write SHALL fail at the sandbox boundary
+- **AND** the policy SHALL not grant the plugin home or package root writable access automatically
 
 #### Scenario: Local MCP runtime access is preserved
 
@@ -488,6 +502,20 @@ access SHALL remain available when non-conflicting with the protected baseline.
   available
 - **AND** Write SHALL retain its existing workspace-scoped editing capability
 - **AND** Scout and Write agent permissions SHALL remain unchanged
+
+### Requirement: Inherited plugin startup fallback preserves sandbox mode
+
+If inherited plugin activation prevents companion startup or readiness, the
+companion MAY retry once with an explicit plugin-free configuration. The retry
+SHALL retain the requested sandbox, network, agent, MCP, guidance, workspace,
+and protected-deny policies and SHALL never use an unsandboxed process.
+
+#### Scenario: Plugin failure retries only in the requested sandbox mode
+
+- **WHEN** inherited plugin activation prevents companion startup or readiness
+- **THEN** the companion MAY retry once with an explicit plugin-free configuration
+- **AND** the retry SHALL retain the requested sandbox, network, agent, MCP, guidance, workspace, and protected-deny policies
+- **AND** the extension SHALL not retry with an unsandboxed process
 
 ### Requirement: Agent and execution boundaries remain explicit
 

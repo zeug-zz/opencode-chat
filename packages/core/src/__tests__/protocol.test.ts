@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type {
   HostToUIMessage,
-  MemoryAutomaticRetentionState,
   MemoryCapabilities,
   MemoryOperation,
   MemoryProviderDescriptor,
   MemoryProviderState,
   MemoryProviderStatus,
-  MemoryRetentionPolicy,
-  MemoryRetentionStatus,
-  UIToHostMessage,
 } from "..";
-import { DEFAULT_MEMORY_RETENTION_POLICY } from "..";
 
 const states: MemoryProviderState[] = ["unavailable", "configured", "available", "partial", "blocked", "error"];
 
@@ -146,78 +141,5 @@ describe("memory provider contract", () => {
       requiresNetwork: true,
       requiresLocalRuntime: false,
     });
-  });
-});
-
-describe("memory retention protocol", () => {
-  const policy: MemoryRetentionPolicy = {
-    enabled: false,
-    requireConfirmation: true,
-    automaticSessionRetention: false,
-  };
-
-  it("supports normalized policy updates and retention status", () => {
-    const update: UIToHostMessage = {
-      type: "setMemoryRetentionPolicy",
-      policy,
-    };
-    const status: MemoryRetentionStatus = {
-      policy,
-      state: "disabled",
-      reason: "Explicit retention is disabled",
-    };
-    const message: HostToUIMessage = {
-      type: "memoryRetentionStatus",
-      status,
-    };
-
-    expect(update).toEqual({ type: "setMemoryRetentionPolicy", policy });
-    expect(message).toEqual({ type: "memoryRetentionStatus", status });
-  });
-
-  it("defaults automatic retention on without enabling explicit retention", () => {
-    expect(DEFAULT_MEMORY_RETENTION_POLICY).toEqual({
-      enabled: false,
-      requireConfirmation: true,
-      automaticSessionRetention: true,
-    });
-  });
-
-  it("keeps explicit retention separate from automatic lifecycle status", () => {
-    const message: HostToUIMessage = {
-      type: "memoryRetentionStatus",
-      status: { policy, state: "unavailable", automaticSessionRetention: { state: "unavailable" } },
-    };
-
-    expect(message.status.policy.automaticSessionRetention).toBe(false);
-    expect(message.status.automaticSessionRetention?.state).toBe("unavailable");
-    expect(message.status).not.toHaveProperty("providerOutput");
-    expect(message.status).not.toHaveProperty("toolNames");
-    expect(message.status).not.toHaveProperty("path");
-    expect(message.status).not.toHaveProperty("credentials");
-    expect(message.status).not.toHaveProperty("rawPayload");
-  });
-
-  it("does not permit sensitive provider metadata or lifecycle state on the wire", () => {
-    const status: MemoryRetentionStatus = {
-      policy,
-      state: "blocked",
-      reason: "Provider is blocked by sandbox policy",
-    };
-    const serialized = JSON.stringify({ type: "memoryRetentionStatus", status });
-
-    expect(serialized).not.toMatch(/credential|password|token|providerOutput|rawPayload|toolNames|path/i);
-    expect(status.policy.automaticSessionRetention).toBe(false);
-  });
-
-  it("limits automatic retention reporting to provider-neutral bounded states", () => {
-    const states: MemoryAutomaticRetentionState[] = ["active", "disabled", "unavailable", "blocked", "error"];
-    for (const state of states) {
-      const serialized = JSON.stringify({
-        type: "memoryRetentionStatus",
-        status: { policy, state: "disabled", automaticSessionRetention: { state } },
-      });
-      expect(serialized).not.toMatch(/hindsight|credential|password|token|path|payload|hook/i);
-    }
   });
 });

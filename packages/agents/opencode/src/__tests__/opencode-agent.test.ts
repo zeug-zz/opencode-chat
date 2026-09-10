@@ -99,6 +99,7 @@ let mockClient: ReturnType<typeof createMockSdkClient>;
 const mockServerClose = vi.fn();
 
 const hindsightIntegration: HindsightCompanionIntegration = {
+  packageName: "@vectorize-io/hindsight-coding-agents",
   pluginReference: "@vectorize-io/hindsight-coding-agents",
   packageRoot: "/workspace/.hindsight/coding-agents",
   runtimePaths: ["/workspace/.hindsight/coding-agents/runtime"],
@@ -282,6 +283,84 @@ describe("OpenCodeAgent", () => {
       expect(mockSandboxManager.reset).toHaveBeenCalledTimes(1);
     });
 
+    it("retries sandbox readiness once with plugins disabled in the same sandbox mode", async () => {
+      const first = createSandboxChild();
+      const second = createSandboxChild();
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => first.handlers.exit?.(2 as never, "SIGTERM" as never));
+        return first.child as never;
+      });
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => second.stdout.emit("data", "http://127.0.0.1:4568\n"));
+        return second.child as never;
+      });
+      const sandboxedAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: ["broken-plugin"],
+        sandbox: {
+          ...integrationLaunchConfiguration.sandbox,
+          mode: "on",
+          enabled: true,
+        },
+      });
+
+      await sandboxedAgent.connect();
+
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(spawn).mock.calls[0]?.[1]).toMatchObject({
+        cwd: "/workspace/project",
+      });
+      const retryOptions = vi.mocked(spawn).mock.calls[1]?.[1];
+      if (!retryOptions) throw new Error("Expected plugin-free sandbox retry options");
+      expect((retryOptions.env as Record<string, string>).OPENCODE_CONFIG_CONTENT).toContain('"plugin":[]');
+      expect(mockSandboxManager.initialize).toHaveBeenCalledTimes(2);
+      expect(mockSandboxManager.reset).toHaveBeenCalledTimes(1);
+      sandboxedAgent.disconnect();
+    });
+
+    it("keeps provider startup failure nonfatal in the requested sandbox mode", async () => {
+      const first = createSandboxChild();
+      const second = createSandboxChild();
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => first.handlers.exit?.(2 as never, "SIGTERM" as never));
+        return first.child as never;
+      });
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => second.stdout.emit("data", "http://127.0.0.1:4569\n"));
+        return second.child as never;
+      });
+      const sandboxedAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: [activeHindsightIntegration.pluginReference],
+        hindsightCompanionIntegration: activeHindsightIntegration,
+        sandbox: {
+          ...integrationLaunchConfiguration.sandbox,
+          mode: "on",
+          enabled: true,
+        },
+      });
+
+      await sandboxedAgent.connect();
+      await expect(sandboxedAgent.createSession("Chat fallback")).resolves.toBeDefined();
+      await expect(
+        sandboxedAgent.sendMessage("sess-1", "ordinary Chat", { primaryAgent: "scout" }),
+      ).resolves.toBeUndefined();
+      await expect(
+        sandboxedAgent.sendMessage("sess-1", "ordinary Write", { primaryAgent: "build" }),
+      ).resolves.toBeUndefined();
+
+      expect(createOpencodeServer).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(mockSandboxManager.initialize).toHaveBeenCalledTimes(2);
+      const retryOptions = vi.mocked(spawn).mock.calls[1]?.[1];
+      expect(retryOptions).toBeDefined();
+      if (!retryOptions) throw new Error("Expected plugin-free sandbox retry options");
+      expect((retryOptions.env as Record<string, string>).HINDSIGHT_DISABLE_HOOKS).toBe("1");
+      expect((retryOptions.env as Record<string, string>).OPENCODE_CONFIG_CONTENT).toContain('"plugin":[]');
+      expect(sandboxedAgent.launchConfiguration?.sandbox.mode).toBe("on");
+      sandboxedAgent.disconnect();
+    });
+
     it("should keep the default startup path unsandboxed", async () => {
       await agent.connect();
 
@@ -353,6 +432,7 @@ describe("OpenCodeAgent", () => {
                 webfetch: "allow",
                 websearch: "allow",
                 "firecrawl_*": "allow",
+                "ctx_*": "allow",
                 "context-mode_*": "allow",
                 "paper-search_*": "allow",
               },
@@ -376,6 +456,32 @@ describe("OpenCodeAgent", () => {
       expect(createOpencodeClient).toHaveBeenCalledWith({ baseUrl: "http://localhost:12345" });
     });
 
+    it("serializes only opaque inherited plugin sources alongside the companion overlay", async () => {
+      const pluginSources = [
+        "npm-plugin",
+        "/workspace/plugins/local-plugin.ts",
+        "file:///workspace/plugins/file-plugin.js",
+        ["tuple-plugin", { secret: "opaque-option" }],
+      ] as const;
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const configuredAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources,
+      });
+
+      await configuredAgent.connect();
+
+      const options = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
+      expect(options?.config?.plugin).toEqual(pluginSources);
+      expect(options?.config).not.toHaveProperty("pluginOptions");
+      expect(options?.config).not.toHaveProperty("provider");
+      expect(options?.config).not.toHaveProperty("model");
+      expect(options?.config).not.toHaveProperty("permission");
+      expect(log).not.toHaveBeenCalled();
+      log.mockRestore();
+      configuredAgent.disconnect();
+    });
+
     it("should pass the same MCP overlay to sandboxed and unsandboxed children", async () => {
       const mcpOverlay = {
         mcp: {
@@ -391,6 +497,12 @@ describe("OpenCodeAgent", () => {
           mode: "off" as const,
           enabled: false,
           allowNetwork: true,
+          networkPolicy: {
+            enabled: false,
+            allowedDomains: [],
+            deniedDomains: ["blocked.example"],
+            allowLocalBinding: true,
+          },
           filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [] },
         },
         executable: { path: "/usr/local/bin/opencode" },
@@ -439,8 +551,14 @@ describe("OpenCodeAgent", () => {
     });
 
     it("should pass the normalized Hindsight overlay and lifecycle environment through both launch paths", async () => {
+      const pluginSources = [
+        "unrelated-plugin",
+        ["tuple-plugin", { secret: "opaque-option" }],
+        hindsightIntegration.pluginReference,
+      ] as const;
       const launchConfiguration = {
         ...integrationLaunchConfiguration,
+        pluginSources,
         mcpOverlay: { mcp: { "context-mode": { enabled: true } } },
         guidanceOverlay: {
           skills: { paths: ["/extension/skills"] },
@@ -457,12 +575,12 @@ describe("OpenCodeAgent", () => {
       expect(process.env.HINDSIGHT_DISABLE_HOOKS).toBe("host-value");
       const unsandboxedOptions = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
       const unsandboxedOverlay = unsandboxedOptions?.config;
-      expect(unsandboxedOverlay?.plugin).toEqual([hindsightIntegration.pluginReference]);
-      expect(unsandboxedOverlay?.plugin).toHaveLength(1);
+      expect(unsandboxedOverlay?.plugin).toEqual(pluginSources);
+      expect(unsandboxedOverlay?.plugin).toHaveLength(pluginSources.length);
       expect(unsandboxedOverlay?.mcp).toEqual(launchConfiguration.mcpOverlay.mcp);
       expect(unsandboxedOverlay?.skills).toEqual(launchConfiguration.guidanceOverlay.skills);
       expect(unsandboxedOverlay?.command).toEqual(launchConfiguration.guidanceOverlay.command);
-      expect(JSON.stringify(unsandboxedOverlay)).not.toContain("unrelated-plugin");
+      expect(unsandboxedOverlay?.plugin).toEqual(pluginSources);
       unsandboxedAgent.disconnect();
 
       const { child, stdout } = createSandboxChild();
@@ -481,18 +599,128 @@ describe("OpenCodeAgent", () => {
       const childEnv = spawnOptions.env as Record<string, string>;
       const sandboxedOverlay = JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT) as Record<string, unknown>;
       expect(childEnv.HINDSIGHT_DISABLE_HOOKS).toBe("1");
-      expect(sandboxedOverlay).toEqual(unsandboxedOverlay);
-      expect(sandboxedOverlay.plugin).toEqual([hindsightIntegration.pluginReference]);
+      // Compare the parsed overlays by their semantic policy sections rather
+      // than relying on JSON property ordering or serialization details.
+      expect({
+        plugin: sandboxedOverlay.plugin,
+        agent: sandboxedOverlay.agent,
+        mcp: sandboxedOverlay.mcp,
+        skills: sandboxedOverlay.skills,
+        command: sandboxedOverlay.command,
+      }).toEqual({
+        plugin: unsandboxedOverlay?.plugin,
+        agent: unsandboxedOverlay?.agent,
+        mcp: unsandboxedOverlay?.mcp,
+        skills: unsandboxedOverlay?.skills,
+        command: unsandboxedOverlay?.command,
+      });
+      expect(sandboxedOverlay.plugin).toEqual(pluginSources);
       expect((sandboxedOverlay.agent as Record<string, unknown>).build).toBeDefined();
-      expect(JSON.stringify(sandboxedOverlay)).not.toContain("unrelated-plugin");
+      expect({
+        workspacePath: sandboxedAgent.launchConfiguration?.workspacePath,
+        networkPolicy: sandboxedAgent.launchConfiguration?.sandbox.networkPolicy,
+      }).toEqual({
+        workspacePath: unsandboxedAgent.launchConfiguration?.workspacePath,
+        networkPolicy: unsandboxedAgent.launchConfiguration?.sandbox.networkPolicy,
+      });
       sandboxedAgent.disconnect();
 
       if (previousValue === undefined) delete process.env.HINDSIGHT_DISABLE_HOOKS;
       else process.env.HINDSIGHT_DISABLE_HOOKS = previousValue;
     });
 
+    it("keeps verified automatic-retention lifecycle state identical across launch paths", async () => {
+      const pluginSources = ["unrelated-plugin", activeHindsightIntegration.pluginReference] as const;
+      const launchConfiguration = {
+        ...integrationLaunchConfiguration,
+        pluginSources,
+        mcpOverlay: { mcp: { "context-mode": { enabled: true } } },
+        guidanceOverlay: { skills: { paths: ["/extension/skills"] } },
+        hindsightCompanionIntegration: activeHindsightIntegration,
+        memoryRetentionPolicy: { enabled: true, requireConfirmation: true, automaticSessionRetention: true },
+      };
+      let sdkLifecycleValue: string | undefined;
+      const previousValue = process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
+      process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = "host-value";
+      vi.mocked(createOpencodeServer).mockImplementationOnce(async () => {
+        sdkLifecycleValue = process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
+        return { url: "http://localhost:12345", close: mockServerClose };
+      });
+
+      const unsandboxedAgent = new OpenCodeAgent(launchConfiguration);
+      await unsandboxedAgent.connect();
+      const unsandboxedConfig = vi.mocked(createOpencodeServer).mock.calls[0]?.[0].config;
+      expect(sdkLifecycleValue).toBeUndefined();
+      expect(process.env[HINDSIGHT_DISABLE_HOOKS_ENV]).toBe("host-value");
+      unsandboxedAgent.disconnect();
+
+      const { child, stdout } = createSandboxChild();
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
+        return child as never;
+      });
+      const sandboxedAgent = new OpenCodeAgent({
+        ...launchConfiguration,
+        sandbox: { ...launchConfiguration.sandbox, mode: "on", enabled: true },
+      });
+      await sandboxedAgent.connect();
+      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[1];
+      if (!spawnOptions) throw new Error("Expected sandboxed child spawn options");
+      const childEnv = spawnOptions.env as Record<string, string | undefined>;
+      const sandboxedConfig = JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT ?? "{}");
+      expect(childEnv[HINDSIGHT_DISABLE_HOOKS_ENV]).toBeUndefined();
+      expect(sandboxedConfig).toEqual(unsandboxedConfig);
+      expect(sandboxedAgent.launchConfiguration?.hindsightCompanionIntegration?.packageName).toBe(
+        activeHindsightIntegration.packageName,
+      );
+      sandboxedAgent.disconnect();
+
+      if (previousValue === undefined) delete process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
+      else process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = previousValue;
+    });
+
+    it("adds approved Hindsight to inherited plugins once while preserving opaque unrelated entries", async () => {
+      const pluginSources = ["unrelated-plugin", ["tuple-plugin", { secret: "opaque-option" }]] as const;
+      const configuredAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources,
+        hindsightCompanionIntegration: hindsightIntegration,
+      });
+
+      await configuredAgent.connect();
+
+      const options = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
+      expect(options?.config?.plugin).toEqual([...pluginSources, hindsightIntegration.pluginReference]);
+      expect(options?.config?.plugin).toHaveLength(3);
+      configuredAgent.disconnect();
+    });
+
+    it("does not let an unrelated plugin-shaped integration add Hindsight authority", async () => {
+      const configuredAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: ["unrelated-plugin"],
+        hindsightCompanionIntegration: {
+          ...hindsightIntegration,
+          packageName: "hindsight-like" as typeof hindsightIntegration.packageName,
+          toolPatterns: ["hindsight_reflect", "hindsight_*", "hindsight_diagnose"],
+        },
+      });
+
+      await configuredAgent.connect();
+
+      const options = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
+      expect(options?.config?.plugin).toEqual(["unrelated-plugin"]);
+      const agents = options?.config?.agent as Record<string, { permission?: Record<string, unknown> }>;
+      expect(agents.scout?.permission).not.toHaveProperty("hindsight_reflect");
+      expect(agents.build?.permission).not.toHaveProperty("hindsight_reflect");
+      expect(agents.scout?.permission).not.toHaveProperty("hindsight_*");
+      configuredAgent.disconnect();
+    });
+
     it("should restore the host lifecycle environment when SDK server creation fails", async () => {
-      vi.mocked(createOpencodeServer).mockRejectedValueOnce(new Error("startup failed"));
+      vi.mocked(createOpencodeServer)
+        .mockRejectedValueOnce(new Error("startup failed"))
+        .mockRejectedValueOnce(new Error("plugin-free startup failed"));
       process.env.HINDSIGHT_DISABLE_HOOKS = "existing-value";
 
       await expect(
@@ -504,7 +732,9 @@ describe("OpenCodeAgent", () => {
       expect(process.env.HINDSIGHT_DISABLE_HOOKS).toBe("existing-value");
       delete process.env.HINDSIGHT_DISABLE_HOOKS;
 
-      vi.mocked(createOpencodeServer).mockRejectedValueOnce(new Error("startup failed without prior value"));
+      vi.mocked(createOpencodeServer)
+        .mockRejectedValueOnce(new Error("startup failed without prior value"))
+        .mockRejectedValueOnce(new Error("plugin-free startup failed without prior value"));
       await expect(
         new OpenCodeAgent({
           ...integrationLaunchConfiguration,
@@ -512,6 +742,123 @@ describe("OpenCodeAgent", () => {
         }).connect(),
       ).rejects.toThrow("startup failed without prior value");
       expect(process.env.HINDSIGHT_DISABLE_HOOKS).toBeUndefined();
+    });
+
+    it("retries SDK startup once with an explicit plugin-free overlay", async () => {
+      vi.mocked(createOpencodeServer)
+        .mockRejectedValueOnce(new Error("plugin activation failed"))
+        .mockResolvedValueOnce({ url: "http://localhost:12346", close: mockServerClose });
+      const configuredAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: ["broken-plugin", ["tuple-plugin", { secret: "opaque" }]],
+      });
+      const availabilityError = vi.fn();
+      configuredAgent.onAvailabilityError = availabilityError;
+
+      await configuredAgent.connect();
+
+      expect(createOpencodeServer).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(createOpencodeServer).mock.calls[1]?.[0].config).toHaveProperty("plugin", []);
+      expect(availabilityError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("plugins disabled") }),
+      );
+      configuredAgent.disconnect();
+    });
+
+    it("does not retry SDK startup more than once and preserves bounded failures", async () => {
+      vi.mocked(createOpencodeServer)
+        .mockRejectedValueOnce(
+          new Error(
+            `plugin activation failed ${"x".repeat(10_000)} ` +
+              `plugin=${"\t".repeat(100_000)}[["broken-plugin",{"apiKey":"plugin-secret"}]] ` +
+              `OPENCODE_CONFIG_CONTENT={"plugin":["broken-plugin"]} ` +
+              `PLUGIN_OPTION=opaque-option`,
+          ),
+        )
+        .mockRejectedValueOnce(new Error("plugin-free startup failed token=fallback-secret"));
+      const configuredAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: ["broken-plugin"],
+      });
+
+      const failure = await configuredAgent.connect().catch((error: unknown) => error as Error);
+      expect(failure.message).toMatch(/plugin startup failed.*fallback also failed/);
+      expect(failure.message).toContain("plugin=[redacted]");
+      expect(failure.message).toContain("OPENCODE_CONFIG_CONTENT=[redacted]");
+      expect(failure.message).not.toContain("plugin-secret");
+      expect(failure.message).not.toContain("opaque-option");
+      expect(failure.message).not.toContain("fallback-secret");
+      expect(failure.message).not.toContain("opaque-option");
+      expect(failure.message.length).toBeLessThanOrEqual(4_096);
+      expect(createOpencodeServer).toHaveBeenCalledTimes(2);
+      expect((await Promise.resolve(vi.mocked(createOpencodeServer).mock.calls[1]?.[0].config)).plugin).toEqual([]);
+    });
+
+    it("reports a bounded plugin-loading marker for sandbox readiness diagnostics", async () => {
+      const first = createSandboxChild();
+      const second = createSandboxChild();
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          first.stderr.emit(
+            "data",
+            `${"x".repeat(10_000)} ` +
+              `plugin=[["broken-plugin",{"token":"sandbox-secret"}]] ` +
+              `OPENCODE_CONFIG_CONTENT={"plugin":["broken-plugin"]} ` +
+              `SANDBOX_OPTION=private\n`,
+          );
+          first.handlers.exit?.(2 as never, "SIGTERM" as never);
+        });
+        return first.child as never;
+      });
+      vi.mocked(spawn).mockImplementationOnce(() => {
+        queueMicrotask(() => second.stdout.emit("data", "http://127.0.0.1:4568\n"));
+        return second.child as never;
+      });
+      const sandboxedAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: ["broken-plugin"],
+        sandbox: { ...integrationLaunchConfiguration.sandbox, mode: "on", enabled: true },
+      });
+
+      await sandboxedAgent.connect();
+
+      expect(log.mock.calls.flat().join("\n")).toContain("plugin loading/readiness");
+      const diagnosticLog = log.mock.calls.flat().join("\n");
+      expect(diagnosticLog).toContain("plugin=[redacted]");
+      expect(diagnosticLog).toContain("OPENCODE_CONFIG_CONTENT=[redacted]");
+      expect(diagnosticLog).not.toContain("sandbox-secret");
+      expect(diagnosticLog).not.toContain("private");
+      expect(diagnosticLog.length).toBeLessThanOrEqual(4_096);
+      sandboxedAgent.disconnect();
+      log.mockRestore();
+    });
+
+    it("keeps post-readiness plugin operation failures bounded without reconnecting or changing policy", async () => {
+      const availabilityError = vi.fn();
+      const configuredAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: ["runtime-plugin"],
+      });
+      configuredAgent.onAvailabilityError = availabilityError;
+      await configuredAgent.connect();
+
+      const secret = `plugin hook failed token=super-secret ${"x".repeat(10_000)}`;
+      mockClient.session.promptAsync.mockRejectedValueOnce(new Error(secret));
+
+      let operationError = "";
+      await configuredAgent.sendMessage("session-1", "hello").catch((error: unknown) => {
+        operationError = error instanceof Error ? error.message : String(error);
+      });
+      expect(operationError).toMatch(/^OpenCode operation failed: /);
+      expect(operationError).not.toContain("super-secret");
+      expect(operationError.length).toBeLessThan(5_000);
+      await expect(configuredAgent.sendMessage("session-1", "hello")).resolves.toBeUndefined();
+      expect(availabilityError).not.toHaveBeenCalled();
+      expect(createOpencodeServer).toHaveBeenCalledTimes(1);
+      expect(configuredAgent.getServerUrl()).toBe("http://localhost:12345");
+      expect(configuredAgent.launchConfiguration?.sandbox).toEqual(integrationLaunchConfiguration.sandbox);
+      configuredAgent.disconnect();
     });
 
     it("should restore the host lifecycle environment before SDK readiness", async () => {
@@ -733,8 +1080,12 @@ describe("OpenCodeAgent", () => {
       expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
     });
 
-    it("should restrict Scout delegation to the injected read-only research worker", async () => {
-      await agent.connect();
+    it("should preserve agent boundaries when inherited plugins are loaded", async () => {
+      const configuredAgent = new OpenCodeAgent({
+        ...integrationLaunchConfiguration,
+        pluginSources: ["user-plugin", ["plugin-with-options", { secret: "opaque" }]],
+      });
+      await configuredAgent.connect();
 
       const options = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
       const agents = options?.config?.agent as Record<string, { mode?: string; permission?: Record<string, unknown> }>;
@@ -748,10 +1099,24 @@ describe("OpenCodeAgent", () => {
         "webfetch",
         "websearch",
         "firecrawl_*",
+        "ctx_*",
         "context-mode_*",
         "paper-search_*",
       ];
+      const deniedTools = [
+        "edit",
+        "bash",
+        "shell",
+        "task",
+        "package",
+        "terminal",
+        "delete",
+        "admin",
+        "arbitrary-plugin_tool",
+        "unknown_tool",
+      ];
 
+      expect(options?.config?.plugin).toEqual(["user-plugin", ["plugin-with-options", { secret: "opaque" }]]);
       expect(agents.scout.permission?.task).toEqual({
         "*": "deny",
         "chat-research-worker": "allow",
@@ -760,21 +1125,27 @@ describe("OpenCodeAgent", () => {
       expect(worker.mode).toBe("subagent");
       expect(Object.keys(workerPermission)).toEqual(["*", ...allowedTools]);
       expect(allowedTools.every((tool) => workerPermission[tool] === "allow")).toBe(true);
-      for (const tool of [
-        "edit",
-        "bash",
-        "task",
-        "question",
-        "todowrite",
-        "skill",
-        "terminal",
-        "context7_*",
-        "unknown",
-      ]) {
+      for (const tool of [...deniedTools, "question", "todowrite", "skill", "context7_*"]) {
         expect(workerPermission[tool] ?? workerPermission["*"]).toBe("deny");
+      }
+      expect(workerPermission.ctx_search).toBeUndefined();
+      expect(workerPermission["ctx_*"]).toBe("allow");
+      expect(agents.scout.permission?.["ctx_*"]).toBeUndefined();
+      expect(agents.build.permission?.["ctx_*"] ?? agents.build.permission?.["*"]).toBe("deny");
+      expect(agents.scout.permission?.edit).toBe("deny");
+      expect(agents.scout.permission?.bash).toBe("deny");
+      for (const tool of deniedTools.filter((tool) => tool !== "edit" && tool !== "bash" && tool !== "task")) {
+        expect(agents.scout.permission).not.toHaveProperty(tool);
+      }
+      expect(agents.build.permission?.["*"]).toBe("deny");
+      expect(agents.build.permission?.edit).toBe("allow");
+      for (const tool of deniedTools.filter((tool) => tool !== "edit")) {
+        expect(agents.build.permission?.[tool] ?? agents.build.permission?.["*"]).toBe("deny");
       }
       expect(agents.scout.permission?.task).not.toHaveProperty("chat-research-worker-extra");
       expect(agents.scout.permission?.task).not.toHaveProperty("chat-research-other");
+      expect(workerPermission["*"]).toBe("deny");
+      configuredAgent.disconnect();
     });
 
     it("should pass the merged agent and MCP overlay to a sandboxed child", async () => {
@@ -864,6 +1235,7 @@ describe("OpenCodeAgent", () => {
               webfetch: "allow",
               websearch: "allow",
               "firecrawl_*": "allow",
+              "ctx_*": "allow",
               "context-mode_*": "allow",
               "paper-search_*": "allow",
             },
@@ -1113,6 +1485,51 @@ describe("OpenCodeAgent", () => {
 
         expect(createOpencodeServer).not.toHaveBeenCalled();
         expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
+        sandboxedAgent.disconnect();
+      },
+    );
+
+    it.each([true, false])(
+      "passes the same allowNetwork=%s policy to inherited plugin and MCP child configuration",
+      async (allowNetwork) => {
+        const { child, stdout } = createSandboxChild();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
+          return child as never;
+        });
+        const sandboxedAgent = new OpenCodeAgent({
+          workspacePath: "/workspace/project",
+          sandbox: {
+            mode: "on",
+            enabled: true,
+            allowNetwork,
+            filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [] },
+          },
+          executable: { path: "/usr/local/bin/opencode" },
+          pluginSources: ["plugin-shaped-child"],
+          mcpOverlay: { mcp: { "mcp-shaped-child": { enabled: true } } },
+        });
+
+        await sandboxedAgent.connect();
+
+        const expectedNetwork = allowNetwork
+          ? { enabled: false, allowedDomains: [], deniedDomains: [], allowLocalBinding: true }
+          : { enabled: true, allowedDomains: ["localhost", "127.0.0.1"], deniedDomains: [], allowLocalBinding: true };
+        expect(mockSandboxManager.initialize).toHaveBeenCalledWith(
+          expect.objectContaining({ network: expectedNetwork }),
+          undefined,
+          true,
+        );
+        const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[1];
+        if (!spawnOptions) throw new Error("Expected sandbox spawn options");
+        const overlay = JSON.parse((spawnOptions.env as Record<string, string>).OPENCODE_CONFIG_CONTENT) as Record<
+          string,
+          unknown
+        >;
+        expect(overlay.plugin).toEqual(["plugin-shaped-child"]);
+        expect(overlay.mcp).toEqual({ "mcp-shaped-child": { enabled: true } });
+        expect(overlay).not.toHaveProperty("network");
+        expect(overlay).not.toHaveProperty("allowNetwork");
         sandboxedAgent.disconnect();
       },
     );

@@ -107,28 +107,6 @@ export const zhTw: LocaleSchema = {
   // ShellResultView
   "shell.title": "Shell",
 
-  // MCP setting
-  "config.memoryRetention": "記憶保留",
-  "config.memoryRetentionAutomatic": "自動保留工作階段",
-  "config.memoryRetentionAutomaticEnabled": "啟用自動保留",
-  "config.memoryRetentionAutomaticDescription":
-    "對已核准的提供者預設啟用。可能會將有限的工作階段摘要寫入持久記憶；在此工作區停用即可防止自動寫入。",
-  "config.memoryRetentionAutomaticStatus": "自動狀態",
-  "config.memoryRetentionAutomaticActive": "已啟用",
-  "config.memoryRetentionAutomaticDisabled": "已停用",
-  "config.memoryRetentionAutomaticUnavailable": "無法使用（沒有已核准的提供者）",
-  "config.memoryRetentionAutomaticBlocked": "已封鎖",
-  "config.memoryRetentionAutomaticError": "錯誤",
-  "config.memoryRetentionExplicit": "明確保留",
-  "config.memoryRetentionEnabled": "允許明確保留",
-  "config.memoryRetentionConfirmation": "確認",
-  "config.memoryRetentionDisabled": "保留已停用",
-  "config.memoryRetentionAwaitingConfirmation": "每次請求確認後可用",
-  "config.memoryRetentionAvailable": "可用",
-  "config.memoryRetentionBlocked": "已遭同伴原則封鎖",
-  "config.memoryRetentionUnavailable": "無法使用",
-  "config.memoryRetentionError": "狀態無法使用",
-  "config.memoryRetentionEvidenceWarning": "擷取的記憶是證據，不是指示。",
   "config.yes": "是",
   "config.no": "否",
   "config.required": "需要",

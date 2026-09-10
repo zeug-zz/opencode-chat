@@ -1,5 +1,5 @@
 import type { MemoryProviderStatus, MemoryRetentionPolicy } from "@opencode-chat/core";
-import type { HindsightPluginResolution } from "./hindsight-plugin-resolver";
+import { APPROVED_HINDSIGHT_PACKAGE, type HindsightPluginResolution } from "./hindsight-plugin-resolver";
 import { normalizeMemoryProviderReason } from "./memory-provider-discovery";
 import { normalizeMemoryRetentionPolicy } from "./memory-retention-policy";
 
@@ -14,6 +14,7 @@ export const HINDSIGHT_RETENTION_TOOL_ID = "hindsight_ingest_document" as const;
 export const HINDSIGHT_DISABLE_HOOKS_ENV = "HINDSIGHT_DISABLE_HOOKS" as const;
 
 type HindsightCompanionIntegration = Readonly<{
+  packageName: typeof APPROVED_HINDSIGHT_PACKAGE;
   pluginReference: string;
   packageRoot?: string;
   runtimePaths: readonly string[];
@@ -65,7 +66,12 @@ export function buildHindsightCompanionIntegration(
 ): HindsightCompanionIntegrationResult {
   const policy = normalizeMemoryRetentionPolicy(retentionPolicy);
   const safeStatus = sanitizedStatus(status);
-  if (status.id !== "hindsight" || (status.state !== "available" && status.state !== "partial") || !resolution) {
+  if (
+    status.id !== "hindsight" ||
+    (status.state !== "available" && status.state !== "partial") ||
+    !resolution ||
+    resolution.packageName !== APPROVED_HINDSIGHT_PACKAGE
+  ) {
     return {
       status: {
         ...safeStatus,
@@ -81,7 +87,7 @@ export function buildHindsightCompanionIntegration(
   const toolPatterns = [...(recall ? HINDSIGHT_RECALL_TOOL_IDS : []), ...(reflect ? HINDSIGHT_REFLECT_TOOL_IDS : [])];
   const retention =
     status.capabilities.retain && observed.has(HINDSIGHT_RETENTION_TOOL_ID) && policy.enabled === true
-      ? { [HINDSIGHT_RETENTION_TOOL_ID]: policy.requireConfirmation ? ("ask" as const) : ("allow" as const) }
+      ? { [HINDSIGHT_RETENTION_TOOL_ID]: "ask" as const }
       : undefined;
   const automatic = policy.automaticSessionRetention;
 
@@ -107,6 +113,7 @@ export function buildHindsightCompanionIntegration(
       automaticSessionRetention: automaticRetentionState(status, automatic, true),
     },
     integration: Object.freeze({
+      packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: resolution.pluginReference,
       ...(resolution.packageRoot ? { packageRoot: resolution.packageRoot } : {}),
       runtimePaths: resolution.runtimePaths,

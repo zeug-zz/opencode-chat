@@ -107,28 +107,6 @@ export const zhCn: LocaleSchema = {
   // ShellResultView
   "shell.title": "Shell",
 
-  // MCP setting
-  "config.memoryRetention": "记忆保留",
-  "config.memoryRetentionAutomatic": "自动保留会话",
-  "config.memoryRetentionAutomaticEnabled": "启用自动保留",
-  "config.memoryRetentionAutomaticDescription":
-    "对于已批准的提供商，默认启用。可能会将有限的会话摘要写入持久记忆；在此工作区中禁用即可阻止自动写入。",
-  "config.memoryRetentionAutomaticStatus": "自动状态",
-  "config.memoryRetentionAutomaticActive": "已启用",
-  "config.memoryRetentionAutomaticDisabled": "已禁用",
-  "config.memoryRetentionAutomaticUnavailable": "不可用（没有已批准的提供商）",
-  "config.memoryRetentionAutomaticBlocked": "已阻止",
-  "config.memoryRetentionAutomaticError": "错误",
-  "config.memoryRetentionExplicit": "显式保留",
-  "config.memoryRetentionEnabled": "允许显式保留",
-  "config.memoryRetentionConfirmation": "确认",
-  "config.memoryRetentionDisabled": "保留已禁用",
-  "config.memoryRetentionAwaitingConfirmation": "每次请求确认后可用",
-  "config.memoryRetentionAvailable": "可用",
-  "config.memoryRetentionBlocked": "已被伴侣策略阻止",
-  "config.memoryRetentionUnavailable": "不可用",
-  "config.memoryRetentionError": "状态不可用",
-  "config.memoryRetentionEvidenceWarning": "检索到的记忆是证据，而不是指令。",
   "config.yes": "是",
   "config.no": "否",
   "config.required": "需要",

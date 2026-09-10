@@ -44,6 +44,7 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 - **Write means requested artifacts, not coding loops** — The **write** mode is backed by OpenCode **Build** internally, but uses a dedicated report-authoring prompt. It can read, search, use web research, and edit within its broad workspace-scoped capability; requested-artifact guidance is behavioral, while agent Bash and task/subagent execution are denied.
 - **Research-oriented prompts** — Chat and Write have separate system prompts so a read-only research assistant is not mixed with a report-writing agent or a coding-agent persona.
 - **Extension-owned OpenCode server** — The extension owns its `opencode serve` process and injects its behavior in memory. It does **not** rewrite your global `opencode.json`; the independent TUI keeps its normal agents and configuration.
+- **Inherited native plugins** — The extension-owned companion preserves supported OpenCode global and project plugin entries (including opaque options and native plugin-directory discovery) without copying arbitrary OpenCode configuration or writing user/project config. SDK-managed and compatibility-sandboxed launches use equivalent process-scoped plugin sources. These plugins are trusted code running in the companion process, not isolated MCP children; the Scout/worker/Write permission boundaries still deny coding, shell, arbitrary task, package, terminal, deletion, administration, and unknown capabilities as applicable. Native `ctx_*` tools are limited to the read-only research worker, while MCP `context-mode_*` tools remain a separate reviewed prefix.
 - **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across the Chat extension, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit selection may enable that inventoried server through the extension's in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
 - **Compatibility Chat sandbox** — The optional Chat sandbox applies one process boundary to the extension's OpenCode server, local MCPs, remote MCP traffic, and their descendants. On macOS and Linux, it also applies a static, versioned protected-read baseline for common credentials, shell history/configuration, browser data, and platform-specific keychain/private data. Reads outside that baseline remain broad for compatibility with local MCPs and installed runtimes/dependencies, while writes stay constrained to documented workspace, OpenCode, runtime, and temporary paths. Windows is unsupported: Chat reports the unsupported status and uses its existing unsandboxed path.
 - **Report output with controlled scope** — Write is for drafting and saving sourced reports, separating evidence from inference, and updating requested files without turning the chat panel into a general-purpose coding shell.
@@ -62,24 +63,28 @@ store. Optional provider-backed memory, currently Hindsight, supplies
 evidence-oriented recall and reflection through a provider-neutral registry
 when its capabilities are detected. Chat/Scout and Write/Build receive only
 the exact verified recall/search/reflection tools; explicit retention uses a
-separate exact, confirmation-gated operation when enabled and verified.
-Automatic session retention is a bounded durable write: it is enabled by
-default as a policy, but becomes active only for an approved provider after
-the required lifecycle and sandbox gates pass. A workspace policy can disable
-it, while explicit retention remains separately confirmation-gated. Retrieved
-or provider-produced memory is untrusted evidence, not instruction authority;
-automatic retention excludes secrets, credentials, raw tool payloads, large
-documents, untrusted web content, and unrelated private data. This extension
-does not write, promote, or synchronize findings into `AGENTS.md`.
+the exact approved Hindsight provider is installed and configured. That
+provider installation/configuration is the retention opt-in at the provider
+boundary; there is no separate Chat retention checkbox or settings opt-in.
+Explicit durable retention is available only after the exact provider,
+capability, observed-tool, lifecycle, and sandbox gates pass, and every request
+requires fresh user confirmation. An `always` or persistent permission response
+cannot bypass that confirmation requirement.
 
-If no provider exists, memory is disabled, or provider detection/preflight is
-unavailable, blocked, or fails, Chat/Scout and Write/Build remain usable with
-the applicable `AGENTS.md` and normal workspace/request context. Automatic
-retention is unavailable on this AGENTS.md-only fallback and performs no
-automatic write; explicit retention remains separately confirmation-gated.
-When an approved provider is configured, its only startup exception is a
-bounded, process-scoped, non-mutating preflight to inventory registered tools;
-failure is nonfatal and does not promise external provider availability.
+Automatic session retention is provider-, lifecycle-, and sandbox-gated and is
+active only after verification. It writes only bounded provider-approved
+summaries: secrets and credentials, raw tool payloads/transcripts, large or
+unrelated/private content, and untrusted retrieved or web content are excluded
+or rejected as appropriate. Previously stored `opencode-chat.memoryRetention.*`
+disable values are ignored; they are not deleted, migrated, or rewritten. This
+extension does not write, promote, or synchronize findings into `AGENTS.md`.
+
+With no approved usable provider, or when provider verification or preflight
+fails, ordinary Chat/Scout and Write/Build remain usable with recall/reflect
+where available, normal workspace/request context, and applicable `AGENTS.md`
+guidance. No provider retention operation or automatic write occurs, and there
+is no unsandboxed retry. Provider failures remain nonfatal and do not promise
+external provider availability.
 
 #### What this is not
 
@@ -104,6 +109,9 @@ confidentiality:
   dependencies can start.
 - Writes remain constrained to the active workspace and required OpenCode,
   cache, and temporary paths.
+- Inherited plugins reuse these generic compatibility reads and existing write
+  paths. There are no plugin-name-specific grants or broad home/credential
+  writes; a plugin requiring an unsupported write path can fail instead.
 - With network access disabled, remote providers and MCPs fail inside the
   sandbox. With network access enabled, the extension tree can use provider and
   MCP network services.
@@ -113,6 +121,13 @@ confidentiality:
   against a malicious process.
 - Windows does not enforce this read baseline. Chat reports sandboxing as
   unsupported there and uses the existing unsandboxed path.
+
+If inherited plugin loading prevents startup or readiness, the companion retries
+at most once with an explicit empty plugin list in the same requested sandbox
+mode. It never retries unsandboxed or broadens policy. If the fallback starts,
+Chat and Write remain usable and the extension reports only bounded, redacted
+diagnostics; failures after readiness remain operation-level failures. Users who
+do not configure plugins retain the plugin-free behavior.
 
 The current expansion adds these exact home-relative credential and private-key leaves on supported macOS/Linux: `.claude.json`, `.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`, `.electrum`, `.android/adbkey`, and `.android/adbkey.pub`. These are narrow reviewed paths, not an exhaustive baseline: it does not deny the whole home, generic `.config`, generic application-support data, generic `.android`, `.codex`, or `.gemini` parents, other-user homes, or external volumes. The `.config/op` entry must not be confused with `.config/opencode`; required OpenCode configuration and provider-authentication data remain available.
 

@@ -1,0 +1,4 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [["project-plugin", { "opaque": "project-option" }], "./project-plugin.ts", "file:///project/plugin.js"]
+}

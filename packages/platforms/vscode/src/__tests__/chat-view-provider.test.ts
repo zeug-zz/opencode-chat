@@ -507,7 +507,6 @@ describe("ChatViewProvider", () => {
         expect(memoryProviderStatus.capabilities).toEqual({ retain: false, recall: false, reflect: false });
         expect(memoryProviderStatus).not.toHaveProperty("automaticSessionRetention");
         if (memoryRetentionStatus) {
-          expect(postMessage).toHaveBeenCalledWith({ type: "memoryRetentionStatus", status: memoryRetentionStatus });
           expect(memoryRetentionStatus.policy.automaticSessionRetention).toBe(false);
         }
         expect(mockAgent.getPath).toHaveBeenCalled();
@@ -1406,6 +1405,125 @@ describe("ChatViewProvider", () => {
       });
 
       expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "retention-1", "once");
+    });
+
+    it("does not duplicate a repeated retention notification for the same request", async () => {
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: true },
+          state: "available",
+        },
+      );
+      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      const permission = {
+        type: "permission.asked" as const,
+        properties: {
+          id: "retention-duplicate",
+          sessionID: "sess-1",
+          permission: "hindsight_ingest_document",
+          patterns: [],
+          metadata: { input: { summary: "A bounded project finding" } },
+          always: [],
+        },
+      };
+      onEvent(permission);
+      onEvent(permission);
+
+      await sendMessage({
+        type: "replyPermission",
+        sessionId: "sess-1",
+        permissionId: "retention-duplicate",
+        response: "once",
+      });
+
+      expect(mockAgent.replyPermission).toHaveBeenCalledOnce();
+      expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "retention-duplicate", "once");
+    });
+
+    it("clamps always even when a stale policy disables confirmation", async () => {
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          policy: { enabled: true, requireConfirmation: false, automaticSessionRetention: true },
+          state: "available",
+        },
+      );
+      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      onEvent({
+        type: "permission.asked",
+        properties: {
+          id: "retention-stale-policy",
+          sessionID: "sess-1",
+          permission: "hindsight_ingest_document",
+          patterns: [],
+          metadata: { input: { summary: "A bounded project finding" } },
+          always: [],
+        },
+      });
+
+      await sendMessage({
+        type: "replyPermission",
+        sessionId: "sess-1",
+        permissionId: "retention-stale-policy",
+        response: "always",
+      });
+
+      expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", "retention-stale-policy", "once");
+    });
+
+    it("does not report success when the provider rejects an approved request", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      mockAgent.replyPermission.mockRejectedValueOnce(new Error("provider write failed"));
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: true },
+          state: "available",
+        },
+      );
+      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      onEvent({
+        type: "permission.asked",
+        properties: {
+          id: "retention-provider-failure",
+          sessionID: "sess-1",
+          permission: "hindsight_ingest_document",
+          patterns: [],
+          metadata: { input: { summary: "A bounded project finding" } },
+          always: [],
+        },
+      });
+
+      await sendMessage({
+        type: "replyPermission",
+        sessionId: "sess-1",
+        permissionId: "retention-provider-failure",
+        response: "once",
+      });
+
+      expect(mockAgent.replyPermission).toHaveBeenCalledTimes(1);
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "retentionSucceeded" }));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("replyPermission"), expect.any(Error));
+      log.mockRestore();
     });
 
     it("rejects retention when structured input is unavailable or invalid", async () => {

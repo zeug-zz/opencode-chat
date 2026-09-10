@@ -556,7 +556,7 @@ export type MemoryRetentionPolicy = {
 };
 
 export const DEFAULT_MEMORY_RETENTION_POLICY: Readonly<MemoryRetentionPolicy> = Object.freeze({
-  enabled: false,
+  enabled: true,
   requireConfirmation: true,
   automaticSessionRetention: true,
 });

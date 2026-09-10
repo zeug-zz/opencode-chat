@@ -1,0 +1,1 @@
+throw new Error("TASK_1_1_GLOBAL_PLUGIN_EXECUTED");

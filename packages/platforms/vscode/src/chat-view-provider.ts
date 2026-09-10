@@ -13,10 +13,10 @@ import type {
   IAgent,
   IPlatformServices,
   MemoryProviderStatus,
-  MemoryRetentionPolicy,
   MemoryRetentionStatus,
   UIToHostMessage,
 } from "@opencode-chat/core";
+import { DEFAULT_MEMORY_RETENTION_POLICY } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
 
@@ -62,7 +62,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly chatSystemPrompt: string | null;
   private readonly writeSystemPrompt: string | null;
   private readonly setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
-  private readonly setMemoryRetentionPolicy?: (policy: MemoryRetentionPolicy) => Promise<MemoryRetentionStatus>;
   private readonly chatMcpPrefs?: ChatMcpPrefsStore;
   private readonly bundledResources: readonly BundledResourceMetadata[];
   private readonly bundledCommandNames: ReadonlySet<string>;
@@ -102,7 +101,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
       memoryProviderStatus?: MemoryProviderStatus;
       memoryRetentionStatus?: MemoryRetentionStatus;
-      setMemoryRetentionPolicy?: (policy: MemoryRetentionPolicy) => Promise<MemoryRetentionStatus>;
       chatMcpPrefs?: ChatMcpPrefsStore;
       bundledCommandNames?: readonly string[];
       bundledResources?: readonly BundledResourceMetadata[];
@@ -118,10 +116,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       capabilities: { retain: false, recall: false, reflect: false },
     };
     this.memoryRetentionStatus = options?.memoryRetentionStatus ?? {
-      policy: { enabled: false, requireConfirmation: true, automaticSessionRetention: false },
-      state: "disabled",
+      policy: { ...DEFAULT_MEMORY_RETENTION_POLICY },
+      state: "unavailable",
     };
-    this.setMemoryRetentionPolicy = options?.setMemoryRetentionPolicy;
     this.chatMcpPrefs = options?.chatMcpPrefs;
     this.bundledResources = options?.bundledResources ?? [];
     this.bundledCommandNames = new Set(options?.bundledCommandNames ?? []);
@@ -350,10 +347,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             await this.agent.replyPermission(message.sessionId, message.permissionId, "reject");
             break;
           }
-          const response =
-            this.memoryRetentionStatus.policy.requireConfirmation && message.response === "always"
-              ? "once"
-              : message.response;
+          // Explicit retention is always confirmation-gated. Do not let a
+          // stale or untrusted policy value turn an "always" reply into a
+          // persistent permission.
+          const response = message.response === "always" ? "once" : message.response;
           await this.agent.replyPermission(message.sessionId, message.permissionId, response);
           break;
         }
@@ -525,23 +522,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         break;
       }
-      case "setMemoryRetentionPolicy": {
-        if (!this.setMemoryRetentionPolicy) break;
-        try {
-          const status = await this.setMemoryRetentionPolicy(message.policy);
-          this.memoryRetentionStatus = status;
-          this.postMessage({ type: "memoryRetentionStatus", status });
-        } catch {
-          const status: MemoryRetentionStatus = {
-            ...this.memoryRetentionStatus,
-            state: "error",
-            reason: "Retention settings could not be updated",
-          };
-          this.memoryRetentionStatus = status;
-          this.postMessage({ type: "memoryRetentionStatus", status });
-        }
-        break;
-      }
       case "forkSession": {
         const operationGeneration = ++this.sessionOperationGeneration;
         const listRequestGeneration = ++this.sessionListRequestGeneration;
@@ -701,7 +681,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: "agents", agents });
     this.postMessage({ type: "mcpStatus", status: mcpStatus });
     this.postMessage({ type: "memoryStatus", status: this.memoryProviderStatus });
-    this.postMessage({ type: "memoryRetentionStatus", status: this.memoryRetentionStatus });
     if (chatSandboxStatus) {
       this.postMessage({ type: "chatSandboxStatus", status: chatSandboxStatus });
     }
@@ -715,11 +694,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   publishMemoryProviderStatus(status: MemoryProviderStatus): void {
     this.memoryProviderStatus = status;
     this.postMessage({ type: "memoryStatus", status });
-  }
-
-  publishMemoryRetentionStatus(status: MemoryRetentionStatus): void {
-    this.memoryRetentionStatus = status;
-    this.postMessage({ type: "memoryRetentionStatus", status });
   }
 
   private async publishActiveSession(

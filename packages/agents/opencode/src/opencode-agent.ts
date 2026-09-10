@@ -44,6 +44,7 @@ import {
   HINDSIGHT_REFLECT_TOOL_IDS,
   HINDSIGHT_RETENTION_TOOL_ID,
 } from "./hindsight-companion-integration";
+import { APPROVED_HINDSIGHT_PACKAGE } from "./hindsight-plugin-resolver";
 import type { OpenCodeGuidanceOverlay, OpenCodeLaunchConfiguration } from "./launch-config";
 import {
   mapAgents,
@@ -103,6 +104,7 @@ const CHAT_AGENT_OVERLAY = {
         webfetch: "allow",
         websearch: "allow",
         "firecrawl_*": "allow",
+        "ctx_*": "allow",
         "context-mode_*": "allow",
         "paper-search_*": "allow",
       },
@@ -123,13 +125,19 @@ const CHAT_AGENT_OVERLAY = {
 } as const;
 
 function buildChatOverlay(
+  pluginSources: OpenCodeLaunchConfiguration["pluginSources"],
   mcpOverlay: OpenCodeLaunchConfiguration["mcpOverlay"],
   guidanceOverlay: OpenCodeGuidanceOverlay | undefined,
   hindsightCompanionIntegration: OpenCodeLaunchConfiguration["hindsightCompanionIntegration"] = undefined,
   retentionPolicy?: MemoryRetentionPolicy,
+  pluginFree = false,
 ): Record<string, unknown> {
   const safeHindsightToolPatterns = new Set<string>([...HINDSIGHT_RECALL_TOOL_IDS, ...HINDSIGHT_REFLECT_TOOL_IDS]);
-  const hindsightPermissions = (hindsightCompanionIntegration?.toolPatterns ?? [])
+  const approvedHindsightIntegration =
+    hindsightCompanionIntegration?.packageName === APPROVED_HINDSIGHT_PACKAGE
+      ? hindsightCompanionIntegration
+      : undefined;
+  const hindsightPermissions = (approvedHindsightIntegration?.toolPatterns ?? [])
     .filter((toolPattern) => safeHindsightToolPatterns.has(toolPattern))
     .reduce<Record<string, "allow">>((permissions, toolPattern) => {
       permissions[toolPattern] = "allow";
@@ -137,13 +145,24 @@ function buildChatOverlay(
     }, {});
   const retentionPermission =
     retentionPolicy?.enabled === true
-      ? hindsightCompanionIntegration?.retentionPermission?.[HINDSIGHT_RETENTION_TOOL_ID]
+      ? approvedHindsightIntegration?.retentionPermission?.[HINDSIGHT_RETENTION_TOOL_ID]
       : undefined;
   const safeRetentionPermissions =
     retentionPermission === "ask" || retentionPermission === "allow"
       ? { [HINDSIGHT_RETENTION_TOOL_ID]: retentionPermission }
       : {};
   const mergedHindsightPermissions = { ...hindsightPermissions, ...safeRetentionPermissions };
+  const composedPluginSources = [...(pluginSources ?? [])];
+  if (
+    approvedHindsightIntegration &&
+    !composedPluginSources.some((entry) =>
+      typeof entry === "string"
+        ? entry === approvedHindsightIntegration.pluginReference
+        : Array.isArray(entry) && entry[0] === approvedHindsightIntegration.pluginReference,
+    )
+  ) {
+    composedPluginSources.push(approvedHindsightIntegration.pluginReference);
+  }
   const agentOverlay = Object.keys(mergedHindsightPermissions).length
     ? {
         ...CHAT_AGENT_OVERLAY,
@@ -163,7 +182,7 @@ function buildChatOverlay(
 
   return {
     ...agentOverlay,
-    ...(hindsightCompanionIntegration ? { plugin: [hindsightCompanionIntegration.pluginReference] } : {}),
+    ...(pluginFree ? { plugin: [] } : composedPluginSources.length ? { plugin: composedPluginSources } : {}),
     ...(guidanceOverlay ?? {}),
     ...(mcpOverlay ?? {}),
   };
@@ -172,13 +191,15 @@ function buildChatOverlay(
 async function createUnsandboxedServer(
   config: Record<string, unknown>,
   hindsightCompanionIntegration: OpenCodeLaunchConfiguration["hindsightCompanionIntegration"],
+  pluginFree: boolean,
 ): Promise<Awaited<ReturnType<typeof createOpencodeServer>>> {
   const previousValue = process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
-  if (hindsightCompanionIntegration?.automaticSessionRetention === true) {
-    delete process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
-  } else {
-    process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = "1";
-  }
+  const lifecycleEnvironment = pluginFree ? undefined : hindsightCompanionIntegration?.environment;
+  const lifecycleValue =
+    lifecycleEnvironment?.[HINDSIGHT_DISABLE_HOOKS_ENV] ??
+    (pluginFree || !hindsightCompanionIntegration ? "1" : undefined);
+  if (lifecycleValue === undefined) delete process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
+  else process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = lifecycleValue;
   try {
     const serverPromise = createOpencodeServer({ port: 0, config });
     return serverPromise;
@@ -215,15 +236,55 @@ type SandboxChildExit = {
   signal: NodeJS.Signals | null;
 };
 
+type StartupFailure = Error & { pluginFallbackEligible?: boolean };
+
 function appendDiagnosticTail(current: string, chunk: string): string {
   const value = current + chunk;
   return value.length > DIAGNOSTIC_TAIL_LENGTH ? value.slice(-DIAGNOSTIC_TAIL_LENGTH) : value;
 }
 
+function findDiagnosticAssignment(value: string, start: number): number {
+  for (let index = start; index < value.length; index += 1) {
+    if (!/\s/.test(value[index] ?? "")) continue;
+
+    const markerStart = index;
+    let marker = index;
+    while (/\s/.test(value[marker] ?? "")) marker += 1;
+    if (!/[A-Z]/.test(value[marker] ?? "")) {
+      index = marker - 1;
+      continue;
+    }
+
+    marker += 1;
+    while (/[A-Z0-9_]/.test(value[marker] ?? "")) marker += 1;
+    while (/\s/.test(value[marker] ?? "")) marker += 1;
+    if (value[marker] === "=") return markerStart;
+  }
+
+  return value.length;
+}
+
 function redactDiagnostic(value: string): string {
-  return value
+  const pluginPattern = /\bplugins?\b\s*[:=]\s*/gi;
+  let redacted = "";
+  let cursor = 0;
+  let match = pluginPattern.exec(value);
+  while (match) {
+    const markerStart = findDiagnosticAssignment(value, pluginPattern.lastIndex);
+    redacted += `${value.slice(cursor, match.index)}plugin=[redacted]`;
+    cursor = markerStart;
+    pluginPattern.lastIndex = markerStart;
+    match = pluginPattern.exec(value);
+  }
+
+  redacted += value.slice(cursor);
+  return redacted
     .replace(/(\b(?:config|configuration|settings|payload)\b\s*[:=]\s*)\{[^\r\n]*/gi, "$1{[redacted]}")
     .replace(/OPENCODE_CONFIG_CONTENT\b[^\r\n]*/gi, "OPENCODE_CONFIG_CONTENT=[redacted]")
+    .replace(/\b[A-Z][A-Z0-9_]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/g, (match) => {
+      const key = match.slice(0, match.indexOf("=")).trim();
+      return `${key}=[redacted]`;
+    })
     .replace(
       /(["'](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret)["']\s*:\s*)["'][^"']*["']/gi,
       '$1"[redacted]"',
@@ -248,6 +309,11 @@ function boundDiagnostic(value: string): string {
   const marker = "\n...[diagnostic truncated]...\n";
   const suffixLength = DIAGNOSTIC_LOG_LENGTH - prefixLength - marker.length;
   return `${redacted.slice(0, prefixLength)}${marker}${redacted.slice(-suffixLength)}`;
+}
+
+function boundedOperationError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`OpenCode operation failed: ${boundDiagnostic(message)}`);
 }
 
 function logSandboxDiagnostic(stage: string, diagnostic: string): void {
@@ -467,29 +533,88 @@ export class OpenCodeAgent implements IAgent {
 
   async connect(): Promise<void> {
     if (this.launchConfiguration?.sandbox.enabled && SandboxManager.isSupportedPlatform()) {
-      await this.connectSandboxed();
+      await this.connectWithPluginFallback(true, true);
       return;
     }
+    await this.connectWithPluginFallback(false, true);
+  }
+
+  private hasInheritedPlugins(): boolean {
+    return Boolean(
+      this.launchConfiguration?.pluginSources?.length || this.launchConfiguration?.hindsightCompanionIntegration,
+    );
+  }
+
+  private async connectWithPluginFallback(sandboxed: boolean, allowPluginFallback: boolean): Promise<void> {
+    try {
+      if (sandboxed) await this.connectSandboxed(false);
+      else await this.connectUnsandboxed(false);
+    } catch (error) {
+      if (
+        !allowPluginFallback ||
+        !this.hasInheritedPlugins() ||
+        (sandboxed && (error as StartupFailure).pluginFallbackEligible !== true)
+      ) {
+        throw error;
+      }
+
+      const firstFailure = error instanceof Error ? error.message : String(error);
+      try {
+        if (sandboxed) await this.connectSandboxed(true);
+        else await this.connectUnsandboxed(true);
+        this.onAvailabilityError?.(
+          new Error(
+            boundDiagnostic(
+              "Inherited OpenCode plugins were unavailable during startup/readiness; plugin loading failed; continued with plugins disabled.",
+            ),
+          ),
+        );
+      } catch (fallbackError) {
+        const secondFailure = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+        throw new Error(
+          boundDiagnostic(
+            `OpenCode plugin startup failed and the plugin-free fallback also failed. ` +
+              `Initial startup: ${redactDiagnostic(firstFailure)}. ` +
+              `Plugin-free startup: ${redactDiagnostic(secondFailure)}`,
+          ),
+        );
+      }
+    }
+  }
+
+  private async connectUnsandboxed(pluginFree: boolean): Promise<void> {
     // Port 0: let OS assign a free port to avoid conflicts
     // In-memory Scout overlay scoped to this child process via OPENCODE_CONFIG_CONTENT.
-    const hindsightCompanionIntegration = this.launchConfiguration?.hindsightCompanionIntegration;
+    const hindsightCompanionIntegration = pluginFree
+      ? undefined
+      : this.launchConfiguration?.hindsightCompanionIntegration;
     const server = await createUnsandboxedServer(
       buildChatOverlay(
+        pluginFree ? [] : this.launchConfiguration?.pluginSources,
         this.launchConfiguration?.mcpOverlay,
         this.launchConfiguration?.guidanceOverlay,
         hindsightCompanionIntegration,
-        this.launchConfiguration?.memoryRetentionPolicy,
+        pluginFree ? undefined : this.launchConfiguration?.memoryRetentionPolicy,
+        pluginFree,
       ),
       hindsightCompanionIntegration,
+      pluginFree,
     );
-    this.server = server;
-    this.client = createOpencodeClient({
-      baseUrl: server.url,
-    });
-    this.subscribeToEvents();
+    try {
+      this.server = server;
+      this.client = createOpencodeClient({
+        baseUrl: server.url,
+      });
+      this.subscribeToEvents();
+    } catch (error) {
+      this.server = undefined;
+      this.client = undefined;
+      server.close();
+      throw error;
+    }
   }
 
-  private async connectSandboxed(): Promise<void> {
+  private async connectSandboxed(pluginFree: boolean): Promise<void> {
     const configuration = this.launchConfiguration;
     if (!configuration) {
       throw new Error("Sandboxed OpenCode launch requires a launch configuration.");
@@ -517,6 +642,7 @@ export class OpenCodeAgent implements IAgent {
       },
     };
 
+    let pluginFallbackEligible = false;
     try {
       this.sandboxRuntimeInitialized = true;
       const violationStore = SandboxManager.getSandboxViolationStore();
@@ -540,21 +666,24 @@ export class OpenCodeAgent implements IAgent {
       this.sandboxChildReady = false;
       this.sandboxChildExit = undefined;
       const childEnvironment = { ...process.env };
-      if (configuration.hindsightCompanionIntegration?.automaticSessionRetention === true) {
-        delete childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV];
-      } else {
-        childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV] = "1";
-      }
+      const lifecycleEnvironment = pluginFree ? undefined : configuration.hindsightCompanionIntegration?.environment;
+      const lifecycleValue =
+        lifecycleEnvironment?.[HINDSIGHT_DISABLE_HOOKS_ENV] ??
+        (pluginFree || !configuration.hindsightCompanionIntegration ? "1" : undefined);
+      if (lifecycleValue === undefined) delete childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV];
+      else childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV] = lifecycleValue;
       const child = spawn(wrappedCommand, {
         cwd: configuration.workspacePath,
         env: {
           ...childEnvironment,
           OPENCODE_CONFIG_CONTENT: JSON.stringify(
             buildChatOverlay(
+              pluginFree ? [] : configuration.pluginSources,
               configuration.mcpOverlay,
               configuration.guidanceOverlay,
-              configuration.hindsightCompanionIntegration,
-              configuration.memoryRetentionPolicy,
+              pluginFree ? undefined : configuration.hindsightCompanionIntegration,
+              pluginFree ? undefined : configuration.memoryRetentionPolicy,
+              pluginFree,
             ),
           ),
         },
@@ -562,6 +691,7 @@ export class OpenCodeAgent implements IAgent {
         shell: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
+      pluginFallbackEligible = true;
       this.sandboxedChild = child;
       this.sandboxedChildStopping = false;
       const url = await waitForLoopbackUrl(child, configuration.workspacePath, output, command);
@@ -595,10 +725,23 @@ export class OpenCodeAgent implements IAgent {
       const startupDiagnostic = /Captured sandboxed OpenCode output|Sandbox violations/.test(message)
         ? message
         : `${message}${formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand)}${formatSandboxViolations(this.sandboxCommand)}`;
-      logSandboxDiagnostic("startup/readiness", `Sandboxed OpenCode startup failed: ${startupDiagnostic}`);
-      throw new Error(
-        `Sandboxed OpenCode startup failed; no unsandboxed fallback was started: ${redactDiagnostic(message)}`,
+      const pluginContext =
+        !pluginFree && configuration.pluginSources?.length
+          ? " Inherited plugin loading/readiness may have failed; no plugin-free retry has completed."
+          : "";
+      logSandboxDiagnostic(
+        "startup/readiness",
+        `Sandboxed OpenCode startup failed:${pluginContext} ${startupDiagnostic}`,
       );
+      const startupFailure = new Error(
+        boundDiagnostic(
+          `Sandboxed OpenCode startup failed; no unsandboxed fallback was started.${pluginContext} ${redactDiagnostic(
+            startupDiagnostic,
+          )}`,
+        ),
+      ) as StartupFailure;
+      startupFailure.pluginFallbackEligible = pluginFallbackEligible;
+      throw startupFailure;
     }
   }
 
@@ -836,14 +979,18 @@ export class OpenCodeAgent implements IAgent {
     // Omit the key entirely when no explicit effort is selected so the opencode
     // server applies its own default rather than a GUI-injected override.
     const effortId = options?.effort?.id;
-    await client.session.promptAsync({
-      sessionID: sessionId,
-      parts,
-      model: options?.model,
-      agent: options?.primaryAgent,
-      system: options?.system,
-      ...(effortId ? { variant: effortId } : {}),
-    });
+    try {
+      await client.session.promptAsync({
+        sessionID: sessionId,
+        parts,
+        model: options?.model,
+        agent: options?.primaryAgent,
+        system: options?.system,
+        ...(effortId ? { variant: effortId } : {}),
+      });
+    } catch (error) {
+      throw boundedOperationError(error);
+    }
   }
 
   async abortSession(sessionId: string): Promise<void> {
@@ -857,12 +1004,16 @@ export class OpenCodeAgent implements IAgent {
 
   async executeShell(sessionId: string, command: string, model?: ModelRef): Promise<void> {
     const client = this.requireClient();
-    await client.session.shell({
-      sessionID: sessionId,
-      agent: "default",
-      command,
-      model,
-    });
+    try {
+      await client.session.shell({
+        sessionID: sessionId,
+        agent: "default",
+        command,
+        model,
+      });
+    } catch (error) {
+      throw boundedOperationError(error);
+    }
   }
 
   // --- Providers & models ---

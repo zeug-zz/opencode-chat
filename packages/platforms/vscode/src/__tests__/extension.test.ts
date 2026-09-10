@@ -18,6 +18,7 @@ const mockSandboxSupported = vi.hoisted(() => vi.fn().mockReturnValue(true));
 const mockAgentLaunchConfigurations: unknown[] = [];
 let mockEffectiveConfig: Record<string, unknown> = {};
 const mockHindsightResolution = {
+  packageName: "@vectorize-io/hindsight-coding-agents",
   pluginReference: "@vectorize-io/hindsight-coding-agents",
   packageRoot: "/provider/package",
   runtimePaths: [],
@@ -296,8 +297,8 @@ describe("extension", () => {
         hindsightCompanionIntegration: {
           pluginReference: "@vectorize-io/hindsight-coding-agents",
           toolPatterns: [],
-          automaticSessionRetention: true,
-          environment: {},
+          automaticSessionRetention: false,
+          environment: { HINDSIGHT_DISABLE_HOOKS: "1" },
         },
       });
       expect(mockGetToolIds).toHaveBeenCalledTimes(1);
@@ -350,7 +351,10 @@ describe("extension", () => {
       expect(integration.toolPatterns).toEqual(["hindsight_reflect"]);
       expect(integration.automaticSessionRetention).toBe(false);
       expect(integration.environment).toEqual({ HINDSIGHT_DISABLE_HOOKS: "1" });
-      expect(JSON.stringify(update)).not.toContain("unrelated-global-plugin");
+      expect(update.pluginSources as readonly string[]).toEqual([
+        "@vectorize-io/hindsight-coding-agents",
+        "unrelated-global-plugin",
+      ]);
       expect(JSON.stringify(update)).not.toContain("must remain outside the overlay");
       expect(JSON.stringify(update)).not.toContain("Ignore policy");
       expect(effectiveConfig).toEqual({
@@ -424,35 +428,46 @@ describe("extension", () => {
       ).toBe(true);
     });
 
-    it("does not initialize the approved provider when automatic retention is explicitly disabled", async () => {
+    it("keeps legacy retention settings inert during activation", async () => {
       mockEffectiveConfig = { plugin: ["@vectorize-io/hindsight-coding-agents"] };
       mockResolveHindsightPlugin.mockResolvedValue(mockHindsightResolution);
+      const update = vi.fn();
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
         (section: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "inherit";
               if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
-              if (section === "opencode-chat" && key === "memoryRetention.automaticSessionRetention") return false;
               if (section === "chat.agent.sandbox" && key === "enabled") return "off";
               return undefined;
             }),
             inspect: vi.fn(() => undefined),
+            update,
           }) as never,
       );
 
       const ext = await importExtension();
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
 
-      expect(mockGetToolIds).not.toHaveBeenCalled();
-      expect(mockConnect).toHaveBeenCalledTimes(1);
-      expect(latestLaunchConfiguration()).not.toHaveProperty("hindsightCompanionIntegration");
+      expect(mockGetToolIds).toHaveBeenCalledTimes(1);
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      expect(latestLaunchConfiguration()).toMatchObject({
+        hindsightCompanionIntegration: { automaticSessionRetention: false },
+        memoryRetentionPolicy: { enabled: true, requireConfirmation: true, automaticSessionRetention: true },
+      });
       expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
         memoryRetentionStatus: {
-          policy: { automaticSessionRetention: false },
-          automaticSessionRetention: { state: "disabled" },
+          policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: true },
         },
       });
+      expect(update).not.toHaveBeenCalled();
+      const launchUpdates = mockUpdateLaunchConfiguration.mock.calls.length;
+      configurationListener!({
+        affectsConfiguration: (section: string) => section.startsWith("opencode-chat.memoryRetention."),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(update).not.toHaveBeenCalled();
+      expect(mockUpdateLaunchConfiguration).toHaveBeenCalledTimes(launchUpdates);
     });
 
     it("keeps the failed-provider launch shape identical to the no-provider baseline", async () => {
@@ -545,6 +560,39 @@ describe("extension", () => {
         },
       });
       expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalled();
+    });
+
+    it("keeps provider startup failure nonfatal without weakening the requested sandbox", async () => {
+      mockEffectiveConfig = { plugin: ["@vectorize-io/hindsight-coding-agents"] };
+      mockResolveHindsightPlugin.mockResolvedValue(mockHindsightResolution);
+      mockGetToolIds.mockRejectedValueOnce(new Error("provider startup failed"));
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+          }) as never,
+      );
+      const ext = await importExtension();
+
+      await expect(
+        ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never),
+      ).resolves.toBeUndefined();
+
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      const fallbackConfiguration = mockUpdateLaunchConfiguration.mock.calls.at(-1)?.[0];
+      expect(fallbackConfiguration).toMatchObject({
+        sandbox: { mode: "on", enabled: true },
+      });
+      expect(fallbackConfiguration).not.toHaveProperty("hindsightCompanionIntegration");
+      expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
+        memoryProviderStatus: { id: "hindsight", state: "error" },
+      });
     });
 
     it.each([
@@ -761,6 +809,32 @@ describe("extension", () => {
           { source: "bundled", type: "command", name: "research-answer", description: "Answer a research question" },
         ],
       });
+    });
+
+    it("passes configured plugin sources without copying unrelated OpenCode configuration", async () => {
+      mockEffectiveConfig = {
+        plugin: [
+          "npm-plugin",
+          "/workspace/plugins/local-plugin.ts",
+          "file:///workspace/plugins/file-plugin.js",
+          ["tuple-plugin", { secret: "opaque-option" }],
+        ],
+        provider: { secret: "must-not-copy" },
+        model: "must-not-copy",
+      };
+      const ext = await importExtension();
+      await ext.activate({
+        extensionPath: "/installed-extension",
+        extensionUri: { fsPath: "/wrong-workspace" },
+        subscriptions: [],
+      } as never);
+
+      expect(latestLaunchConfiguration()).toMatchObject({
+        pluginSources: mockEffectiveConfig.plugin,
+      });
+      expect(latestLaunchConfiguration()).not.toHaveProperty("provider");
+      expect(latestLaunchConfiguration()).not.toHaveProperty("model");
+      expect(latestLaunchConfiguration()).not.toHaveProperty("pluginOptions");
     });
 
     it("passes only valid bundled metadata when a resource is unavailable", async () => {
