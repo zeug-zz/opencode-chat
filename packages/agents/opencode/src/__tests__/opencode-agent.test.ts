@@ -1284,52 +1284,52 @@ describe("OpenCodeAgent", () => {
           allowLocalBinding: true,
         },
       },
-    ])("should map allowNetwork=$allowNetwork independently of the filesystem policy", async ({
-      allowNetwork,
-      expectedNetwork,
-    }) => {
-      const { child, stdout } = createSandboxChild();
-      vi.mocked(spawn).mockImplementationOnce(() => {
-        queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
-        return child as never;
-      });
-      const filesystemPolicy = {
-        readWritePaths: ["/workspace/project", "/workspace/state"],
-        readOnlyPaths: ["/workspace/config", "/installed-extension/dist/skills-commands/skills"],
-      };
-      const sandboxedAgent = new OpenCodeAgent({
-        workspacePath: "/workspace/project",
-        sandbox: {
-          mode: "on",
-          enabled: true,
-          allowNetwork,
-          filesystemPolicy,
-        },
-        executable: { path: "/usr/local/bin/opencode" },
-      });
-
-      await sandboxedAgent.connect();
-
-      expect(mockSandboxManager.initialize).toHaveBeenCalledWith(
-        expect.objectContaining({
-          network: expectedNetwork,
-          filesystem: {
-            denyRead: [],
-            allowRead: [
-              "/workspace/config",
-              "/installed-extension/dist/skills-commands/skills",
-              "/workspace/project",
-              "/workspace/state",
-            ],
-            allowWrite: ["/workspace/project", "/workspace/state"],
-            denyWrite: [],
+    ])(
+      "should map allowNetwork=$allowNetwork independently of the filesystem policy",
+      async ({ allowNetwork, expectedNetwork }) => {
+        const { child, stdout } = createSandboxChild();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
+          return child as never;
+        });
+        const filesystemPolicy = {
+          readWritePaths: ["/workspace/project", "/workspace/state"],
+          readOnlyPaths: ["/workspace/config", "/installed-extension/dist/skills-commands/skills"],
+        };
+        const sandboxedAgent = new OpenCodeAgent({
+          workspacePath: "/workspace/project",
+          sandbox: {
+            mode: "on",
+            enabled: true,
+            allowNetwork,
+            filesystemPolicy,
           },
-        }),
-        undefined,
-        true,
-      );
-      sandboxedAgent.disconnect();
-    });
+          executable: { path: "/usr/local/bin/opencode" },
+        });
+
+        await sandboxedAgent.connect();
+
+        expect(mockSandboxManager.initialize).toHaveBeenCalledWith(
+          expect.objectContaining({
+            network: expectedNetwork,
+            filesystem: {
+              denyRead: [],
+              allowRead: [
+                "/workspace/config",
+                "/installed-extension/dist/skills-commands/skills",
+                "/workspace/project",
+                "/workspace/state",
+              ],
+              allowWrite: ["/workspace/project", "/workspace/state"],
+              denyWrite: [],
+            },
+          }),
+          undefined,
+          true,
+        );
+        sandboxedAgent.disconnect();
+      },
+    );
 
     it("passes the computed deny-read baseline unchanged to the inherited sandbox runtime", async () => {
       const { child, stdout } = createSandboxChild();
@@ -1426,67 +1426,68 @@ describe("OpenCodeAgent", () => {
     it.each([
       { allowNetwork: false, outcome: "denies provider and MCP requests inside the sandbox" },
       { allowNetwork: true, outcome: "allows provider and MCP requests inside the sandbox" },
-    ])("applies one inherited policy to providers, remote MCPs, local MCPs, and descendants when network is $allowNetwork ($outcome)", async ({
-      allowNetwork,
-    }) => {
-      const { child, stdout } = createSandboxChild();
-      vi.mocked(spawn).mockImplementationOnce(() => {
-        queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
-        return child as never;
-      });
-      const networkError = new Error("network request denied by sandbox");
-      if (!allowNetwork) {
-        mockClient.config.providers.mockRejectedValue(networkError);
-        mockClient.mcp.status.mockResolvedValue({
-          data: {
-            remoteMcp: { status: "failed", error: networkError.message },
-            localMcp: { status: "failed", error: networkError.message },
-          },
+    ])(
+      "applies one inherited policy to providers, remote MCPs, local MCPs, and descendants when network is $allowNetwork ($outcome)",
+      async ({ allowNetwork }) => {
+        const { child, stdout } = createSandboxChild();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          queueMicrotask(() => stdout.emit("data", "http://127.0.0.1:4567\n"));
+          return child as never;
         });
-        mockClient.mcp.connect.mockRejectedValue(networkError);
-      }
-      const sandboxedAgent = new OpenCodeAgent({
-        workspacePath: "/workspace/project",
-        sandbox: {
-          mode: "on",
-          enabled: true,
-          allowNetwork,
-          filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [] },
-        },
-        executable: { path: "/usr/local/bin/opencode" },
-      });
+        const networkError = new Error("network request denied by sandbox");
+        if (!allowNetwork) {
+          mockClient.config.providers.mockRejectedValue(networkError);
+          mockClient.mcp.status.mockResolvedValue({
+            data: {
+              remoteMcp: { status: "failed", error: networkError.message },
+              localMcp: { status: "failed", error: networkError.message },
+            },
+          });
+          mockClient.mcp.connect.mockRejectedValue(networkError);
+        }
+        const sandboxedAgent = new OpenCodeAgent({
+          workspacePath: "/workspace/project",
+          sandbox: {
+            mode: "on",
+            enabled: true,
+            allowNetwork,
+            filesystemPolicy: { readWritePaths: ["/workspace/project"], readOnlyPaths: [] },
+          },
+          executable: { path: "/usr/local/bin/opencode" },
+        });
 
-      await sandboxedAgent.connect();
+        await sandboxedAgent.connect();
 
-      const runtimeConfig = vi.mocked(mockSandboxManager.initialize).mock.calls[0]?.[0];
-      expect(runtimeConfig?.network).toEqual(
-        allowNetwork
-          ? { enabled: false, allowedDomains: [], deniedDomains: [], allowLocalBinding: true }
-          : { enabled: true, allowedDomains: ["localhost", "127.0.0.1"], deniedDomains: [], allowLocalBinding: true },
-      );
-      expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
-      expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledWith(
-        expect.stringContaining("'serve' '--hostname' '127.0.0.1'"),
-      );
+        const runtimeConfig = vi.mocked(mockSandboxManager.initialize).mock.calls[0]?.[0];
+        expect(runtimeConfig?.network).toEqual(
+          allowNetwork
+            ? { enabled: false, allowedDomains: [], deniedDomains: [], allowLocalBinding: true }
+            : { enabled: true, allowedDomains: ["localhost", "127.0.0.1"], deniedDomains: [], allowLocalBinding: true },
+        );
+        expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
+        expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledWith(
+          expect.stringContaining("'serve' '--hostname' '127.0.0.1'"),
+        );
 
-      if (allowNetwork) {
-        await expect(sandboxedAgent.getProviders()).resolves.toEqual({ providers: [], default: {} });
-        await expect(sandboxedAgent.connectMcp("remoteMcp")).resolves.toBeUndefined();
-        await expect(sandboxedAgent.connectMcp("localMcp")).resolves.toBeUndefined();
-        await expect(sandboxedAgent.getMcpStatus()).resolves.toEqual({});
-      } else {
-        await expect(sandboxedAgent.getProviders()).rejects.toThrow(networkError);
-        await expect(sandboxedAgent.connectMcp("remoteMcp")).rejects.toThrow(networkError);
-        await expect(sandboxedAgent.connectMcp("localMcp")).rejects.toThrow(networkError);
-        const mcpStatus = await sandboxedAgent.getMcpStatus();
-        expect(mcpStatus.remoteMcp.error).toContain("network request/startup");
-        expect(mcpStatus.localMcp.error).toContain("network request/startup");
-      }
+        if (allowNetwork) {
+          await expect(sandboxedAgent.getProviders()).resolves.toEqual({ providers: [], default: {} });
+          await expect(sandboxedAgent.connectMcp("remoteMcp")).resolves.toBeUndefined();
+          await expect(sandboxedAgent.connectMcp("localMcp")).resolves.toBeUndefined();
+          await expect(sandboxedAgent.getMcpStatus()).resolves.toEqual({});
+        } else {
+          await expect(sandboxedAgent.getProviders()).rejects.toThrow(networkError);
+          await expect(sandboxedAgent.connectMcp("remoteMcp")).rejects.toThrow(networkError);
+          await expect(sandboxedAgent.connectMcp("localMcp")).rejects.toThrow(networkError);
+          const mcpStatus = await sandboxedAgent.getMcpStatus();
+          expect(mcpStatus.remoteMcp.error).toContain("network request/startup");
+          expect(mcpStatus.localMcp.error).toContain("network request/startup");
+        }
 
-      expect(createOpencodeServer).not.toHaveBeenCalled();
-      expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
-      sandboxedAgent.disconnect();
-    });
+        expect(createOpencodeServer).not.toHaveBeenCalled();
+        expect(mockSandboxManager.wrapWithSandbox).toHaveBeenCalledTimes(1);
+        sandboxedAgent.disconnect();
+      },
+    );
 
     it.each([
       true,

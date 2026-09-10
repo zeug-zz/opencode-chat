@@ -475,61 +475,68 @@ describe("ChatViewProvider", () => {
           state: "disabled",
         },
       },
-    ] as const)("keeps Chat and Write initialization and message handling normal for %s", async ({
-      memoryProviderStatus,
-      memoryRetentionStatus,
-    }) => {
-      const { postMessage, sendMessage } = setupProvider(
-        mockAgent,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        memoryProviderStatus,
-        memoryRetentionStatus,
-      );
+    ] as const)(
+      "keeps Chat and Write initialization and message handling normal for %s",
+      async ({ memoryProviderStatus, memoryRetentionStatus }) => {
+        const { postMessage, sendMessage } = setupProvider(
+          mockAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          memoryProviderStatus,
+          memoryRetentionStatus,
+        );
 
-      await sendMessage({ type: "ready" });
-      await sendMessage({
-        type: "sendMessage",
-        sessionId: "chat-session",
-        text: "Research this",
-        primaryAgent: "scout",
-      });
-      await sendMessage({ type: "sendMessage", sessionId: "write-session", text: "Write this", primaryAgent: "build" });
+        await sendMessage({ type: "ready" });
+        await sendMessage({
+          type: "sendMessage",
+          sessionId: "chat-session",
+          text: "Research this",
+          primaryAgent: "scout",
+        });
+        await sendMessage({
+          type: "sendMessage",
+          sessionId: "write-session",
+          text: "Write this",
+          primaryAgent: "build",
+        });
 
-      expect(postMessage).toHaveBeenCalledWith({ type: "memoryStatus", status: memoryProviderStatus });
-      expect(memoryProviderStatus.capabilities).toEqual({ retain: false, recall: false, reflect: false });
-      expect(memoryProviderStatus).not.toHaveProperty("automaticSessionRetention");
-      if (memoryRetentionStatus) expect(memoryRetentionStatus.policy.automaticSessionRetention).toBe(false);
-      expect(mockAgent.getPath).toHaveBeenCalled();
-      expect(mockAgent.listSessions).toHaveBeenCalled();
-      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
-        1,
-        "chat-session",
-        "Research this",
-        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
-      );
-      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
-        2,
-        "write-session",
-        "Write this",
-        expect.objectContaining({ primaryAgent: "build", system: "write prompt" }),
-      );
-      expect(mockAgent.updateConfig).not.toHaveBeenCalled();
-      expect(mockAgent.getToolIds).not.toHaveBeenCalled();
-      for (const operation of [
-        mockAgent.deleteSession,
-        mockAgent.replyPermission,
-        mockAgent.connectMcp,
-        mockAgent.disconnectMcp,
-        mockAgent.setModel,
-      ]) {
-        expect(operation).not.toHaveBeenCalled();
-      }
-      expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
-    });
+        expect(postMessage).toHaveBeenCalledWith({ type: "memoryStatus", status: memoryProviderStatus });
+        expect(memoryProviderStatus.capabilities).toEqual({ retain: false, recall: false, reflect: false });
+        expect(memoryProviderStatus).not.toHaveProperty("automaticSessionRetention");
+        if (memoryRetentionStatus) {
+          expect(memoryRetentionStatus.policy.automaticSessionRetention).toBe(false);
+        }
+        expect(mockAgent.getPath).toHaveBeenCalled();
+        expect(mockAgent.listSessions).toHaveBeenCalled();
+        expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
+          1,
+          "chat-session",
+          "Research this",
+          expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+        );
+        expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
+          2,
+          "write-session",
+          "Write this",
+          expect.objectContaining({ primaryAgent: "build", system: "write prompt" }),
+        );
+        expect(mockAgent.updateConfig).not.toHaveBeenCalled();
+        expect(mockAgent.getToolIds).not.toHaveBeenCalled();
+        for (const operation of [
+          mockAgent.deleteSession,
+          mockAgent.replyPermission,
+          mockAgent.connectMcp,
+          mockAgent.disconnectMcp,
+          mockAgent.setModel,
+        ]) {
+          expect(operation).not.toHaveBeenCalled();
+        }
+        expect(vi.mocked(fs.writeFile)).not.toHaveBeenCalled();
+      },
+    );
 
     it("should send additive bundled metadata without bodies or paths", async () => {
       const bundledResources = [
@@ -1639,50 +1646,50 @@ describe("ChatViewProvider", () => {
       }
     });
 
-    it.each([
-      "session.error",
-      "session.deleted",
-    ] as const)("rejects a retention reply after %s cleanup without affecting normal permissions", async (eventType) => {
-      const { sendMessage } = setupProvider(
-        mockAgent,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        {
-          policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: false },
-          state: "available",
-        },
-      );
-      const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
-      onEvent({
-        type: "permission.asked",
-        properties: {
-          id: `cleanup-${eventType}`,
-          sessionID: "sess-1",
-          permission: "hindsight_ingest_document",
-          patterns: [],
-          metadata: { input: { summary: "A bounded project finding" } },
-          always: [],
-        },
-      });
-      onEvent(
-        eventType === "session.error"
-          ? { type: eventType, properties: { sessionID: "sess-1", error: "provider failed" } }
-          : { type: eventType, properties: { info: { id: "sess-1" } } },
-      );
+    it.each(["session.error", "session.deleted"] as const)(
+      "rejects a retention reply after %s cleanup without affecting normal permissions",
+      async (eventType) => {
+        const { sendMessage } = setupProvider(
+          mockAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            policy: { enabled: true, requireConfirmation: true, automaticSessionRetention: false },
+            state: "available",
+          },
+        );
+        const onEvent = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+        onEvent({
+          type: "permission.asked",
+          properties: {
+            id: `cleanup-${eventType}`,
+            sessionID: "sess-1",
+            permission: "hindsight_ingest_document",
+            patterns: [],
+            metadata: { input: { summary: "A bounded project finding" } },
+            always: [],
+          },
+        });
+        onEvent(
+          eventType === "session.error"
+            ? { type: eventType, properties: { sessionID: "sess-1", error: "provider failed" } }
+            : { type: eventType, properties: { info: { id: "sess-1" } } },
+        );
 
-      await sendMessage({
-        type: "replyPermission",
-        sessionId: "sess-1",
-        permissionId: `cleanup-${eventType}`,
-        response: "always",
-      });
+        await sendMessage({
+          type: "replyPermission",
+          sessionId: "sess-1",
+          permissionId: `cleanup-${eventType}`,
+          response: "always",
+        });
 
-      expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", `cleanup-${eventType}`, "reject");
-    });
+        expect(mockAgent.replyPermission).toHaveBeenCalledWith("sess-1", `cleanup-${eventType}`, "reject");
+      },
+    );
   });
 
   // ============================================================

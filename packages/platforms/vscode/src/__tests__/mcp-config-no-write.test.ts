@@ -89,8 +89,6 @@ describe("Chat MCP config ownership", () => {
       TMPDIR: process.env.TMPDIR,
     };
     const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
-    const originalGetConfiguration = vscode.workspace.getConfiguration;
-    const originalRegisterWebviewViewProvider = vscode.window.registerWebviewViewProvider;
     let mode: "inherit" | "on" = "inherit";
     let extension: typeof import("../extension") | undefined;
 
@@ -228,8 +226,8 @@ describe("Chat MCP config ownership", () => {
     } finally {
       extension?.deactivate();
       vscode.workspace.workspaceFolders = originalWorkspaceFolders;
-      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(originalGetConfiguration);
-      vi.mocked(vscode.window.registerWebviewViewProvider).mockImplementation(originalRegisterWebviewViewProvider);
+      vi.mocked(vscode.workspace.getConfiguration).mockReset();
+      vi.mocked(vscode.window.registerWebviewViewProvider).mockReset();
       for (const [key, value] of Object.entries(previousEnvironment)) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
