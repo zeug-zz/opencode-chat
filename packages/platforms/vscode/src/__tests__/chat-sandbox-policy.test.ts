@@ -493,19 +493,23 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readWritePaths).not.toContain("/opt/hindsight/package");
   });
 
-  it.each(["", "   ", "relative/provider", homePath, `${homePath}/.ssh/provider`, "/workspace/project/provider"])(
-    "rejects unsafe provider path %s",
-    (providerReadPath) => {
-      expect(() =>
-        buildChatSandboxFilesystemPolicy({
-          workspacePath: "/workspace/project",
-          homePath,
-          providerReadPaths: [providerReadPath],
-          platform: "linux",
-        }),
-      ).toThrow();
-    },
-  );
+  it.each([
+    "",
+    "   ",
+    "relative/provider",
+    homePath,
+    `${homePath}/.ssh/provider`,
+    "/workspace/project/provider",
+  ])("rejects unsafe provider path %s", (providerReadPath) => {
+    expect(() =>
+      buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath,
+        providerReadPaths: [providerReadPath],
+        platform: "linux",
+      }),
+    ).toThrow();
+  });
 
   it.each(["darwin", "linux"] as const)("rejects provider paths overlapping protected denies on %s", (platform) => {
     const protectedPath = platform === "darwin" ? "/Library/Keychains/provider" : `${homePath}/.config/Signal/provider`;
@@ -601,66 +605,57 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     ["OpenCode config", { config: "/Library/Keychains" }, undefined],
     ["executable", undefined, "/Library/Keychains"],
     ["PATH executable", undefined, undefined, ["/Library/Keychains"]],
-  ] as const)(
-    "rejects an exact protected deny conflict for the %s read-only grant",
-    (label, openCodePaths, executablePath, executablePaths) => {
-      let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+  ] as const)("rejects an exact protected deny conflict for the %s read-only grant", (label, openCodePaths, executablePath, executablePaths) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
 
-      expect(() => {
-        returnedPolicy = buildChatSandboxFilesystemPolicy({
-          workspacePath: "/workspace/project",
-          homePath: "/Users/tester",
-          openCodePaths,
-          executablePath,
-          executablePaths,
-          platform: "darwin",
-        });
-      }).toThrow(
-        /deny-read path "\/Library\/Keychains" overlaps required read-only filesystem policy path read grant "\/Library\/Keychains"/,
-      );
-      expect(returnedPolicy).toBeUndefined();
-    },
-  );
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: "/Users/tester",
+        openCodePaths,
+        executablePath,
+        executablePaths,
+        platform: "darwin",
+      });
+    }).toThrow(
+      /deny-read path "\/Library\/Keychains" overlaps required read-only filesystem policy path read grant "\/Library\/Keychains"/,
+    );
+    expect(returnedPolicy).toBeUndefined();
+  });
 
   it.each([
     ["OpenCode config", { config: "/Library/Keychains/login.keychain-db" }, undefined],
     ["PATH executable", undefined, ["/Library/Keychains/bin/opencode"]],
-  ] as const)(
-    "rejects a required read-only grant beneath a protected deny path for the %s",
-    (label, openCodePaths, executablePaths) => {
-      let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+  ] as const)("rejects a required read-only grant beneath a protected deny path for the %s", (label, openCodePaths, executablePaths) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
 
-      expect(() => {
-        returnedPolicy = buildChatSandboxFilesystemPolicy({
-          workspacePath: "/workspace/project",
-          homePath: "/Users/tester",
-          openCodePaths,
-          executablePaths,
-          platform: "darwin",
-        });
-      }).toThrow(/deny-read path "\/Library\/Keychains" overlaps required read-only filesystem policy path/);
-      expect(returnedPolicy).toBeUndefined();
-    },
-  );
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        workspacePath: "/workspace/project",
+        homePath: "/Users/tester",
+        openCodePaths,
+        executablePaths,
+        platform: "darwin",
+      });
+    }).toThrow(/deny-read path "\/Library\/Keychains" overlaps required read-only filesystem policy path/);
+    expect(returnedPolicy).toBeUndefined();
+  });
 
   it.each([
     ["workspace", { workspacePath: "/Library" }],
     ["runtime cache", { workspacePath: "/workspace/project", runtimeCachePaths: ["/Users/tester/Library"] }],
-  ] as const)(
-    "rejects a workspace or runtime read-write grant containing a protected deny path for the %s",
-    (label, input) => {
-      let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
+  ] as const)("rejects a workspace or runtime read-write grant containing a protected deny path for the %s", (label, input) => {
+    let returnedPolicy: ReturnType<typeof buildChatSandboxFilesystemPolicy> | undefined;
 
-      expect(() => {
-        returnedPolicy = buildChatSandboxFilesystemPolicy({
-          ...input,
-          homePath: "/Users/tester",
-          platform: "darwin",
-        });
-      }).toThrow(/deny-read path.*overlaps required filesystem policy path/);
-      expect(returnedPolicy).toBeUndefined();
-    },
-  );
+    expect(() => {
+      returnedPolicy = buildChatSandboxFilesystemPolicy({
+        ...input,
+        homePath: "/Users/tester",
+        platform: "darwin",
+      });
+    }).toThrow(/deny-read path.*overlaps required filesystem policy path/);
+    expect(returnedPolicy).toBeUndefined();
+  });
 
   it.each([
     ["workspace", { workspacePath: "/Library/Keychains" }],
@@ -718,21 +713,22 @@ describe("buildChatSandboxFilesystemPolicy", () => {
     expect(policy.readWritePaths).not.toContain("/Users/tester/Library/Keychains");
   });
 
-  it.each(["/tmp/opencode", "/private/tmp/opencode", "/var/folders/ab/0123456789abcdef/cache/opencode"])(
-    "does not derive a broad or arbitrary temporary parent from %s",
-    (temporaryPath) => {
-      const policy = buildChatSandboxFilesystemPolicy({
-        workspacePath: "/workspace/project",
-        homePath: "/Users/tester",
-        openCodePaths: { temp: temporaryPath },
-        platform: "darwin",
-      });
+  it.each([
+    "/tmp/opencode",
+    "/private/tmp/opencode",
+    "/var/folders/ab/0123456789abcdef/cache/opencode",
+  ])("does not derive a broad or arbitrary temporary parent from %s", (temporaryPath) => {
+    const policy = buildChatSandboxFilesystemPolicy({
+      workspacePath: "/workspace/project",
+      homePath: "/Users/tester",
+      openCodePaths: { temp: temporaryPath },
+      platform: "darwin",
+    });
 
-      expect(policy.readWritePaths).not.toContain("/tmp");
-      expect(policy.readWritePaths).not.toContain("/private/tmp");
-      expect(policy.readWritePaths).not.toContain("/var/folders/ab/0123456789abcdef/cache");
-    },
-  );
+    expect(policy.readWritePaths).not.toContain("/tmp");
+    expect(policy.readWritePaths).not.toContain("/private/tmp");
+    expect(policy.readWritePaths).not.toContain("/var/folders/ab/0123456789abcdef/cache");
+  });
 
   it("normalizes policy paths before applying write constraints", () => {
     const policy = buildChatSandboxFilesystemPolicy({

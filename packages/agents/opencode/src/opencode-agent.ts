@@ -243,9 +243,42 @@ function appendDiagnosticTail(current: string, chunk: string): string {
   return value.length > DIAGNOSTIC_TAIL_LENGTH ? value.slice(-DIAGNOSTIC_TAIL_LENGTH) : value;
 }
 
+function findDiagnosticAssignment(value: string, start: number): number {
+  for (let index = start; index < value.length; index += 1) {
+    if (!/\s/.test(value[index] ?? "")) continue;
+
+    const markerStart = index;
+    let marker = index;
+    while (/\s/.test(value[marker] ?? "")) marker += 1;
+    if (!/[A-Z]/.test(value[marker] ?? "")) {
+      index = marker - 1;
+      continue;
+    }
+
+    marker += 1;
+    while (/[A-Z0-9_]/.test(value[marker] ?? "")) marker += 1;
+    while (/\s/.test(value[marker] ?? "")) marker += 1;
+    if (value[marker] === "=") return markerStart;
+  }
+
+  return value.length;
+}
+
 function redactDiagnostic(value: string): string {
-  return value
-    .replace(/\bplugins?\b\s*[:=]\s*.*?(?=\s+[A-Z][A-Z0-9_]*\s*=|$)/gi, "plugin=[redacted]")
+  const pluginPattern = /\bplugins?\b\s*[:=]\s*/gi;
+  let redacted = "";
+  let cursor = 0;
+  let match = pluginPattern.exec(value);
+  while (match) {
+    const markerStart = findDiagnosticAssignment(value, pluginPattern.lastIndex);
+    redacted += `${value.slice(cursor, match.index)}plugin=[redacted]`;
+    cursor = markerStart;
+    pluginPattern.lastIndex = markerStart;
+    match = pluginPattern.exec(value);
+  }
+
+  redacted += value.slice(cursor);
+  return redacted
     .replace(/(\b(?:config|configuration|settings|payload)\b\s*[:=]\s*)\{[^\r\n]*/gi, "$1{[redacted]}")
     .replace(/OPENCODE_CONFIG_CONTENT\b[^\r\n]*/gi, "OPENCODE_CONFIG_CONTENT=[redacted]")
     .replace(/\b[A-Z][A-Z0-9_]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/g, (match) => {
