@@ -268,4 +268,39 @@ describe("ファイルコンテキスト", () => {
     // quick-add ボタンが消える
     expect(document.querySelector(".fileButton")).not.toBeInTheDocument();
   });
+
+  // File-backed custom-editor activeEditor messages use the existing quick-add and send contract
+  it("ファイルベースのカスタムエディタ由来の activeEditor で添付と送信が維持されること", async () => {
+    await setupWithFiles();
+    const user = userEvent.setup();
+    const guide = { filePath: "docs/guide.md", fileName: "guide.md" };
+    const alternate = { filePath: "docs/other.md", fileName: "other.md" };
+
+    await sendExtMessage({ type: "activeEditor", file: guide });
+
+    expect(screen.getByTitle("Add docs/guide.md")).toBeInTheDocument();
+    await user.click(screen.getByTitle("Add docs/guide.md"));
+    expect(document.querySelectorAll(".chip").length).toBe(1);
+
+    await sendExtMessage({ type: "activeEditor", file: alternate });
+    expect(screen.getByTitle("Add docs/other.md")).toBeInTheDocument();
+    expect(screen.queryByTitle("Add docs/guide.md")).not.toBeInTheDocument();
+
+    await sendExtMessage({ type: "activeEditor", file: null });
+    expect(document.querySelector(".fileButton")).not.toBeInTheDocument();
+
+    const textarea = screen.getByPlaceholderText("Ask OpenCode... (type # to attach files)");
+    await user.type(textarea, "Check the custom Markdown file{Enter}");
+
+    const sendMessage = vi
+      .mocked(postMessage)
+      .mock.calls.map(([message]) => message)
+      .find((message) => message.type === "sendMessage");
+    expect(sendMessage).toEqual(
+      expect.objectContaining({
+        type: "sendMessage",
+        files: [guide],
+      }),
+    );
+  });
 });

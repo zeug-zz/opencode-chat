@@ -192,6 +192,8 @@ describe("ChatViewProvider", () => {
   beforeEach(() => {
     mockAgent = createMockAgent();
     vi.clearAllMocks();
+    vi.mocked(vscode.window).activeTextEditor = undefined;
+    vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = undefined;
   });
 
   afterEach(() => {
@@ -267,6 +269,12 @@ describe("ChatViewProvider", () => {
 
       expect(vscode.window.onDidChangeActiveTextEditor).toHaveBeenCalled();
     });
+
+    it("should register tab change listener", () => {
+      setupProvider(mockAgent);
+
+      expect(vscode.window.tabGroups.onDidChangeTabs).toHaveBeenCalled();
+    });
   });
 
   // ============================================================
@@ -291,7 +299,69 @@ describe("ChatViewProvider", () => {
   // ============================================================
 
   describe("activeEditor listener", () => {
+    it("should send the file-backed active custom tab when no text editor represents it", () => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = {
+        input: new vscode.TabInputCustom(
+          { scheme: "file", fsPath: "/workspace/docs/guide.md" } as never,
+          "office-viewer",
+        ),
+      } as never;
+      const { postMessage } = setupProvider(mockAgent);
+
+      const editorCallback = vi.mocked(vscode.window.onDidChangeActiveTextEditor).mock.calls[0][0] as (
+        editor: unknown,
+      ) => void;
+      editorCallback(undefined);
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "activeEditor",
+        file: { filePath: "docs/guide.md", fileName: "guide.md" },
+      });
+    });
+
+    it("should keep the ordinary active text editor attachment", () => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = {
+        input: new vscode.TabInputText({ scheme: "file", fsPath: "/workspace/src/index.ts" } as never),
+      } as never;
+      vi.mocked(vscode.window).activeTextEditor = {
+        document: { uri: { scheme: "file", fsPath: "/workspace/src/index.ts" } },
+      } as never;
+      const { postMessage } = setupProvider(mockAgent);
+
+      const editorCallback = vi.mocked(vscode.window.onDidChangeActiveTextEditor).mock.calls[0][0] as (
+        editor: unknown,
+      ) => void;
+      editorCallback(vscode.window.activeTextEditor);
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "activeEditor",
+        file: { filePath: "src/index.ts", fileName: "index.ts" },
+      });
+    });
+
+    it.each([
+      {
+        input: new vscode.TabInputCustom({ scheme: "untitled", fsPath: "/workspace/docs/guide.md" } as never, "custom"),
+      },
+      { input: new vscode.TabInputCustom(undefined as never, "custom") },
+      { input: { unsupported: true } },
+    ])("should clear the attachment for an unsupported active tab without reusing a stale editor", (activeTab) => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = activeTab as never;
+      vi.mocked(vscode.window).activeTextEditor = {
+        document: { uri: { scheme: "file", fsPath: "/workspace/stale.md" } },
+      } as never;
+      const { postMessage } = setupProvider(mockAgent);
+
+      const editorCallback = vi.mocked(vscode.window.onDidChangeActiveTextEditor).mock.calls[0][0] as (
+        editor: unknown,
+      ) => void;
+      editorCallback(vscode.window.activeTextEditor);
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "activeEditor", file: null });
+    });
+
     it("should send activeEditor message when editor changes", () => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = undefined;
       const { postMessage } = setupProvider(mockAgent);
 
       const editorCallback = vi.mocked(vscode.window.onDidChangeActiveTextEditor).mock.calls[0][0] as (
@@ -311,7 +381,44 @@ describe("ChatViewProvider", () => {
       });
     });
 
+    it("should refresh the attachment when a file-backed custom tab is activated", () => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = {
+        input: new vscode.TabInputCustom(
+          { scheme: "file", fsPath: "/workspace/docs/guide.md" } as never,
+          "office-viewer",
+        ),
+      } as never;
+      vi.mocked(vscode.window).activeTextEditor = {
+        document: { uri: { scheme: "file", fsPath: "/workspace/stale.md" } },
+      } as never;
+      const { postMessage } = setupProvider(mockAgent);
+
+      const tabCallback = vi.mocked(vscode.window.tabGroups.onDidChangeTabs).mock.calls[0][0] as () => void;
+      tabCallback();
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "activeEditor",
+        file: { filePath: "docs/guide.md", fileName: "guide.md" },
+      });
+    });
+
+    it("should clear the attachment when an unsupported custom tab is activated", () => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = {
+        input: new vscode.TabInputCustom({ scheme: "untitled", fsPath: "/workspace/docs/guide.md" } as never, "custom"),
+      } as never;
+      vi.mocked(vscode.window).activeTextEditor = {
+        document: { uri: { scheme: "file", fsPath: "/workspace/stale.md" } },
+      } as never;
+      const { postMessage } = setupProvider(mockAgent);
+
+      const tabCallback = vi.mocked(vscode.window.tabGroups.onDidChangeTabs).mock.calls[0][0] as () => void;
+      tabCallback();
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "activeEditor", file: null });
+    });
+
     it("should send null for non-file scheme editor", () => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = undefined;
       const { postMessage } = setupProvider(mockAgent);
 
       const editorCallback = vi.mocked(vscode.window.onDidChangeActiveTextEditor).mock.calls[0][0] as (
@@ -329,6 +436,7 @@ describe("ChatViewProvider", () => {
     });
 
     it("should send null when no editor", () => {
+      vi.mocked(vscode.window).tabGroups.activeTabGroup.activeTab = undefined;
       const { postMessage } = setupProvider(mockAgent);
 
       const editorCallback = vi.mocked(vscode.window.onDidChangeActiveTextEditor).mock.calls[0][0] as (

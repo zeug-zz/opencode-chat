@@ -39,7 +39,11 @@ export const window = {
   activeTextEditor: undefined as unknown,
   onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
   onDidChangeTerminalShellIntegration: vi.fn(() => ({ dispose: vi.fn() })),
-  tabGroups: { all: [] as unknown[] },
+  tabGroups: {
+    all: [] as unknown[],
+    activeTabGroup: { activeTab: undefined as unknown },
+    onDidChangeTabs: vi.fn(() => ({ dispose: vi.fn() })),
+  },
   createTerminal: vi.fn(() => ({ show: vi.fn(), sendText: vi.fn() })),
   createWebviewPanel: vi.fn(() => ({
     webview: { html: "", onDidReceiveMessage: vi.fn() },
@@ -114,6 +118,16 @@ export class TabInputText {
   public uri: { fsPath: string; scheme: string };
   constructor(uri: { fsPath: string; scheme: string }) {
     this.uri = uri;
+  }
+}
+
+// --- TabInputCustom ---
+export class TabInputCustom {
+  public uri: { fsPath: string; scheme: string };
+  public viewType: string;
+  constructor(uri: { fsPath: string; scheme: string }, viewType: string) {
+    this.uri = uri;
+    this.viewType = viewType;
   }
 }
 
