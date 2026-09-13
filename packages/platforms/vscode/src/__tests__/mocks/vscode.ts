@@ -35,6 +35,7 @@ export const window = {
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn().mockResolvedValue(undefined),
   showInformationMessage: vi.fn().mockResolvedValue(undefined),
+  showQuickPick: vi.fn().mockResolvedValue(undefined),
   showTextDocument: vi.fn().mockResolvedValue(undefined),
   activeTextEditor: undefined as unknown,
   onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
@@ -64,6 +65,7 @@ export const env = {
 // --- commands ---
 export const commands = {
   executeCommand: vi.fn().mockResolvedValue(undefined),
+  registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
 };
 
 // --- l10n ---

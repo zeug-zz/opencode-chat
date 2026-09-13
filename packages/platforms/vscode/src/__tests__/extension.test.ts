@@ -15,6 +15,9 @@ const mockDisconnect = vi.fn();
 const mockStopForReconnect = vi.fn().mockResolvedValue(undefined);
 const mockUpdateLaunchConfiguration = vi.fn();
 const mockSandboxSupported = vi.hoisted(() => vi.fn().mockReturnValue(true));
+const mockResolveNonoBackend = vi.hoisted(() => vi.fn());
+const mockDiscoverNonoProfiles = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockNonoProfileUpdate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockAgentLaunchConfigurations: unknown[] = [];
 let mockEffectiveConfig: Record<string, unknown> = {};
 const mockHindsightResolution = {
@@ -156,6 +159,11 @@ describe("extension", () => {
     mockConnect.mockResolvedValue(undefined);
     mockStopForReconnect.mockResolvedValue(undefined);
     mockSandboxSupported.mockReturnValue(true);
+    mockResolveNonoBackend.mockImplementation((enabled: boolean) =>
+      Promise.resolve({ backend: enabled ? "vscode" : "sdk", diagnostic: enabled ? "preflight-failed" : "disabled" }),
+    );
+    mockDiscoverNonoProfiles.mockResolvedValue([]);
+    mockNonoProfileUpdate.mockClear();
     mockAgentLaunchConfigurations.length = 0;
     mockEffectiveConfig = {};
     mockResolveHindsightPlugin.mockResolvedValue(undefined);
@@ -184,6 +192,7 @@ describe("extension", () => {
             return undefined;
           }),
           inspect: vi.fn(() => undefined),
+          update: mockNonoProfileUpdate,
         }) as never,
     );
     originalCwd = process.cwd();
@@ -250,6 +259,10 @@ describe("extension", () => {
     vi.doMock("@vscode/sandbox-runtime", () => ({
       SandboxManager: { isSupportedPlatform: mockSandboxSupported },
     }));
+    vi.doMock("../nono-resolver", () => ({
+      resolveNonoBackend: mockResolveNonoBackend,
+      discoverNonoProfiles: mockDiscoverNonoProfiles,
+    }));
     vi.doMock("../chat-mcp-prefs", () => ({
       VscodeChatMcpPrefsStore: class MockChatMcpPrefsStore {
         read = vi.fn(() => ({ selected: true }));
@@ -271,6 +284,121 @@ describe("extension", () => {
   // ============================================================
 
   describe("activate() - normal", () => {
+    it("offers the native default and custom profiles without blocking activation", async () => {
+      mockDiscoverNonoProfiles.mockResolvedValue(["opencode-local"]);
+      vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
+        label: "opencode-local",
+        value: "opencode-local",
+      } as never);
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+            update: mockNonoProfileUpdate,
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(vscode.window.showQuickPick).toHaveBeenCalledWith(
+        [
+          { label: "opencode", value: "opencode" },
+          { label: "opencode-local", value: "opencode-local" },
+        ],
+        expect.objectContaining({ ignoreFocusOut: true }),
+      );
+      await vi.waitFor(() =>
+        expect(mockNonoProfileUpdate).toHaveBeenCalledWith(
+          "nono.profile",
+          "opencode-local",
+          vscode.ConfigurationTarget.Workspace,
+        ),
+      );
+      expect(mockResolveNonoBackend).toHaveBeenCalledWith(true, { selectedProfile: undefined });
+    });
+
+    it("does not prompt when no custom profile is discovered", async () => {
+      mockDiscoverNonoProfiles.mockResolvedValue([]);
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    });
+
+    it("preserves a resolved nono backend through activation and reconnect", async () => {
+      mockResolveNonoBackend.mockResolvedValue({
+        backend: "nono",
+        executablePath: "/usr/local/bin/nono",
+        profile: "opencode-local",
+        diagnostic: "resolved-and-preflighted",
+      });
+      let allowNetwork = true;
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return allowNetwork;
+              if (section === "opencode-chat" && key === "nono.profile") return "opencode-local";
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(latestLaunchConfiguration()).toMatchObject({
+        backend: "nono",
+        nono: { executablePath: "/usr/local/bin/nono", profile: "opencode-local" },
+        sandbox: { enabled: true, mode: "on" },
+      });
+
+      allowNetwork = false;
+      configurationListener!({
+        affectsConfiguration: (section: string) => section === "opencode-chat.chatSandbox.allowNetwork",
+      });
+      await vi.waitFor(() => expect(mockStopForReconnect).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(mockUpdateLaunchConfiguration).toHaveBeenCalled());
+
+      expect(mockResolveNonoBackend).toHaveBeenCalledWith(true, { selectedProfile: "opencode-local" });
+      expect(
+        [
+          ...mockAgentLaunchConfigurations,
+          ...mockUpdateLaunchConfiguration.mock.calls.map(([configuration]) => configuration),
+        ].every(
+          (configuration) =>
+            configuration === undefined ||
+            ((configuration as { backend?: string }).backend === "nono" &&
+              (configuration as { nono?: unknown }).nono !== undefined),
+        ),
+      ).toBe(true);
+    });
+
+    it("keeps explicit Chat sandbox-off on the SDK backend", async () => {
+      mockResolveNonoBackend.mockResolvedValue({ backend: "sdk", diagnostic: "disabled" });
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(mockResolveNonoBackend).toHaveBeenCalledWith(false, { selectedProfile: undefined });
+      expect(latestLaunchConfiguration()).toMatchObject({
+        backend: "sdk",
+        sandbox: { enabled: false, mode: "off" },
+      });
+      expect(latestLaunchConfiguration()).not.toMatchObject({ backend: "nono" });
+      expect(latestLaunchConfiguration()).not.toHaveProperty("nono");
+    });
+
     it("preflights the approved provider, inventories tools, and reconnects with exact safe tools", async () => {
       mockEffectiveConfig = { plugin: ["@vectorize-io/hindsight-coding-agents"] };
       mockResolveHindsightPlugin.mockResolvedValue(mockHindsightResolution);

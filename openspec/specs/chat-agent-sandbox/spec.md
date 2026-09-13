@@ -111,36 +111,33 @@ the mode to `inherit`.
   permits them
 
 ### Requirement: Sandboxed companion process tree
+When Chat sandboxing is enabled, the extension SHALL run its OpenCode server and all of that server’s shell tools, local MCP processes, LSPs, formatters, and descendants inside the resolved sandbox backend. The resolved backend SHALL be either the verified external nono backend or the existing platform compatibility sandbox; the VS Code extension host and webview SHALL remain outside both. The extension SHALL not apply either policy to independent OpenCode processes.
 
-When Chat sandboxing is enabled, the OpenCode companion server SHALL run inside
-the platform sandbox and every shell tool, local MCP process, LSP, formatter,
-or other child process launched by that server SHALL inherit the same
-restrictions. The VS Code extension host and webview SHALL remain outside the
-sandbox.
+#### Scenario: Nono companion descendants inherit its boundary
+- **WHEN** the enabled Chat sandbox resolves the verified nono backend
+- **THEN** the extension-owned OpenCode server and its local descendants SHALL run through the selected nono boundary
+- **AND** the extension host and independent TUI SHALL remain outside that boundary
 
-#### Scenario: Companion tools inherit the sandbox
-
-- **WHEN** the sandboxed companion launches a shell tool or local MCP process
-- **THEN** the child process SHALL inherit the companion filesystem and network
-  restrictions
-- **AND** the child SHALL NOT gain access merely because it was launched by
-  OpenCode
-
-#### Scenario: Extension host remains available
-
-- **WHEN** Chat sandboxing is enabled
-- **THEN** the extension host SHALL continue to perform VS Code UI operations
-  such as opening editors, showing diffs, and communicating with the webview
-- **AND** the sandbox policy SHALL not be applied to unrelated VS Code
-  extensions
+#### Scenario: Compatibility-sandbox descendants remain protected
+- **WHEN** the enabled Chat sandbox resolves the existing compatibility backend
+- **THEN** the companion and its local descendants SHALL retain the existing filesystem and network restrictions
+- **AND** the extension SHALL not claim that nono is active
 
 #### Scenario: Loopback Chat connection remains functional
-
-- **WHEN** the sandboxed companion binds its local API server
+- **WHEN** either sandbox backend starts the companion API server
 - **THEN** it SHALL bind to loopback only
 - **AND** the extension host SHALL be able to connect to that loopback server
-- **AND** the sandbox SHALL not expose the companion API to non-loopback
-  inbound connections
+- **AND** the sandbox SHALL not expose the companion API to non-loopback inbound connections
+
+#### Scenario: Companion tools inherit the sandbox
+- **WHEN** either enabled sandbox backend launches a shell tool or local MCP process
+- **THEN** the child SHALL inherit the selected companion boundary
+- **AND** it SHALL not gain access merely because OpenCode launched it
+
+#### Scenario: Extension host remains available
+- **WHEN** either sandbox backend is active
+- **THEN** the extension host SHALL continue VS Code UI and webview operations
+- **AND** the selected sandbox SHALL not apply to unrelated VS Code extensions
 
 ### Requirement: Sandboxed filesystem policy
 
@@ -668,77 +665,62 @@ and SHALL restore normal Chat initialization after a successful restart.
   companion where the servers still exist
 
 ### Requirement: Sandboxed companion teardown is tree-complete
+When a sandboxed Chat companion is stopped, disconnected, or replaced, the extension SHALL terminate the complete process group/tree owned by that companion and await bounded cleanup before starting a replacement. This SHALL include a nono wrapper or compatibility wrapper, OpenCode, local MCP processes, and runtime descendants. Teardown SHALL not terminate the independent TUI.
 
-When a sandboxed Chat companion is stopped, disconnected, or replaced because
-of a sandbox or network transition, the extension MUST terminate the complete
-POSIX process group/tree owned by that companion. This MUST include the
-wrapper/sandbox shell, `opencode serve`, local MCP processes, and all npm/node
-or other MCP descendants. The extension MUST await bounded cleanup before
-starting a replacement companion. Repeated transitions MUST NOT accumulate
-MCP children, orphan old companion trees, or race the project database. This
-requirement preserves the existing sandbox filesystem/network policy and does
-not change the independent TUI process tree.
+#### Scenario: Stopping a nono-backed companion
+- **WHEN** a nono-backed Chat companion is stopped or reconfigured
+- **THEN** the extension SHALL terminate its complete companion process tree before replacement
+- **AND** local MCP descendants SHALL not remain running
+- **AND** the independent TUI SHALL remain unaffected
 
 #### Scenario: Stopping terminates the complete companion tree
-
-- **WHEN** a sandboxed Chat companion is stopped or disconnected
-- **THEN** the extension SHALL send graceful termination to the detached POSIX
-  process group containing the wrapper/sandbox shell and `opencode serve`
-- **AND** the server and every MCP descendant, including npm/node children,
-  SHALL terminate as part of that group
-- **AND** the extension SHALL await cleanup before reporting teardown complete
+- **WHEN** either sandboxed Chat companion is stopped or disconnected
+- **THEN** the extension SHALL terminate its wrapper, OpenCode server, and descendants as one companion process tree
+- **AND** it SHALL await cleanup before reporting teardown complete
 
 #### Scenario: Stubborn descendants are forcefully cleaned up
-
-- **WHEN** a member of the sandboxed companion process group remains alive after
-  the bounded graceful-termination period
-- **THEN** the extension SHALL escalate to SIGKILL for the process group
-- **AND** SHALL await confirmation that the old companion tree is gone before
-  allowing a replacement spawn
+- **WHEN** a companion process-tree member remains alive after bounded graceful termination
+- **THEN** the extension SHALL forcefully terminate the remaining companion process group
+- **AND** it SHALL await completion before replacement
 
 #### Scenario: Reconnect waits for teardown
-
-- **WHEN** sandbox or network settings trigger a companion reconnect while the
-  prior companion has not exited
-- **THEN** the extension SHALL serialize the transition and defer replacement
-  spawn until complete process-tree cleanup has finished
-- **AND** repeated transitions SHALL not accumulate npm/node MCP children or
-  race the project database
+- **WHEN** sandbox or network configuration triggers a reconnect
+- **THEN** the extension SHALL defer replacement until the prior companion tree is gone
+- **AND** repeated transitions SHALL not accumulate descendants or race the project database
 
 #### Scenario: Chat teardown does not terminate the TUI
-
-- **WHEN** Chat stops or reconnects its sandboxed companion
-- **THEN** the independent OpenCode CLI/TUI process tree SHALL remain running
-  and unaffected
-- **AND** Chat SHALL preserve the existing sandbox filesystem and network
-  policy for the replacement companion
+- **WHEN** either sandboxed Chat companion is stopped or reconnected
+- **THEN** the independent OpenCode CLI/TUI process tree SHALL remain unaffected
+- **AND** the replacement SHALL retain its selected sandbox policy
 
 ### Requirement: Sandbox failures fail closed
+When an enabled Chat sandbox backend has been selected, failure to initialize, start, connect to, or maintain its companion SHALL make Chat unavailable with a visible bounded error. The extension SHALL terminate any partial child process and SHALL not silently start an unsandboxed replacement or change to a different sandbox backend. A preflight failure before any backend is selected may use the existing compatibility backend.
 
-When Chat sandboxing is enabled, failure to initialize, start, connect to, or
-maintain the sandboxed companion SHALL make Chat unavailable with a visible
-error. The extension SHALL not silently fall back to an unsandboxed companion.
+#### Scenario: Selected nono startup fails
+- **WHEN** nono passed preflight and the selected nono companion fails during startup or readiness
+- **THEN** Chat SHALL report the nono failure and remain unavailable
+- **AND** it SHALL not start a compatibility-sandboxed or unsandboxed replacement
+
+#### Scenario: Preflight falls back before launch
+- **WHEN** nono is unavailable or unusable before a companion process is launched
+- **THEN** the extension MAY start the existing compatibility sandbox
+- **AND** it SHALL preserve that backend’s fail-closed behavior
 
 #### Scenario: Sandboxed startup fails
-
-- **WHEN** the sandbox runtime or companion fails before readiness
+- **WHEN** the selected sandbox backend or companion fails before readiness
 - **THEN** the extension SHALL terminate any partial child process
-- **AND** it SHALL show a meaningful Chat connection error
+- **AND** Chat SHALL show a meaningful backend-specific connection error
 - **AND** it SHALL not start an unsandboxed replacement
 
 #### Scenario: Sandboxed companion exits unexpectedly
-
-- **WHEN** the sandboxed companion exits after becoming ready
-- **THEN** the extension SHALL detect the lost process
-- **AND** it SHALL report that Chat is unavailable
-- **AND** it SHALL not silently launch an unsandboxed replacement
+- **WHEN** a selected sandboxed companion exits after readiness
+- **THEN** Chat SHALL detect the lost process and report it unavailable
+- **AND** it SHALL not silently launch another backend
 
 #### Scenario: User explicitly selects an unsandboxed Chat mode after failure
-
-- **WHEN** the user explicitly selects `opencode-chat.chatSandbox.mode` as `off`
-  after a sandboxed startup failure
+- **WHEN** a user explicitly selects Chat sandbox mode off after a sandboxed failure
 - **THEN** the extension MAY restore the existing unsandboxed companion path
-- **AND** the panel SHALL show the resulting disabled sandbox state
+- **AND** the panel SHALL show the disabled sandbox state
 
 ### Requirement: Existing Chat and independent process compatibility
 

@@ -1,6 +1,10 @@
 import type { MemoryProviderStatus } from "@opencode-chat/core";
 import { describe, expect, it } from "vitest";
-import { buildHindsightCompanionIntegration, HINDSIGHT_RETENTION_TOOL_ID } from "../hindsight-companion-integration";
+import {
+  buildHindsightCompanionIntegration as buildIntegration,
+  HINDSIGHT_RECALL_TOOL_IDS,
+  HINDSIGHT_RETENTION_TOOL_ID,
+} from "../hindsight-companion-integration";
 import { APPROVED_HINDSIGHT_PACKAGE, type HindsightPluginResolution } from "../hindsight-plugin-resolver";
 
 const resolution: HindsightPluginResolution = {
@@ -13,12 +17,12 @@ const resolution: HindsightPluginResolution = {
 
 const status = (
   state: MemoryProviderStatus["state"],
-  capabilities = { retain: true, recall: true, reflect: true },
+  capabilities = { retain: true, recall: true, reflect: true, automaticSessionRetention: true },
 ) => ({
   id: "hindsight",
   displayName: "untrusted detail",
   state,
-  capabilities,
+  capabilities: { ...capabilities, automaticSessionRetention: capabilities.automaticSessionRetention ?? true },
   reason: "token=secret https://private.example/path",
 });
 
@@ -34,6 +38,13 @@ const allTools = [
   "hindsight_delete_memory",
   "unknown_tool",
 ];
+
+const buildHindsightCompanionIntegration = (
+  status: MemoryProviderStatus,
+  observedToolIds: Iterable<string>,
+  resolution: HindsightPluginResolution | undefined,
+  retentionPolicy?: Parameters<typeof buildIntegration>[3],
+) => buildIntegration(status, observedToolIds, resolution, retentionPolicy, "nono");
 
 describe("Hindsight companion integration", () => {
   it.each(["configured", "blocked", "error", "unavailable"] as const)("fails closed for %s status", (state) => {
@@ -73,7 +84,8 @@ describe("Hindsight companion integration", () => {
       packageRoot: resolution.packageRoot,
       runtimePaths: resolution.runtimePaths,
       configurationPaths: resolution.configurationPaths,
-      toolPatterns: ["hindsight_reflect"],
+      toolPatterns: [],
+      nativeToolPatterns: ["hindsight_reflect"],
       automaticSessionRetention: false,
       environment: { HINDSIGHT_DISABLE_HOOKS: "1" },
     });
@@ -99,7 +111,7 @@ describe("Hindsight companion integration", () => {
   });
 
   it("activates lifecycle retention by default only for the approved usable integration", () => {
-    const result = buildHindsightCompanionIntegration(status("available"), [], resolution);
+    const result = buildHindsightCompanionIntegration(status("available"), allTools, resolution);
 
     expect(result.integration).toMatchObject({
       automaticSessionRetention: true,
@@ -108,6 +120,52 @@ describe("Hindsight companion integration", () => {
     expect(result.integration?.environment).not.toHaveProperty("HINDSIGHT_DISABLE_HOOKS");
     expect(result.status.capabilities.automaticSessionRetention).toBe(true);
     expect(result.status.automaticSessionRetention).toEqual({ state: "active" });
+  });
+
+  it("does not activate native retention without the observed retention inventory", () => {
+    const result = buildIntegration(status("available"), HINDSIGHT_RECALL_TOOL_IDS, resolution, undefined, "nono");
+
+    expect(result.integration?.automaticSessionRetention).toBe(false);
+    expect(result.integration?.environment).toEqual({ HINDSIGHT_DISABLE_HOOKS: "1" });
+    expect(result.status.automaticSessionRetention).toEqual({ state: "unavailable" });
+  });
+
+  it.each(["vscode", "sdk"] as const)("keeps the %s compatibility backend recall-only", (backend) => {
+    const result = buildIntegration(status("available"), allTools, resolution, undefined, backend);
+
+    expect(result.integration).toMatchObject({
+      toolPatterns: HINDSIGHT_RECALL_TOOL_IDS,
+      nativeToolPatterns: [],
+      automaticSessionRetention: false,
+      environment: { HINDSIGHT_DISABLE_HOOKS: "1" },
+    });
+    expect(result.integration).not.toHaveProperty("retentionPermission");
+    expect(result.integration).not.toHaveProperty("confirmationPermissions");
+    expect(result.status.capabilities).toEqual({
+      retain: false,
+      recall: true,
+      reflect: false,
+      automaticSessionRetention: false,
+    });
+    expect(result.status.automaticSessionRetention).toEqual({ state: "unavailable" });
+  });
+
+  it("keeps compatibility retention non-mutating even when every provider capability is reported", () => {
+    const result = buildIntegration(status("available"), allTools, resolution, undefined, "vscode");
+
+    expect(result.integration).toMatchObject({
+      toolPatterns: HINDSIGHT_RECALL_TOOL_IDS,
+      automaticSessionRetention: false,
+      environment: { HINDSIGHT_DISABLE_HOOKS: "1" },
+    });
+    expect(result.integration).not.toHaveProperty("retentionPermission");
+    expect(result.integration).not.toHaveProperty("confirmationPermissions");
+    expect(result.status.capabilities).toMatchObject({
+      retain: false,
+      reflect: false,
+      automaticSessionRetention: false,
+    });
+    expect(result.status.automaticSessionRetention).toEqual({ state: "unavailable" });
   });
 
   it("suppresses lifecycle retention when the normalized automatic policy is disabled", () => {
@@ -146,9 +204,24 @@ describe("Hindsight companion integration", () => {
         "hindsight_search_knowledge_pages",
         "hindsight_list_knowledge_pages",
         "hindsight_read_knowledge_page",
+      ],
+      nativeToolPatterns: [
+        "hindsight_search_knowledge_pages",
+        "hindsight_list_knowledge_pages",
+        "hindsight_read_knowledge_page",
         "hindsight_reflect",
+        "hindsight_ingest_document",
+        "hindsight_capture_initiative",
+        "hindsight_diagnose",
+        "hindsight_sync_status",
       ],
       retentionPermission: { [HINDSIGHT_RETENTION_TOOL_ID]: "ask" },
+      confirmationPermissions: {
+        hindsight_ingest_document: "ask",
+        hindsight_capture_initiative: "ask",
+        hindsight_diagnose: "ask",
+        hindsight_sync_status: "ask",
+      },
       automaticSessionRetention: true,
       environment: {},
     });
@@ -201,7 +274,8 @@ describe("Hindsight companion integration", () => {
       automaticSessionRetention: false,
     });
 
-    expect(result.integration).toBeUndefined();
+    if (options.missingTool) expect(result.integration).toBeUndefined();
+    else expect(result.integration?.retentionPermission).toBeUndefined();
   });
 
   it("keeps explicit retention separate from lifecycle retention and untrusted plugin tools", () => {
@@ -221,5 +295,21 @@ describe("Hindsight companion integration", () => {
     expect(result.integration?.toolPatterns).not.toContain("hindsight_*");
     expect(result.integration?.toolPatterns).not.toContain("arbitrary-plugin_tool");
     expect(result.integration?.toolPatterns).not.toContain("hindsight_diagnose");
+  });
+
+  it("keeps native and compatibility operation sets exact and disjoint", () => {
+    const result = buildHindsightCompanionIntegration(status("available"), allTools, resolution);
+    expect(result.integration?.toolPatterns).toEqual(HINDSIGHT_RECALL_TOOL_IDS);
+    expect(result.integration?.nativeToolPatterns).toEqual([
+      ...HINDSIGHT_RECALL_TOOL_IDS,
+      "hindsight_reflect",
+      "hindsight_ingest_document",
+      "hindsight_capture_initiative",
+      "hindsight_diagnose",
+      "hindsight_sync_status",
+    ]);
+    expect(result.integration?.nativeToolPatterns).not.toContain("hindsight_*");
+    expect(result.integration?.nativeToolPatterns).not.toContain("hindsight_delete_memory");
+    expect(result.integration?.nativeToolPatterns).not.toContain("unknown_tool");
   });
 });

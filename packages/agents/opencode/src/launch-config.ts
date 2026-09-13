@@ -3,6 +3,9 @@ import type { HindsightCompanionIntegration } from "./hindsight-companion-integr
 
 export type OpenCodeEffectiveSandboxMode = "on" | "off";
 
+/** The enforcement boundary selected for the extension-owned companion. */
+export type OpenCodeLaunchBackend = "nono" | "vscode" | "sdk";
+
 export type OpenCodeFilesystemPolicy = {
   readWritePaths: readonly string[];
   readOnlyPaths: readonly string[];
@@ -22,6 +25,11 @@ export type OpenCodeExecutableSelection = {
   args?: readonly string[];
 };
 
+export type OpenCodeNonoLaunch = {
+  executablePath: string;
+  profile: string;
+};
+
 export type OpenCodeCommandDefinition = {
   description: string;
   template: string;
@@ -36,6 +44,8 @@ export type OpenCodeGuidanceOverlay = {
 
 export type OpenCodeLaunchConfiguration = {
   workspacePath: string;
+  /** Set by the extension host for every new companion connection. */
+  backend?: OpenCodeLaunchBackend;
   sandbox: {
     mode: OpenCodeEffectiveSandboxMode;
     enabled: boolean;
@@ -44,6 +54,8 @@ export type OpenCodeLaunchConfiguration = {
     networkPolicy?: OpenCodeNetworkPolicy;
   };
   executable: OpenCodeExecutableSelection;
+  /** Resolved nono executable and trusted profile, required when backend is nono. */
+  nono?: OpenCodeNonoLaunch;
   pluginSources?: readonly OpenCodePluginEntry[];
   mcpOverlay?: { mcp: Record<string, { enabled: boolean }> };
   mcpTransport?: Readonly<Record<string, import("./mcp-inventory").McpTransport>>;

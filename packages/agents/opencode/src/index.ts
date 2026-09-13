@@ -7,6 +7,8 @@ export type {
 export {
   adaptHindsightCompanionIntegration,
   buildHindsightCompanionIntegration,
+  HINDSIGHT_APPROVED_TOOL_IDS,
+  HINDSIGHT_CONFIRMATION_TOOL_IDS,
   HINDSIGHT_DISABLE_HOOKS_ENV,
   HINDSIGHT_RECALL_TOOL_IDS,
   HINDSIGHT_REFLECT_TOOL_IDS,
@@ -31,7 +33,9 @@ export type {
   OpenCodeExecutableSelection,
   OpenCodeFilesystemPolicy,
   OpenCodeGuidanceOverlay,
+  OpenCodeLaunchBackend,
   OpenCodeLaunchConfiguration,
+  OpenCodeNonoLaunch,
   OpenCodePluginEntry,
 } from "./launch-config";
 export * from "./mappers";

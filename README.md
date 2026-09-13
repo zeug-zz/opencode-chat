@@ -44,9 +44,10 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 - **Write means requested artifacts, not coding loops** — The **write** mode is backed by OpenCode **Build** internally, but uses a dedicated report-authoring prompt. It can read, search, use web research, and edit within its broad workspace-scoped capability; requested-artifact guidance is behavioral, while agent Bash and task/subagent execution are denied.
 - **Research-oriented prompts** — Chat and Write have separate system prompts so a read-only research assistant is not mixed with a report-writing agent or a coding-agent persona.
 - **Extension-owned OpenCode server** — The extension owns its `opencode serve` process and injects its behavior in memory. It does **not** rewrite your global `opencode.json`; the independent TUI keeps its normal agents and configuration.
-- **Inherited native plugins** — The extension-owned companion preserves supported OpenCode global and project plugin entries (including opaque options and native plugin-directory discovery) without copying arbitrary OpenCode configuration or writing user/project config. SDK-managed and compatibility-sandboxed launches use equivalent process-scoped plugin sources. These plugins are trusted code running in the companion process, not isolated MCP children; the Scout/worker/Write permission boundaries still deny coding, shell, arbitrary task, package, terminal, deletion, administration, and unknown capabilities as applicable. Native `ctx_*` tools are limited to the read-only research worker, while MCP `context-mode_*` tools remain a separate reviewed prefix.
+- **Inherited native plugins** — The extension-owned companion preserves supported OpenCode global and project plugin entries (including opaque options and native plugin-directory discovery) without copying arbitrary OpenCode configuration or writing user/project config. SDK-managed and sandboxed launches use backend-specific process-scoped plugin sources. These plugins are trusted code running in the companion process, not isolated MCP children; the Scout/worker/Write permission boundaries still deny coding, shell, arbitrary task, package, terminal, deletion, administration, and unknown capabilities as applicable. Native `ctx_*` tools are limited to the read-only research worker, while MCP `context-mode_*` tools remain a separate reviewed prefix.
 - **Research MCP, chat-scoped** — On first Chat use, all inherited MCPs are disabled/unselected, so no unselected MCP child starts; only an explicit Gear-panel selection starts one. Per-server Gear selections are workspace-scoped and sticky across the Chat extension, sandbox/network, and VS Code/extension-host restarts. An OpenCode config `enabled: false` is a TUI-side default only: Chat’s explicit selection may enable that inventoried server through the extension's in-memory overlay, while unselected servers remain off. Config files are never rewritten, and the independent OpenCode TUI/CLI remains unaffected. If Chat cannot resolve its MCP inventory because config is unreadable or unparsable, it fails closed and reports unavailable with a visible error; repair the config and reload to recover.
 - **Compatibility Chat sandbox** — The optional Chat sandbox applies one process boundary to the extension's OpenCode server, local MCPs, remote MCP traffic, and their descendants. On macOS and Linux, it also applies a static, versioned protected-read baseline for common credentials, shell history/configuration, browser data, and platform-specific keychain/private data. Reads outside that baseline remain broad for compatibility with local MCPs and installed runtimes/dependencies, while writes stay constrained to documented workspace, OpenCode, runtime, and temporary paths. Windows is unsupported: Chat reports the unsupported status and uses its existing unsandboxed path.
+- **Optional external nono backend** — When Chat sandboxing is enabled on supported macOS/Linux, Scribe uses an externally installed `nono` with its validated built-in `opencode` profile by default. If discovered custom profiles exist and no choice is stored, Scribe shows one nonblocking picker; choosing a custom profile is optional, and dismissal or the default choice keeps `opencode`. Profiles are discovered from `$XDG_CONFIG_HOME/nono/profiles` (or `~/.config/nono/profiles` when `XDG_CONFIG_HOME` is unset). Scribe stores only an explicit profile name and does not parse, modify, bundle, or install nono or its profile JSON. Both a valid default and a valid custom profile use native Hindsight. Only an unavailable/non-executable nono or a profile preflight failure before launch selects the existing VS Code compatibility sandbox; the two policies are separate and are not treated as equivalent without opt-in verification. A selected nono runtime failure fails closed and is not downgraded to another backend.
 - **Report output with controlled scope** — Write is for drafting and saving sourced reports, separating evidence from inference, and updating requested files without turning the chat panel into a general-purpose coding shell.
 - **Hand off to full TUI** — Export the session to an independent OpenCode TUI while **chat keeps running**. The TUI is the supported path for serious coding, shell work, and unrestricted Build workflows.
 - **Stable thinking / CoT stream** — Reasoning display for thinking models without mid-stream blanking.
@@ -55,17 +56,27 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 - **Context chip** — token / context usage in the input area for long research threads.
 - **Security posture** — Gitleaks, Semgrep, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a clear MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit the extension process and write boundary.
 
-#### Optional memory and the `AGENTS.md` fallback
+#### Optional memory, external nono, and the `AGENTS.md` fallback
 
 Applicable OpenCode-discovered `AGENTS.md` files provide ordinary project
 guidance and workspace context; they are not a durable cross-session memory
 store. Optional provider-backed memory, currently Hindsight, supplies
 evidence-oriented recall and reflection through a provider-neutral registry
-when its capabilities are detected. Chat/Scout and Write/Build receive only
-the exact verified recall/search/reflection tools; explicit retention uses a
-the exact approved Hindsight provider is installed and configured. That
-provider installation/configuration is the retention opt-in at the provider
-boundary; there is no separate Chat retention checkbox or settings opt-in.
+when its capabilities are detected. With enabled Chat sandboxing, the external
+`nono` executable and its built-in `opencode` profile are the native default; a
+discovered custom profile is an optional one-time picker choice. The effective
+profile must pass preflight before the companion starts. Both valid default and
+custom profiles use native Hindsight. Only unavailable nono or an
+executable/profile preflight failure before launch selects the compatibility
+fallback. In that fallback,
+Hindsight is recall-only: only `hindsight_search_knowledge_pages`,
+`hindsight_list_knowledge_pages`, and `hindsight_read_knowledge_page` may be
+exposed when all are detected; reflection, writes, capture, diagnostics,
+synchronization, automatic retention, and lifecycle operations are unavailable.
+The two sandbox policies are separate enforcement boundaries, not equivalent by
+implication. Installing and configuring the exact approved Hindsight provider
+is the retention opt-in at the provider boundary; there is no separate Chat
+retention checkbox or settings opt-in.
 Explicit durable retention is available only after the exact provider,
 capability, observed-tool, lifecycle, and sandbox gates pass, and every request
 requires fresh user confirmation. An `always` or persistent permission response
@@ -79,12 +90,47 @@ or rejected as appropriate. Previously stored `opencode-chat.memoryRetention.*`
 disable values are ignored; they are not deleted, migrated, or rewritten. This
 extension does not write, promote, or synchronize findings into `AGENTS.md`.
 
-With no approved usable provider, or when provider verification or preflight
-fails, ordinary Chat/Scout and Write/Build remain usable with recall/reflect
-where available, normal workspace/request context, and applicable `AGENTS.md`
-guidance. No provider retention operation or automatic write occurs, and there
-is no unsandboxed retry. Provider failures remain nonfatal and do not promise
-external provider availability.
+When no approved provider is available, or nono/executable/profile preflight
+fails before launch, ordinary Chat/Scout and Write/Build remain usable with
+recall-only Hindsight where available, normal workspace/request context, and
+applicable `AGENTS.md` guidance. No provider retention operation or automatic
+write occurs, and there is no unsandboxed retry. Provider failures remain
+nonfatal and do not promise external provider availability. A failure after nono
+has been selected leaves Chat unavailable rather than downgrading to the
+compatibility sandbox.
+
+#### Optional external nono setup and verification
+
+`nono` is optional external tooling. Scribe neither bundles nor installs it, and
+never configures or modifies its profiles. Profiles are discovered from
+`$XDG_CONFIG_HOME/nono/profiles` (default `~/.config/nono/profiles`). The built-in
+`opencode` profile is used by default. When custom profiles are discovered and
+no choice is stored, the extension offers one nonblocking picker; selecting a
+custom name such as `opencode-local` is optional, and dismissal/default keeps
+`opencode`. Scribe stores only an explicit resulting name, never parses profile
+JSON, and never auto-selects a custom profile. Each launch validates the
+effective name with this bounded preflight:
+
+```sh
+nono profile show <name>
+```
+
+The integration check is opt-in and does not launch nono by default. Run it only
+in a disposable environment after reviewing the external profile:
+
+```sh
+OPENCODE_CHAT_RUN_NONO_INTEGRATION=1 \
+OPENCODE_CHAT_NONO_PROFILE=opencode \
+pnpm --filter @opencode-chat/agent-opencode test
+```
+
+To exercise an explicitly selected custom profile instead, replace `opencode`
+with that discovered profile name.
+
+Set `OPENCODE_CHAT_RUN_NONO_NETWORK=1` only when explicitly checking optional
+network behavior. Policy equivalence is not claimed unless this opt-in check
+has been run in the target environment; the default test run performs no nono
+launch.
 
 #### What this is not
 
@@ -195,6 +241,7 @@ Streaming sessions, permissions and questions, file chips and diffs, undo/redo, 
 
 - [OpenCode](https://github.com/anomalyco/opencode) installed
 - LLM provider authentication configured in OpenCode
+- Optional: external `nono`; enabled sandboxing uses its validated built-in `opencode` profile by default, with an optional custom-profile override
 
 ### Installation
 

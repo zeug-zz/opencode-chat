@@ -61,6 +61,12 @@
     "configuration": {
       "title": "OpenCode Scribe",
       "properties": {
+        "opencode-chat.nono.profile": {
+          "type": "string",
+          "default": "",
+          "scope": "workspace",
+          "description": "%configuration.nonoProfile%"
+        },
         "opencode-chat.chatSandbox.mode": {
           "type": "string",
           "enum": [
@@ -79,7 +85,13 @@
           "description": "Allows network access for sandboxed OpenCode Scribe tools."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "opencode-chat.selectNonoProfile",
+        "title": "%command.selectNonoProfile%"
+      }
+    ]
   },
   "scripts": {
     "build": "node --experimental-strip-types scripts/stage-bundled-research-resources.ts && node esbuild.mjs && vite build",
