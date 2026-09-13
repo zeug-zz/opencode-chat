@@ -32,6 +32,14 @@ type Props = {
   onEditAndResend?: (messageId: string, text: string) => void;
 };
 
+function getMessageQuestions(questions: Map<string, QuestionRequest>, messageId: string): QuestionRequest[] {
+  return Array.from(questions.values()).filter((q) => q.tool?.messageID === messageId);
+}
+
+function getMessageQuestionsSignature(questions: Map<string, QuestionRequest>, messageId: string): string {
+  return JSON.stringify(getMessageQuestions(questions, messageId).sort((a, b) => a.id.localeCompare(b.id)));
+}
+
 /**
  * アシスタントメッセージの可視テキストパートから、コピー用の Markdown ソースを組み立てる。
  *
@@ -87,7 +95,7 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
 
   // このメッセージに紐づく質問リクエストを取得する
   // QuestionRequest.tool.messageID でメッセージと紐付ける
-  const messageQuestions = Array.from(questions.values()).filter((q) => q.tool?.messageID === info.id);
+  const messageQuestions = getMessageQuestions(questions, info.id);
 
   // ユーザーメッセージはテキストパートのみ抽出
   // synthetic かつテキストが空でないものは SDK がファイルコンテキスト用に生成したもの
@@ -277,6 +285,8 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
     prev.message === next.message &&
     prev.activeSessionId === next.activeSessionId &&
     prev.showAllThinking === next.showAllThinking &&
+    getMessageQuestionsSignature(prev.questions, prev.message.info.id) ===
+      getMessageQuestionsSignature(next.questions, next.message.info.id) &&
     // onEditAndResend is stable during streaming (uses a ref for msg.messages
     // in App.tsx), so it only changes on effort/model/session changes.
     prev.onEditAndResend === next.onEditAndResend

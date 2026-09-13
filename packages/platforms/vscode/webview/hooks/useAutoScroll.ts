@@ -13,7 +13,7 @@ const NEAR_BOTTOM_THRESHOLD = 100;
  * - ユーザーが上方にスクロールしている場合は追従しない
  * - ユーザーがテキスト選択中は追従しない
  */
-export function useAutoScroll(messages: unknown[]) {
+export function useAutoScroll(messages: unknown[], contentChangeSignal?: unknown) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -37,14 +37,14 @@ export function useAutoScroll(messages: unknown[]) {
     scrollToBottom();
   }, [scrollToBottom]);
 
-  // messages 変更時に最下部付近ならスクロールする
+  // messages またはメッセージ以外のコンテンツ変更時に最下部付近ならスクロールする
   // （Reasoning 折りたたみ時も state は更新されるため、ResizeObserver より確実）
   useLayoutEffect(() => {
     if (!isNearBottomRef.current) return;
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     scrollToBottom("auto");
-  }, [messages, scrollToBottom]);
+  }, [messages, contentChangeSignal, scrollToBottom]);
 
   return { containerRef, bottomRef, handleScroll, isNearBottom, scrollToBottom } as const;
 }

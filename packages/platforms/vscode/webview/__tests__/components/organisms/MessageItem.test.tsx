@@ -1,3 +1,4 @@
+import type { QuestionRequest } from "@opencode-chat/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { act, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -32,6 +33,72 @@ describe("MessageItem", () => {
   // デフォルトロケール（en）の "message.copyMarkdown" 値。
   // aria-label / title / 可視テキストの期待値として全 Copy Markdown 関連テストで使う。
   const COPY_MARKDOWN_LABEL = "Copy Markdown";
+
+  function createQuestionRequest(overrides: Partial<QuestionRequest> = {}): QuestionRequest {
+    return {
+      id: "request-1",
+      sessionID: "session-1",
+      questions: [
+        {
+          question: "Which tool do you want to use?",
+          header: "Tool selection",
+          options: [{ label: "Bash", description: "Run shell commands" }],
+        },
+      ],
+      tool: { messageID: "assistant-1", callID: "call-1" },
+      ...overrides,
+    };
+  }
+
+  describe("質問状態によるメモ化境界", () => {
+    it("関連する質問の追加・変更・削除を再レンダリングし、無関係な質問では再レンダリングしないこと", () => {
+      const isShellMessage = vi.fn(() => false);
+      const message: MessageWithParts = {
+        info: createMessage({ id: "assistant-1", role: "assistant" }),
+        parts: [createTextPart("Response")],
+      };
+      const unrelatedMessage: MessageWithParts = {
+        info: createMessage({ id: "assistant-2", role: "assistant" }),
+        parts: [createTextPart("Other response")],
+      };
+      const question = createQuestionRequest();
+      const { rerender } = render(<MessageItem {...defaultProps} message={message} questions={new Map()} />, {
+        wrapper: createContextWrapper({ isShellMessage }),
+      });
+
+      rerender(<MessageItem {...defaultProps} message={message} questions={new Map([[question.id, question]])} />);
+      expect(screen.getByText(question.questions[0].question)).toBeInTheDocument();
+
+      const changedQuestion = createQuestionRequest({
+        questions: [{ ...question.questions[0], question: "Which runtime do you want to use?" }],
+      });
+      rerender(
+        <MessageItem {...defaultProps} message={message} questions={new Map([[question.id, changedQuestion]])} />,
+      );
+      expect(screen.getByText("Which runtime do you want to use?")).toBeInTheDocument();
+      expect(screen.queryByText(question.questions[0].question)).not.toBeInTheDocument();
+
+      rerender(<MessageItem {...defaultProps} message={message} questions={new Map()} />);
+      expect(screen.queryByText("Which runtime do you want to use?")).not.toBeInTheDocument();
+      const callsBeforeUnrelatedQuestion = isShellMessage.mock.calls.length;
+
+      rerender(
+        <MessageItem
+          {...defaultProps}
+          message={message}
+          questions={
+            new Map([
+              [
+                "unrelated",
+                { ...question, id: "unrelated", tool: { ...question.tool!, messageID: unrelatedMessage.info.id } },
+              ],
+            ])
+          }
+        />,
+      );
+      expect(isShellMessage).toHaveBeenCalledTimes(callsBeforeUnrelatedQuestion);
+    });
+  });
 
   // when rendered with a user message
   context("ユーザーメッセージの場合", () => {
