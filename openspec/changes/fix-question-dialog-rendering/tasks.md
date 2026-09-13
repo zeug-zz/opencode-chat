@@ -16,4 +16,4 @@
 ## 4. Validation
 
 - [x] 4.1 Run the focused webview tests for `MessageItem`, `MessagesArea`, `useAutoScroll`, and the new question-rendering scenario; verify all assertions pass.
-- [ ] 4.2 Run `openspec validate --change "fix-question-dialog-rendering" --strict`, `pnpm run check`, `pnpm run build`, and `git diff --check`; verify the change validates, lint/format checks, builds, and has no whitespace errors.
+- [x] 4.2 Run `openspec validate --change "fix-question-dialog-rendering" --strict`, `pnpm run check`, `pnpm run build`, and `git diff --check`; verify the change validates, lint/format checks, builds, and has no whitespace errors.
