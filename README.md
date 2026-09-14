@@ -1,7 +1,6 @@
 # OpenCode Scribe
 
 [![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.134.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
-[![Version](https://img.shields.io/visual-studio-marketplace/v/drmrStudio.opencode-scribe?label=version&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=drmrStudio.opencode-scribe)
 [![License](https://img.shields.io/github/license/zeug-zz/opencode-chat)](LICENSE)
 [![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
 [![Security Audit](<https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github>)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
@@ -247,12 +246,17 @@ Streaming sessions, permissions and questions, file chips and diffs, undo/redo, 
 
 ### Installation
 
-On a trusted machine, download `opencode-scribe-<version>.vsix` from the [GitHub Releases](https://github.com/zeug-zz/opencode-chat/releases) page. In VS Code, open the Command Palette and run **Extensions: Install from VSIX...**, then select the downloaded file.
+GitHub Releases is the private distribution source for OpenCode Scribe. On a trusted machine, download `opencode-scribe-<version>.vsix` from the [GitHub Releases](https://github.com/zeug-zz/opencode-chat/releases) page. In VS Code, open the Command Palette and run **Extensions: Install from VSIX...**, then select the downloaded file.
 
-The Marketplace information for **OpenCode Scribe** (`drmrStudio.opencode-scribe`)
-is retained for identity and history. The legacy `zeug-zz.opencode-research`
-listing is a separate extension; VS Code will not automatically upgrade it to
-the new publisher/name.
+After startup, the extension checks stable GitHub Releases without starting Chat
+or OpenCode. When an update is available, choose **Update** to opt into the
+combined download/install action, then separately confirm whether to reload.
+Use the **OpenCode Scribe: Check for Updates** command in the Command Palette
+for a manual check.
+
+The `drmrStudio.opencode-scribe` identity and the legacy
+`zeug-zz.opencode-research` history are retained for compatibility; neither is
+an update source.
 
 ### Development
 

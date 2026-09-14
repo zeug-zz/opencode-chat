@@ -2,7 +2,7 @@
   "name": "opencode-scribe",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.15.2",
+  "version": "0.16.0",
   "publisher": "drmrStudio",
   "license": "MIT",
   "repository": {
@@ -36,6 +36,7 @@
     "Chat"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onView:opencode-chat.chatView"
   ],
   "main": "./dist/extension.js",
@@ -90,6 +91,10 @@
       {
         "command": "opencode-chat.selectNonoProfile",
         "title": "%command.selectNonoProfile%"
+      },
+      {
+        "command": "opencode-chat.checkForUpdates",
+        "title": "%command.checkForUpdates%"
       }
     ]
   },

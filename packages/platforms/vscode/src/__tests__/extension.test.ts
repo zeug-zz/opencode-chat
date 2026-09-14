@@ -61,6 +61,10 @@ let configurationListener:
   | ((event: { affectsConfiguration: (section: string, scope?: unknown) => boolean }) => void)
   | undefined;
 const configurationListenerDispose = vi.fn();
+const mockDownloadAndValidate = vi.hoisted(() => vi.fn());
+const mockAbandonLocalInstaller = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockCheckForPrivateReleaseUpdates = vi.hoisted(() => vi.fn());
+let mockUpdaterUx = false;
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -139,6 +143,7 @@ function createMockChatViewProviderClass() {
         mockChatViewProviderInstance = this;
       }
       refresh = vi.fn().mockResolvedValue(undefined);
+      resolveWebviewView = vi.fn();
       publishChatSandboxStatus = vi.fn((status: unknown) => mockPublishedSandboxStatuses.push(status));
       publishMemoryProviderStatus = vi.fn();
     },
@@ -208,6 +213,7 @@ describe("extension", () => {
 
   afterEach(() => {
     process.chdir(originalCwd);
+    vi.unstubAllGlobals();
   });
 
   /**
@@ -275,6 +281,14 @@ describe("extension", () => {
     vi.doMock("../bundled-research-resources", () => ({
       loadBundledResearchResources: mockLoadBundledResearchResources,
     }));
+    if (mockUpdaterUx) {
+      vi.doMock("../private-release-updater", async () => ({
+        ...(await vi.importActual<typeof import("../private-release-updater")>("../private-release-updater")),
+        checkForPrivateReleaseUpdates: mockCheckForPrivateReleaseUpdates,
+        downloadAndValidatePrivateRelease: mockDownloadAndValidate,
+        abandonLocalInstaller: mockAbandonLocalInstaller,
+      }));
+    }
 
     return import("../extension");
   }
@@ -1371,6 +1385,287 @@ describe("extension", () => {
     });
   });
 
+  describe("activate() - updater lifecycle", () => {
+    function updaterContext(globalState: Map<string, unknown>) {
+      return {
+        extensionUri: { fsPath: "/ext" },
+        extension: { packageJSON: { version: "0.15.2" } },
+        globalStorageUri: { fsPath: "/global", scheme: "file" },
+        globalState: {
+          get: <T>(key: string) => globalState.get(key) as T | undefined,
+          update: async (key: string, value: unknown) => {
+            globalState.set(key, value);
+          },
+        },
+        subscriptions: [],
+      };
+    }
+
+    it("checks releases without starting unopened Chat", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ tag_name: "v0.16.0", draft: false, prerelease: false, assets: [] }), {
+            status: 200,
+          }),
+        ),
+      );
+      const ext = await importExtension();
+      await ext.activate(updaterContext(new Map()) as never);
+
+      expect(mockAgentLaunchConfigurations).toHaveLength(0);
+      expect(mockConnect).not.toHaveBeenCalled();
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith("opencode-chat.checkForUpdates", expect.anything());
+    });
+
+    it("initializes Chat exactly once when the registered view is opened", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+      const ext = await importExtension();
+      await ext.activate(updaterContext(new Map()) as never);
+      const provider = vi.mocked(vscode.window.registerWebviewViewProvider).mock.calls.at(-1)?.[1] as {
+        resolveWebviewView: (view: unknown, context: unknown, token: unknown) => Promise<void>;
+      };
+
+      await provider.resolveWebviewView({}, {}, {});
+      await provider.resolveWebviewView({}, {}, {});
+      expect(mockAgentLaunchConfigurations).toHaveLength(1);
+      expect(mockConnect).toHaveBeenCalledTimes(1);
+    });
+
+    it("defers the no-workspace warning until Chat is opened", async () => {
+      vi.mocked(vscode.workspace).workspaceFolders = undefined as never;
+      const ext = await importExtension();
+      await ext.activate(updaterContext(new Map()) as never);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(expect.stringContaining("workspace"));
+
+      const provider = vi.mocked(vscode.window.registerWebviewViewProvider).mock.calls.at(-1)?.[1] as {
+        resolveWebviewView: (view: unknown, context: unknown, token: unknown) => Promise<void>;
+      };
+      await provider.resolveWebviewView({}, {}, {});
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("workspace"));
+    });
+
+    it("reports manual no-update and metadata failures separately", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ tag_name: "v0.15.2", draft: false, prerelease: false, assets: [] }), {
+              status: 200,
+            }),
+          ),
+        ),
+      );
+      const ext = await importExtension();
+      await ext.activate(updaterContext(new Map()) as never);
+      const command = vi.mocked(vscode.commands.registerCommand).mock.calls.at(-1)?.[1] as () => Promise<unknown>;
+      await command();
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("OpenCode Scribe is up to date.");
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith("OpenCode Scribe could not check for updates.");
+
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+      await command();
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith("OpenCode Scribe could not check for updates.");
+    });
+
+    it("suppresses background duplicates but manual checks announce again", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(() =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                tag_name: "v0.16.0",
+                draft: false,
+                prerelease: false,
+                assets: [
+                  {
+                    name: "opencode-scribe-0.16.0.vsix",
+                    browser_download_url:
+                      "https://github.com/zeug-zz/opencode-chat/releases/download/v0.16.0/opencode-scribe-0.16.0.vsix",
+                  },
+                ],
+              }),
+              { status: 200 },
+            ),
+          ),
+        ),
+      );
+      const state = new Map<string, unknown>();
+      const ext = await importExtension();
+      await ext.activate(updaterContext(state) as never);
+      await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(1));
+
+      const command = vi.mocked(vscode.commands.registerCommand).mock.calls.at(-1)?.[1] as () => Promise<unknown>;
+      await command();
+      await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(2));
+      expect(state.get("privateReleaseUpdater.lastAnnouncedVersion")).toBe("0.16.0");
+      expect(mockAgentLaunchConfigurations).toHaveLength(0);
+    });
+
+    it("swallows background check failures", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+      const ext = await importExtension();
+
+      await expect(ext.activate(updaterContext(new Map()) as never)).resolves.toBeUndefined();
+      expect(mockAgentLaunchConfigurations).toHaveLength(0);
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    });
+
+    describe("consent-gated installation and reload", () => {
+      const availableRelease = {
+        version: "0.16.0",
+        assetName: "opencode-scribe-0.16.0.vsix",
+        downloadUrl: "https://github.com/zeug-zz/opencode-chat/releases/download/v0.16.0/opencode-scribe-0.16.0.vsix",
+      };
+
+      beforeEach(() => {
+        mockUpdaterUx = true;
+        mockCheckForPrivateReleaseUpdates.mockImplementation(
+          async ({ announce }: { announce: (release: unknown) => void }) => {
+            announce(availableRelease);
+            return availableRelease;
+          },
+        );
+        mockDownloadAndValidate.mockResolvedValue({
+          fsPath: "/global/.private-release-id-opencode-scribe-0.16.0.vsix",
+          scheme: "file",
+          toString: () => "file:///global/.private-release-id-opencode-scribe-0.16.0.vsix",
+        });
+      });
+
+      afterEach(() => {
+        mockUpdaterUx = false;
+      });
+
+      it("does not download, install, or reload when Update is dismissed", async () => {
+        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+        const ext = await importExtension();
+        await ext.activate(updaterContext(new Map()) as never);
+        await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalled());
+
+        expect(mockDownloadAndValidate).not.toHaveBeenCalled();
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+          "workbench.extensions.installExtension",
+          expect.anything(),
+        );
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
+      });
+
+      it("opens the release page without installing when that action is chosen", async () => {
+        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("View Release");
+        const ext = await importExtension();
+        await ext.activate(updaterContext(new Map()) as never);
+        await vi.waitFor(() => expect(vscode.env.openExternal).toHaveBeenCalled());
+
+        expect(vscode.env.openExternal).toHaveBeenCalledWith(
+          expect.objectContaining({ scheme: "https", toString: expect.any(Function) }),
+        );
+        expect(vscode.env.openExternal.mock.calls[0]?.[0].toString()).toBe(
+          "https://github.com/zeug-zz/opencode-chat/releases",
+        );
+        expect(mockDownloadAndValidate).not.toHaveBeenCalled();
+      });
+
+      it("installs the consented local VSIX, cleans it up, and asks separately before reload", async () => {
+        vi.mocked(vscode.window.showInformationMessage)
+          .mockResolvedValueOnce("Update")
+          .mockResolvedValueOnce(undefined);
+        const ext = await importExtension();
+        await ext.activate(updaterContext(new Map()) as never);
+        await vi.waitFor(() => expect(mockDownloadAndValidate).toHaveBeenCalled());
+
+        expect(mockDownloadAndValidate).toHaveBeenCalledWith(
+          availableRelease,
+          { fsPath: "/global", scheme: "file" },
+          expect.objectContaining({ uriFactory: expect.any(Function) }),
+        );
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          "workbench.extensions.installExtension",
+          expect.objectContaining({ scheme: "file" }),
+        );
+        await vi.waitFor(() =>
+          expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" })),
+        );
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
+      });
+
+      it("reloads only after the separate restart confirmation", async () => {
+        vi.mocked(vscode.window.showInformationMessage)
+          .mockResolvedValueOnce("Update")
+          .mockResolvedValueOnce("Restart VS Code");
+        const ext = await importExtension();
+        await ext.activate(updaterContext(new Map()) as never);
+        await vi.waitFor(() =>
+          expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.reloadWindow"),
+        );
+        const commandNames = vi.mocked(vscode.commands.executeCommand).mock.calls.map(([command]) => command);
+        expect(commandNames.indexOf("workbench.extensions.installExtension")).toBeLessThan(
+          commandNames.indexOf("workbench.action.reloadWindow"),
+        );
+      });
+
+      it("reports a bounded download failure and keeps the manual retry command available", async () => {
+        mockDownloadAndValidate.mockResolvedValueOnce(undefined);
+        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Update");
+        const ext = await importExtension();
+        const context = updaterContext(new Map());
+        await ext.activate(context as never);
+        await vi.waitFor(() =>
+          expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+            "OpenCode Scribe could not install the update. Try again later.",
+          ),
+        );
+        expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+          "opencode-chat.checkForUpdates",
+          expect.anything(),
+        );
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
+      });
+
+      it("bounds installer rejection, cleans up the local artifact, and does not ask to reload", async () => {
+        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Update");
+        vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("installer rejected"));
+        const ext = await importExtension();
+        await ext.activate(updaterContext(new Map()) as never);
+
+        await vi.waitFor(() =>
+          expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+            "OpenCode Scribe could not install the update. Try again later.",
+          ),
+        );
+        expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" }));
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
+        expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+          "opencode-chat.checkForUpdates",
+          expect.anything(),
+        );
+      });
+
+      it("bounds reload rejection after cleanup and preserves the manual retry path", async () => {
+        vi.mocked(vscode.window.showInformationMessage)
+          .mockResolvedValueOnce("Update")
+          .mockResolvedValueOnce("Restart VS Code");
+        vi.mocked(vscode.commands.executeCommand)
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new Error("reload rejected"));
+        const ext = await importExtension();
+        await ext.activate(updaterContext(new Map()) as never);
+
+        await vi.waitFor(() =>
+          expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+            "OpenCode Scribe could not restart VS Code. Try again manually.",
+          ),
+        );
+        expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" }));
+        expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+          "opencode-chat.checkForUpdates",
+          expect.anything(),
+        );
+      });
+    });
+  });
+
   // ============================================================
   // activate - ENOENT エラー（opencode コマンドが見つからない）
   // ============================================================
@@ -1531,12 +1826,12 @@ describe("extension", () => {
   // ============================================================
 
   describe("deactivate()", () => {
-    it("should call agent.disconnect()", async () => {
+    it("does not construct an agent merely to deactivate unopened Chat", async () => {
       const ext = await importExtension();
 
       ext.deactivate();
 
-      expect(mockDisconnect).toHaveBeenCalled();
+      expect(mockDisconnect).not.toHaveBeenCalled();
     });
   });
 

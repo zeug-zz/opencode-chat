@@ -32,9 +32,16 @@ import { classifyConnectError } from "./connect-error";
 import { DEFAULT_MEMORY_RETENTION_SETTINGS, resolveMemoryRetentionStatus } from "./memory-retention-settings";
 import { promptForInitialNonoProfile, readSelectedNonoProfile, selectNonoProfile } from "./nono-profile-settings";
 import { discoverNonoProfiles, type NonoResolution, resolveNonoBackend } from "./nono-resolver";
+import {
+  type AvailablePrivateRelease,
+  abandonLocalInstaller,
+  checkForPrivateReleaseUpdates,
+  downloadAndValidatePrivateRelease,
+} from "./private-release-updater";
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
-let agent = new OpenCodeAgent();
+let agent!: OpenCodeAgent;
+let chatInitialization: Promise<ChatViewProvider | undefined> | undefined;
 let sandboxController: ChatSandboxController<ChatSandboxStatus> | undefined;
 let memoryProviderStatus: MemoryProviderStatus = {
   id: "none",
@@ -56,6 +63,92 @@ class McpInventoryError extends Error {
 process.on("exit", () => agent?.disconnect());
 
 export async function activate(context: vscode.ExtensionContext) {
+  // VS Code always supplies extension/globalState. The compatibility branch
+  // keeps lightweight host-test contexts working without weakening the real
+  // lazy lifecycle.
+  if (!context.extension && !context.globalState) {
+    const provider = await initializeChat(context);
+    if (!provider) return;
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider));
+    return;
+  }
+
+  const installedVersion = context.extension?.packageJSON?.version ?? "0.0.0";
+  const globalState = context.globalState ?? {
+    get: () => undefined,
+    update: async () => undefined,
+  };
+  const offerUpdate = async (release: AvailablePrivateRelease) => {
+    const action = await vscode.window.showInformationMessage(
+      `OpenCode Scribe update available: ${release.version}`,
+      "Update",
+      "View Release",
+    );
+    if (action === "View Release") {
+      await vscode.env.openExternal(vscode.Uri.parse("https://github.com/zeug-zz/opencode-chat/releases"));
+      return;
+    }
+    if (action !== "Update") return;
+
+    let installerUri: Awaited<ReturnType<typeof downloadAndValidatePrivateRelease>>;
+    try {
+      installerUri = await downloadAndValidatePrivateRelease(release, context.globalStorageUri, {
+        uriFactory: (filePath) => vscode.Uri.file(filePath),
+      });
+      if (!installerUri) throw new Error("release artifact validation failed");
+      await vscode.commands.executeCommand("workbench.extensions.installExtension", installerUri);
+    } catch {
+      vscode.window.showWarningMessage("OpenCode Scribe could not install the update. Try again later.");
+      return;
+    } finally {
+      if (installerUri) await abandonLocalInstaller(installerUri);
+    }
+
+    const reloadAction = await vscode.window.showInformationMessage(
+      "OpenCode Scribe was updated. Restart VS Code to finish.",
+      "Restart VS Code",
+    );
+    if (reloadAction !== "Restart VS Code") return;
+    try {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    } catch {
+      vscode.window.showWarningMessage("OpenCode Scribe could not restart VS Code. Try again manually.");
+    }
+  };
+  const checkForUpdates = (manual = false) =>
+    checkForPrivateReleaseUpdates({
+      installedVersion,
+      globalState,
+      manual,
+      announce: (release) => {
+        void offerUpdate(release).catch(() => {
+          vscode.window.showWarningMessage("OpenCode Scribe could not complete the update prompt. Try again later.");
+        });
+      },
+      reportNoUpdate: manual
+        ? () => {
+            vscode.window.showInformationMessage("OpenCode Scribe is up to date.");
+          }
+        : undefined,
+      reportFailure: manual
+        ? () => {
+            vscode.window.showWarningMessage("OpenCode Scribe could not check for updates.");
+          }
+        : undefined,
+    });
+  context.subscriptions.push(
+    vscode.commands.registerCommand("opencode-chat.checkForUpdates", () => checkForUpdates(true)),
+  );
+  void checkForUpdates().catch(() => undefined);
+
+  const lazyChatProvider = new LazyChatViewProvider(() => {
+    chatInitialization ??= initializeChat(context);
+    return chatInitialization;
+  });
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, lazyChatProvider));
+}
+
+async function initializeChat(context: vscode.ExtensionContext): Promise<ChatViewProvider | undefined> {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspaceFolder) {
     vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Scribe requires an open workspace folder."));
@@ -509,7 +602,6 @@ export async function activate(context: vscode.ExtensionContext) {
     onError: (error, status) => reportSandboxError(error, status),
   });
   chatViewProvider.publishChatSandboxStatus(initialSandboxStatus);
-  context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatViewProvider));
   // diff エディタ用の仮想ドキュメントプロバイダー。
   // URI のクエリ部分にエンコードされたコンテンツを返す。
   const diffContentProvider: vscode.TextDocumentContentProvider = {
@@ -557,11 +649,25 @@ export async function activate(context: vscode.ExtensionContext) {
   // (getPath, listSessions, etc.) with "OpenCode client is not connected".
   // Those errors are caught by ChatViewProvider.handleWebviewMessage and
   // logged. The webview shows an error surface rather than hanging silently.
+  return chatViewProvider;
+}
+
+class LazyChatViewProvider implements vscode.WebviewViewProvider {
+  constructor(private readonly resolveProvider: () => Promise<ChatViewProvider | undefined>) {}
+
+  async resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    context: vscode.WebviewViewResolveContext,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const provider = await this.resolveProvider();
+    provider?.resolveWebviewView(webviewView, context, token);
+  }
 }
 
 export function deactivate() {
   sandboxController = undefined;
-  agent.disconnect();
+  agent?.disconnect();
 }
 
 export function getMemoryProviderStatus(): MemoryProviderStatus {

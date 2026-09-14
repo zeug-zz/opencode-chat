@@ -2,5 +2,6 @@
   "displayName": "OpenCode Scribe",
   "description": "【实验性·非官方】与 OpenCode TUI 搭配使用的 VS Code OpenCode 研究与报告撰写扩展。本扩展主要通过 AI 辅助编码开发，按原样提供，不含任何保证。与 OpenCode 项目无关联或背书关系。",
   "configuration.nonoProfile": "Chat 的可选工作区范围自定义 nono 配置文件覆盖；默认使用内置的 opencode 配置文件。",
-  "command.selectNonoProfile": "OpenCode Scribe：选择 nono 配置文件"
+  "command.selectNonoProfile": "OpenCode Scribe：选择 nono 配置文件",
+  "command.checkForUpdates": "OpenCode Scribe：检查更新"
 }
