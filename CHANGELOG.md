@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-09-14
+
+### Changed
+
+- Aligned the React and React DOM runtime versions at 19.3.
+- Upgraded Mermaid to 12 and accepted its current defaults.
+- Raised the minimum VS Code engine version to ^1.137.0 to match the current VS Code type compatibility baseline.
+
+### Security
+
+- Restored SHA-pinned required CodeQL analysis for Dependabot and `main`.
+- Patched the transitive `lodash-es` audit path.
+
 ## [0.15.1] - 2026-09-14
 
 ### Changed
@@ -318,7 +331,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.5...v0.14.0
