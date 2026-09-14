@@ -19,6 +19,10 @@ type Props = {
   onForkFromCheckpoint: (messageId: string) => void;
 };
 
+function getQuestionsForMessage(questions: Map<string, QuestionRequest>, messageId: string) {
+  return new Map(Array.from(questions).filter(([, question]) => question.tool?.messageID === messageId));
+}
+
 export function MessagesArea({
   messages,
   sessionBusy,
@@ -30,7 +34,7 @@ export function MessagesArea({
   onForkFromCheckpoint,
 }: Props) {
   const t = useLocale();
-  const { containerRef, bottomRef, handleScroll, isNearBottom, scrollToBottom } = useAutoScroll(messages);
+  const { containerRef, bottomRef, handleScroll, isNearBottom, scrollToBottom } = useAutoScroll(messages, questions);
 
   return (
     <div ref={containerRef} className={styles.root} onScroll={handleScroll}>
@@ -47,7 +51,7 @@ export function MessagesArea({
               message={msg}
               activeSessionId={activeSessionId}
               showAllThinking={showAllThinking}
-              questions={questions}
+              questions={isAssistant ? getQuestionsForMessage(questions, msg.info.id) : new Map()}
               onEditAndResend={onEditAndResend}
             />
             {showCheckpoint && (

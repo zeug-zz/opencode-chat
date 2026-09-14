@@ -58,10 +58,12 @@ make its tools safe or grant them generally to Chat agents.
 ## Optional Memory Provider and Retention
 
 Memory integration is capability-gated and process-scoped. The companion does
-not inherit the independent TUI's global plugin list or execute arbitrary
-configured plugins. The current approved adapter requires the exact Hindsight
-coding-agent package identity and exposes only exact verified recall/search and
-reflection tools to Chat/Scout and Write/Build.
+not rewrite the independent TUI's configuration. It preserves supported global
+and project plugin entries in the companion's process-scoped overlay; those
+plugins are trusted companion-process code, not isolated MCP children. The
+current approved adapter requires the exact Hindsight coding-agent package
+identity and exposes only exact verified recall/search and reflection tools to
+Chat/Scout and Write/Build.
 
 Explicit retention is a separate durable write. It is available only when the
 workspace policy enables it, the approved provider reports `retain`, and the
@@ -83,6 +85,51 @@ fails, the companion remains usable with ordinary OpenCode context and
 applicable `AGENTS.md` guidance. `AGENTS.md` is project policy, not durable
 memory, and retrieved/provider content remains untrusted evidence rather than
 instruction authority.
+
+### External nono backend and Hindsight tiers
+
+`nono` is optional external tooling. Scribe does not bundle, install, configure,
+or modify `nono`, its profiles, or OpenCode/Hindsight configuration. On
+supported macOS/Linux, profiles are discovered from
+`$XDG_CONFIG_HOME/nono/profiles` (default `~/.config/nono/profiles`). Enabled
+Chat sandboxing uses the validated built-in `opencode` profile by default. When
+custom profiles are discovered and no choice is stored, Scribe shows one
+nonblocking picker; selecting a custom name, such as `opencode-local`, is
+optional, and dismissal/default keeps `opencode`. Scribe stores only an explicit
+resulting name, never parses profile JSON, and never auto-selects a custom
+profile. Both a valid default and a valid custom profile use native Hindsight;
+the effective profile must pass this preflight before each companion launch:
+
+```sh
+nono profile show <name>
+```
+
+Only an unavailable/non-executable nono or an executable/profile preflight
+failure before launch selects the existing VS Code compatibility sandbox. That
+fallback provides only the exact recall tools
+`hindsight_search_knowledge_pages`, `hindsight_list_knowledge_pages`, and
+`hindsight_read_knowledge_page` when all are detected; reflection, writes,
+capture, diagnostics, synchronization, automatic retention, and lifecycle
+operations remain unavailable. A nono startup or runtime failure after nono has
+been selected fails closed; it does not downgrade to the compatibility sandbox
+or an unsandboxed companion.
+
+Nono and the VS Code compatibility sandbox are separate enforcement policies;
+Scribe does not claim that they are equivalent without opt-in verification in
+the target environment. The integration check is off by default and may be run
+only with explicit operator/disposable-environment authorization:
+
+```sh
+OPENCODE_CHAT_RUN_NONO_INTEGRATION=1 \
+OPENCODE_CHAT_NONO_PROFILE=opencode \
+pnpm --filter @opencode-chat/agent-opencode test
+```
+
+To test an explicitly selected custom profile, replace `opencode` with that
+discovered profile name.
+
+`OPENCODE_CHAT_RUN_NONO_NETWORK=1` is an additional opt-in only for the optional
+network check. These checks do not modify profiles or configuration.
 
 ## Extension Write Boundary and Coding Handoff
 

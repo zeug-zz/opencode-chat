@@ -39,6 +39,8 @@ import type {
 } from "@opencode-chat/core";
 import { SandboxManager, type SandboxRuntimeConfig } from "@vscode/sandbox-runtime";
 import {
+  HINDSIGHT_APPROVED_TOOL_IDS,
+  HINDSIGHT_CONFIRMATION_TOOL_IDS,
   HINDSIGHT_DISABLE_HOOKS_ENV,
   HINDSIGHT_RECALL_TOOL_IDS,
   HINDSIGHT_REFLECT_TOOL_IDS,
@@ -131,27 +133,54 @@ function buildChatOverlay(
   hindsightCompanionIntegration: OpenCodeLaunchConfiguration["hindsightCompanionIntegration"] = undefined,
   retentionPolicy?: MemoryRetentionPolicy,
   pluginFree = false,
+  backend?: OpenCodeLaunchConfiguration["backend"],
 ): Record<string, unknown> {
-  const safeHindsightToolPatterns = new Set<string>([...HINDSIGHT_RECALL_TOOL_IDS, ...HINDSIGHT_REFLECT_TOOL_IDS]);
+  // Only the verified external nono boundary may receive provider-mutating
+  // operations or native lifecycle authority. The SDK path is not an
+  // equivalent security boundary, even when sandboxing is explicitly off.
+  const nativeBackend = backend === "nono";
+  const safeHindsightToolPatterns = new Set<string>(
+    nativeBackend ? HINDSIGHT_APPROVED_TOOL_IDS : HINDSIGHT_RECALL_TOOL_IDS,
+  );
   const approvedHindsightIntegration =
     hindsightCompanionIntegration?.packageName === APPROVED_HINDSIGHT_PACKAGE
       ? hindsightCompanionIntegration
       : undefined;
-  const hindsightPermissions = (approvedHindsightIntegration?.toolPatterns ?? [])
+  const hindsightPermissions = (
+    nativeBackend
+      ? (approvedHindsightIntegration?.nativeToolPatterns ?? approvedHindsightIntegration?.toolPatterns ?? [])
+      : (approvedHindsightIntegration?.toolPatterns ?? [])
+  )
     .filter((toolPattern) => safeHindsightToolPatterns.has(toolPattern))
+    .filter(
+      (toolPattern) =>
+        !nativeBackend ||
+        !HINDSIGHT_CONFIRMATION_TOOL_IDS.includes(toolPattern as (typeof HINDSIGHT_CONFIRMATION_TOOL_IDS)[number]),
+    )
     .reduce<Record<string, "allow">>((permissions, toolPattern) => {
       permissions[toolPattern] = "allow";
       return permissions;
     }, {});
   const retentionPermission =
-    retentionPolicy?.enabled === true
+    nativeBackend && retentionPolicy?.enabled === true
       ? approvedHindsightIntegration?.retentionPermission?.[HINDSIGHT_RETENTION_TOOL_ID]
       : undefined;
+  const confirmationPermissions = nativeBackend
+    ? Object.fromEntries(
+        HINDSIGHT_CONFIRMATION_TOOL_IDS.filter(
+          (toolId) => approvedHindsightIntegration?.confirmationPermissions?.[toolId],
+        ).map((toolId) => [toolId, "ask"]),
+      )
+    : {};
   const safeRetentionPermissions =
     retentionPermission === "ask" || retentionPermission === "allow"
       ? { [HINDSIGHT_RETENTION_TOOL_ID]: retentionPermission }
       : {};
-  const mergedHindsightPermissions = { ...hindsightPermissions, ...safeRetentionPermissions };
+  const mergedHindsightPermissions = {
+    ...hindsightPermissions,
+    ...confirmationPermissions,
+    ...safeRetentionPermissions,
+  };
   const composedPluginSources = [...(pluginSources ?? [])];
   if (
     approvedHindsightIntegration &&
@@ -188,26 +217,40 @@ function buildChatOverlay(
   };
 }
 
+function clearHindsightEnvironment(environment: NodeJS.ProcessEnv): void {
+  for (const key of Object.keys(environment)) {
+    if (key.startsWith("HINDSIGHT_")) delete environment[key];
+  }
+}
+
 async function createUnsandboxedServer(
   config: Record<string, unknown>,
   hindsightCompanionIntegration: OpenCodeLaunchConfiguration["hindsightCompanionIntegration"],
   pluginFree: boolean,
+  backend?: OpenCodeLaunchConfiguration["backend"],
 ): Promise<Awaited<ReturnType<typeof createOpencodeServer>>> {
-  const previousValue = process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
-  const lifecycleEnvironment = pluginFree ? undefined : hindsightCompanionIntegration?.environment;
+  const previousHindsightEnvironment = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => key.startsWith("HINDSIGHT_")),
+  );
+  if (pluginFree) clearHindsightEnvironment(process.env);
+  const lifecycleEnvironment =
+    backend === "nono" && !pluginFree ? hindsightCompanionIntegration?.environment : undefined;
   const lifecycleValue =
     lifecycleEnvironment?.[HINDSIGHT_DISABLE_HOOKS_ENV] ??
-    (pluginFree || !hindsightCompanionIntegration ? "1" : undefined);
+    (pluginFree || backend !== "nono" || !hindsightCompanionIntegration ? "1" : undefined);
   if (lifecycleValue === undefined) delete process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
   else process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = lifecycleValue;
   try {
     const serverPromise = createOpencodeServer({ port: 0, config });
     return serverPromise;
   } finally {
-    if (previousValue === undefined) {
+    if (pluginFree) {
+      clearHindsightEnvironment(process.env);
+      Object.assign(process.env, previousHindsightEnvironment);
+    } else if (previousHindsightEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV] === undefined) {
       delete process.env[HINDSIGHT_DISABLE_HOOKS_ENV];
     } else {
-      process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = previousValue;
+      process.env[HINDSIGHT_DISABLE_HOOKS_ENV] = previousHindsightEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV];
     }
   }
 }
@@ -237,6 +280,7 @@ type SandboxChildExit = {
 };
 
 type StartupFailure = Error & { pluginFallbackEligible?: boolean };
+type ChildBackend = "nono" | "vscode";
 
 function appendDiagnosticTail(current: string, chunk: string): string {
   const value = current + chunk;
@@ -320,16 +364,22 @@ function logSandboxDiagnostic(stage: string, diagnostic: string): void {
   console.error(boundDiagnostic(`[opencode-chat] sandbox diagnostic (${stage}): ${diagnostic}`));
 }
 
-function formatOutput(output: BoundedOutput, command?: string): string {
-  const stderr = command ? SandboxManager.annotateStderrWithSandboxFailures(command, output.stderr) : output.stderr;
+function formatOutput(output: BoundedOutput, backend: ChildBackend, command?: string): string {
+  const stderr =
+    backend === "vscode" && command
+      ? SandboxManager.annotateStderrWithSandboxFailures(command, output.stderr)
+      : output.stderr;
   const parts = [
     output.stdout && `stdout:\n${redactDiagnostic(output.stdout)}`,
     stderr && `stderr:\n${redactDiagnostic(stderr)}`,
   ].filter(Boolean);
-  return parts.length ? `\nCaptured sandboxed OpenCode output:\n${parts.join("\n")}` : "";
+  return parts.length
+    ? `\nCaptured ${backend === "nono" ? "nono" : "sandboxed"} OpenCode output:\n${parts.join("\n")}`
+    : "";
 }
 
-function formatSandboxViolations(command?: string): string {
+function formatSandboxViolations(backend: ChildBackend, command?: string): string {
+  if (backend !== "vscode") return "";
   const store = SandboxManager.getSandboxViolationStore();
   const exactViolations = command ? store.getViolationsForCommand(command) : [];
   const violations = exactViolations.length ? exactViolations : store.getViolations(8);
@@ -441,14 +491,15 @@ function waitForLoopbackUrl(
   child: ChildProcess,
   workspacePath: string,
   output: BoundedOutput,
-  command: string,
+  backend: ChildBackend,
+  command?: string,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const startupError = (reason: string) =>
       new Error(
-        `Sandboxed OpenCode startup failed while waiting for loopback readiness at 127.0.0.1 ` +
-          `(workspace=${workspacePath}, readiness=not-ready): ${reason}${formatOutput(output, command)}${formatSandboxViolations(command)}`,
+        `${backend === "nono" ? "Nono" : "Sandboxed"} OpenCode startup failed while waiting for loopback readiness at 127.0.0.1 ` +
+          `(workspace=${workspacePath}, readiness=not-ready): ${reason}${formatOutput(output, backend, command)}${formatSandboxViolations(backend, command)}`,
       );
     const finish = (callback: () => void) => {
       if (settled) return;
@@ -495,6 +546,7 @@ export class OpenCodeAgent implements IAgent {
   private sandboxCommand: string | undefined;
   private sandboxChildReady = false;
   private sandboxChildExit: SandboxChildExit | undefined;
+  private reconnectPromise: Promise<void> | undefined;
 
   constructor(launchConfiguration?: OpenCodeLaunchConfiguration) {
     this.launchConfiguration = launchConfiguration;
@@ -505,7 +557,11 @@ export class OpenCodeAgent implements IAgent {
   }
 
   private isSandboxDiagnosticsActive(): boolean {
-    return Boolean(this.launchConfiguration?.sandbox.enabled && SandboxManager.isSupportedPlatform());
+    return Boolean(
+      (this.launchConfiguration?.backend === "nono" ||
+        (this.launchConfiguration?.backend !== "sdk" && this.launchConfiguration?.sandbox.enabled)) &&
+        (this.launchConfiguration?.backend === "nono" || SandboxManager.isSupportedPlatform()),
+    );
   }
 
   // --- Capability declaration ---
@@ -532,6 +588,10 @@ export class OpenCodeAgent implements IAgent {
   // --- Lifecycle ---
 
   async connect(): Promise<void> {
+    if (this.launchConfiguration?.backend === "nono") {
+      await this.connectWithPluginFallback(true, true);
+      return;
+    }
     if (this.launchConfiguration?.sandbox.enabled && SandboxManager.isSupportedPlatform()) {
       await this.connectWithPluginFallback(true, true);
       return;
@@ -596,16 +656,14 @@ export class OpenCodeAgent implements IAgent {
         hindsightCompanionIntegration,
         pluginFree ? undefined : this.launchConfiguration?.memoryRetentionPolicy,
         pluginFree,
+        this.launchConfiguration?.backend,
       ),
       hindsightCompanionIntegration,
       pluginFree,
+      this.launchConfiguration?.backend,
     );
     try {
-      this.server = server;
-      this.client = createOpencodeClient({
-        baseUrl: server.url,
-      });
-      this.subscribeToEvents();
+      await this.attachClient(server.url, () => server.close());
     } catch (error) {
       this.server = undefined;
       this.client = undefined;
@@ -618,6 +676,18 @@ export class OpenCodeAgent implements IAgent {
     const configuration = this.launchConfiguration;
     if (!configuration) {
       throw new Error("Sandboxed OpenCode launch requires a launch configuration.");
+    }
+
+    const nonoLaunch = configuration.backend === "nono" ? configuration.nono : undefined;
+    if (
+      configuration.backend === "nono" &&
+      (!nonoLaunch ||
+        typeof nonoLaunch.executablePath !== "string" ||
+        !nonoLaunch.executablePath ||
+        typeof nonoLaunch.profile !== "string" ||
+        !nonoLaunch.profile)
+    ) {
+      throw new Error("Nono OpenCode launch requires a resolved executable and profile.");
     }
 
     const networkPolicy = configuration.sandbox.networkPolicy;
@@ -644,35 +714,65 @@ export class OpenCodeAgent implements IAgent {
 
     let pluginFallbackEligible = false;
     try {
-      this.sandboxRuntimeInitialized = true;
-      const violationStore = SandboxManager.getSandboxViolationStore();
-      violationStore.clear();
-      await SandboxManager.initialize(runtimeConfig, undefined, true);
-      const command = [
-        configuration.executable.path,
-        ...(configuration.executable.args ?? []),
-        "serve",
-        "--hostname",
-        "127.0.0.1",
-        "--port",
-        "0",
-      ]
-        .map(shellQuote)
-        .join(" ");
-      const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
+      if (!nonoLaunch) {
+        this.sandboxRuntimeInitialized = true;
+        const violationStore = SandboxManager.getSandboxViolationStore();
+        violationStore.clear();
+        await SandboxManager.initialize(runtimeConfig, undefined, true);
+      }
+      let command: string | undefined;
+      let childCommand: string;
+      if (nonoLaunch) {
+        childCommand = nonoLaunch.executablePath;
+      } else {
+        command = [
+          configuration.executable.path,
+          ...(configuration.executable.args ?? []),
+          "serve",
+          "--hostname",
+          "127.0.0.1",
+          "--port",
+          "0",
+        ]
+          .map(shellQuote)
+          .join(" ");
+        childCommand = await SandboxManager.wrapWithSandbox(command);
+      }
+      const childArgs = nonoLaunch
+        ? [
+            "wrap",
+            "--profile",
+            nonoLaunch.profile,
+            "--allow-cwd",
+            "--",
+            configuration.executable.path,
+            ...(configuration.executable.args ?? []),
+            "serve",
+            "--hostname",
+            "127.0.0.1",
+            "--port",
+            "0",
+          ]
+        : undefined;
       const output: BoundedOutput = { stdout: "", stderr: "" };
       this.sandboxDiagnosticOutput = output;
-      this.sandboxCommand = command;
+      this.sandboxCommand = nonoLaunch ? undefined : command;
       this.sandboxChildReady = false;
       this.sandboxChildExit = undefined;
       const childEnvironment = { ...process.env };
-      const lifecycleEnvironment = pluginFree ? undefined : configuration.hindsightCompanionIntegration?.environment;
+      if (pluginFree) clearHindsightEnvironment(childEnvironment);
+      const lifecycleEnvironment =
+        pluginFree || configuration.backend !== "nono"
+          ? undefined
+          : configuration.hindsightCompanionIntegration?.environment;
       const lifecycleValue =
         lifecycleEnvironment?.[HINDSIGHT_DISABLE_HOOKS_ENV] ??
-        (pluginFree || !configuration.hindsightCompanionIntegration ? "1" : undefined);
+        (pluginFree || configuration.backend !== "nono" || !configuration.hindsightCompanionIntegration
+          ? "1"
+          : undefined);
       if (lifecycleValue === undefined) delete childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV];
       else childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV] = lifecycleValue;
-      const child = spawn(wrappedCommand, {
+      const spawnOptions = {
         cwd: configuration.workspacePath,
         env: {
           ...childEnvironment,
@@ -684,24 +784,22 @@ export class OpenCodeAgent implements IAgent {
               pluginFree ? undefined : configuration.hindsightCompanionIntegration,
               pluginFree ? undefined : configuration.memoryRetentionPolicy,
               pluginFree,
+              configuration.backend,
             ),
           ),
         },
         detached: true,
-        shell: true,
+        shell: !nonoLaunch,
         stdio: ["ignore", "pipe", "pipe"],
-      });
+      } as const;
+      const child = nonoLaunch ? spawn(childCommand, childArgs ?? [], spawnOptions) : spawn(childCommand, spawnOptions);
       pluginFallbackEligible = true;
       this.sandboxedChild = child;
       this.sandboxedChildStopping = false;
-      const url = await waitForLoopbackUrl(child, configuration.workspacePath, output, command);
+      const backend: ChildBackend = nonoLaunch ? "nono" : "vscode";
+      const url = await waitForLoopbackUrl(child, configuration.workspacePath, output, backend, command);
       this.sandboxChildReady = true;
-      this.server = {
-        url,
-        close: () => undefined,
-      };
-      this.client = createOpencodeClient({ baseUrl: url });
-      this.subscribeToEvents();
+      await this.attachClient(url);
       child.once("exit", (code, signal) => {
         if (this.sandboxedChild !== child) return;
         this.sandboxChildExit = { code, signal };
@@ -712,32 +810,40 @@ export class OpenCodeAgent implements IAgent {
         this.sseAbortController = undefined;
         if (!expected) {
           const diagnostic =
-            `Sandboxed OpenCode companion exited unexpectedly after readiness (companion, code=${code}, signal=${signal ?? "none"}); ` +
-            `Chat is unavailable.${formatOutput(output, command)}${formatSandboxViolations(command)}`;
-          logSandboxDiagnostic("companion exit", diagnostic);
+            `${backend === "nono" ? "Nono" : "Sandboxed"} OpenCode companion exited unexpectedly after readiness ` +
+            `(companion, code=${code}, signal=${signal ?? "none"}); Chat is unavailable.` +
+            `${formatOutput(output, backend, command)}${formatSandboxViolations(backend, command)}`;
+          logSandboxDiagnostic(backend === "nono" ? "nono companion exit" : "companion exit", diagnostic);
           this.onAvailabilityError?.(new Error(diagnostic));
         }
         void this.cleanupSandboxResources(child);
       });
     } catch (error) {
+      this.sseAbortController?.abort();
+      this.sseAbortController = undefined;
+      this.server = undefined;
+      this.client = undefined;
       await this.cleanupSandboxResources();
       const message = error instanceof Error ? error.message : String(error);
-      const startupDiagnostic = /Captured sandboxed OpenCode output|Sandbox violations/.test(message)
+      const startupDiagnostic = /Captured (?:nono|sandboxed) OpenCode output|Sandbox violations/.test(message)
         ? message
-        : `${message}${formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand)}${formatSandboxViolations(this.sandboxCommand)}`;
+        : `${message}${formatOutput(this.sandboxDiagnosticOutput, nonoLaunch ? "nono" : "vscode", this.sandboxCommand)}${formatSandboxViolations(
+            nonoLaunch ? "nono" : "vscode",
+            this.sandboxCommand,
+          )}`;
       const pluginContext =
         !pluginFree && configuration.pluginSources?.length
           ? " Inherited plugin loading/readiness may have failed; no plugin-free retry has completed."
           : "";
       logSandboxDiagnostic(
         "startup/readiness",
-        `Sandboxed OpenCode startup failed:${pluginContext} ${startupDiagnostic}`,
+        `${nonoLaunch ? "Nono" : "Sandboxed"} OpenCode startup failed:${pluginContext} ${startupDiagnostic}`,
       );
       const startupFailure = new Error(
         boundDiagnostic(
-          `Sandboxed OpenCode startup failed; no unsandboxed fallback was started.${pluginContext} ${redactDiagnostic(
-            startupDiagnostic,
-          )}`,
+          `${nonoLaunch ? "Nono" : "Sandboxed"} OpenCode startup failed; ${
+            nonoLaunch ? "no backend downgrade" : "no unsandboxed fallback"
+          } was started.${pluginContext} ${redactDiagnostic(startupDiagnostic)}`,
         ),
       ) as StartupFailure;
       startupFailure.pluginFallbackEligible = pluginFallbackEligible;
@@ -750,8 +856,18 @@ export class OpenCodeAgent implements IAgent {
   }
 
   async reconnect(): Promise<void> {
-    await this.stopForReconnect();
-    await this.connect();
+    const previous = this.reconnectPromise ?? Promise.resolve();
+    const run = async () => {
+      await this.stopForReconnect();
+      await this.connect();
+    };
+    const current = this.reconnectPromise ? previous.catch(() => undefined).then(run) : run();
+    this.reconnectPromise = current;
+    try {
+      await current;
+    } finally {
+      if (this.reconnectPromise === current) this.reconnectPromise = undefined;
+    }
   }
 
   async stopForReconnect(): Promise<void> {
@@ -813,6 +929,12 @@ export class OpenCodeAgent implements IAgent {
 
   /** Resubscribe to SSE stream (e.g. after config change) */
   async resubscribeEvents(): Promise<void> {
+    await this.subscribeToEvents();
+  }
+
+  private async attachClient(url: string, close: () => void = () => undefined): Promise<void> {
+    this.server = { url, close };
+    this.client = createOpencodeClient({ baseUrl: url });
     await this.subscribeToEvents();
   }
 
@@ -1136,8 +1258,9 @@ export class OpenCodeAgent implements IAgent {
     });
     const mapped = mapMcpStatus(response.data!);
     if (!this.launchConfiguration?.sandbox.enabled || !SandboxManager.isSupportedPlatform()) return mapped;
-    const output = formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand);
-    const violations = formatSandboxViolations(this.sandboxCommand);
+    const backend: ChildBackend = this.launchConfiguration?.backend === "nono" ? "nono" : "vscode";
+    const output = formatOutput(this.sandboxDiagnosticOutput, backend, this.sandboxCommand);
+    const violations = formatSandboxViolations(backend, this.sandboxCommand);
     const transports = this.launchConfiguration?.mcpTransport ?? {};
     for (const [server, status] of Object.entries(mapped)) {
       if (!status.connected && status.status !== "disabled") {
@@ -1171,8 +1294,17 @@ export class OpenCodeAgent implements IAgent {
             message,
             this.sandboxChildReady ? "ready" : "not-ready",
             this.sandboxChildExit,
-            formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand),
-            transport === "stdio" ? formatSandboxViolations(this.sandboxCommand) : "",
+            formatOutput(
+              this.sandboxDiagnosticOutput,
+              this.launchConfiguration?.backend === "nono" ? "nono" : "vscode",
+              this.sandboxCommand,
+            ),
+            transport === "stdio"
+              ? formatSandboxViolations(
+                  this.launchConfiguration?.backend === "nono" ? "nono" : "vscode",
+                  this.sandboxCommand,
+                )
+              : "",
             transport,
             "connect",
           ),
@@ -1197,8 +1329,17 @@ export class OpenCodeAgent implements IAgent {
             message,
             this.sandboxChildReady ? "ready" : "not-ready",
             this.sandboxChildExit,
-            formatOutput(this.sandboxDiagnosticOutput, this.sandboxCommand),
-            transport === "stdio" ? formatSandboxViolations(this.sandboxCommand) : "",
+            formatOutput(
+              this.sandboxDiagnosticOutput,
+              this.launchConfiguration?.backend === "nono" ? "nono" : "vscode",
+              this.sandboxCommand,
+            ),
+            transport === "stdio"
+              ? formatSandboxViolations(
+                  this.launchConfiguration?.backend === "nono" ? "nono" : "vscode",
+                  this.sandboxCommand,
+                )
+              : "",
             transport,
             "disconnect",
           ),

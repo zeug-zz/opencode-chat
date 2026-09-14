@@ -30,6 +30,8 @@ import { resolveChatSandboxSettings, updateChatSandboxSettings } from "./chat-sa
 import { ChatViewProvider } from "./chat-view-provider";
 import { classifyConnectError } from "./connect-error";
 import { DEFAULT_MEMORY_RETENTION_SETTINGS, resolveMemoryRetentionStatus } from "./memory-retention-settings";
+import { promptForInitialNonoProfile, readSelectedNonoProfile, selectNonoProfile } from "./nono-profile-settings";
+import { discoverNonoProfiles, type NonoResolution, resolveNonoBackend } from "./nono-resolver";
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent = new OpenCodeAgent();
@@ -64,6 +66,19 @@ export async function activate(context: vscode.ExtensionContext) {
   const memoryRetentionSettings = DEFAULT_MEMORY_RETENTION_SETTINGS;
   const chatMcpPrefs = new VscodeChatMcpPrefsStore(context.workspaceState);
   const sandboxSettings = resolveChatSandboxSettings(workspaceUri);
+  const storedNonoProfile = readSelectedNonoProfile(workspaceUri);
+  let initialCustomProfiles: string[] = [];
+  if (
+    sandboxSettings.enabled &&
+    !storedNonoProfile &&
+    (process.platform === "darwin" || process.platform === "linux")
+  ) {
+    initialCustomProfiles = await discoverNonoProfiles();
+  }
+  let selectedLaunchResolution: NonoResolution = await resolveNonoBackend(sandboxSettings.enabled, {
+    selectedProfile: storedNonoProfile,
+  });
+  let selectedLaunchBackend = selectedLaunchResolution.backend;
   const executablePath = resolveOpencodeBinary();
   const resolvedExecutablePath = path.isAbsolute(executablePath) ? executablePath : undefined;
   const extensionPath = context.extensionPath ?? context.extensionUri.fsPath;
@@ -180,6 +195,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (recordAsInitialLaunch) initialLaunchProviderAvailable = providerPathsAvailable;
     return {
       workspacePath: workspaceFolder,
+      backend: selectedLaunchBackend,
       sandbox: {
         mode: settings.enabled ? "on" : "off",
         enabled: settings.enabled,
@@ -196,6 +212,16 @@ export async function activate(context: vscode.ExtensionContext) {
       mcpTransport,
       ...(Object.keys(guidanceOverlay).length ? { guidanceOverlay } : {}),
       memoryRetentionPolicy: memoryRetentionSettings.policy,
+      ...(selectedLaunchResolution.backend === "nono" &&
+      selectedLaunchResolution.executablePath &&
+      selectedLaunchResolution.profile
+        ? {
+            nono: {
+              executablePath: selectedLaunchResolution.executablePath,
+              profile: selectedLaunchResolution.profile,
+            },
+          }
+        : {}),
       ...(hindsightIntegration && providerPathsAvailable
         ? { hindsightCompanionIntegration: hindsightIntegration }
         : {}),
@@ -224,6 +250,7 @@ export async function activate(context: vscode.ExtensionContext) {
         observedToolIds,
         hindsightResolution,
         memoryRetentionSettings.policy,
+        selectedLaunchBackend,
       );
       // A lifecycle integration is usable only when the normalized provider
       // status explicitly advertises that capability. Explicit recall/reflect
@@ -352,6 +379,7 @@ export async function activate(context: vscode.ExtensionContext) {
         observedToolIds,
         hindsightResolution,
         memoryRetentionSettings.policy,
+        selectedLaunchBackend,
       );
       const verifiedIntegration =
         result.integration &&
@@ -402,6 +430,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const platformServices = new VscodePlatformServices();
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand("opencode-chat.selectNonoProfile", () => selectNonoProfile(workspaceUri)),
+  );
+
   let panelUpdateInProgress = false;
   let lastResolvedKey = resolvedSettingsKey(sandboxSettings);
   chatViewProvider = new ChatViewProvider(context.extensionUri, agent, platformServices, {
@@ -435,6 +467,12 @@ export async function activate(context: vscode.ExtensionContext) {
     stop: () => agent.stopForReconnect(),
     start: async (settings) => {
       const resolved = resolveChatSandboxSettings(workspaceUri);
+      // Re-resolve only when a new settings transition creates a connection;
+      // reconnects within that connection retain the selected discriminant.
+      selectedLaunchResolution = await resolveNonoBackend(resolved.enabled, {
+        selectedProfile: readSelectedNonoProfile(workspaceUri),
+      });
+      selectedLaunchBackend = selectedLaunchResolution.backend;
       let mcpOverlay: ReturnType<typeof buildMcpOverlay>;
       let mcpTransport: OpenCodeLaunchConfiguration["mcpTransport"];
       try {
@@ -492,19 +530,26 @@ export async function activate(context: vscode.ExtensionContext) {
         event.affectsConfiguration("opencode-chat.chatSandbox.mode", workspaceUri) ||
         event.affectsConfiguration("opencode-chat.chatSandbox.allowNetwork", workspaceUri);
       const nativeChanged = event.affectsConfiguration("chat.agent.sandbox.enabled", workspaceUri);
-      if (!chatChanged && !nativeChanged) return;
+      const nonoChanged = event.affectsConfiguration("opencode-chat.nono.profile", workspaceUri);
+      if (!chatChanged && !nativeChanged && !nonoChanged) return;
       if (panelUpdateInProgress) return;
 
       const resolved = resolveChatSandboxSettings(workspaceUri);
-      if (nativeChanged && !chatChanged && resolved.mode !== "inherit") return;
+      if (nativeChanged && !chatChanged && !nonoChanged && resolved.mode !== "inherit") return;
       const nextKey = resolvedSettingsKey(resolved);
-      if (nextKey === lastResolvedKey) return;
+      if (nextKey === lastResolvedKey && !nonoChanged) return;
       lastResolvedKey = nextKey;
       void sandboxController?.update(resolved).catch((error) => {
         console.error("[OpenCode] Failed to apply sandbox configuration change:", error);
       });
     }),
   );
+
+  // Start the optional picker only after the connection and its setting
+  // listener exist, so an explicit custom choice can reconnect immediately.
+  if (initialCustomProfiles.length > 0) {
+    void promptForInitialNonoProfile(workspaceUri, initialCustomProfiles).catch(() => undefined);
+  }
 
   // When connectFailed is true (database-locked or other non-ENOENT), the agent
   // has no client. The webview provider is still registered so the sidebar is

@@ -13,7 +13,78 @@ vi.mock("node:fs", () => ({
 vi.mock("node:child_process", () => ({ execFile: execFileMock }));
 
 import * as vscode from "vscode";
-import { VscodePlatformServices } from "../vscode-platform-services";
+import { resolveTabInputFile, VscodePlatformServices } from "../vscode-platform-services";
+
+describe("resolveTabInputFile", () => {
+  const workspaceFolder = { fsPath: "/workspace", scheme: "file" } as vscode.Uri;
+  const fileUri = (fsPath: string, scheme = "file") => ({ fsPath, scheme }) as vscode.Uri;
+
+  it.each([
+    ["text", new vscode.TabInputText(fileUri("/workspace/src/main.ts"))],
+    ["custom", new vscode.TabInputCustom(fileUri("/workspace/docs/guide.md"), "office-viewer")],
+  ])("resolves a file-backed %s tab", (_kind, input) => {
+    const resolved = resolveTabInputFile(input, workspaceFolder);
+
+    expect(resolved).toEqual({
+      uri: input.uri,
+      attachment: {
+        filePath: input.uri.fsPath.endsWith("main.ts") ? "src/main.ts" : "docs/guide.md",
+        fileName: input.uri.fsPath.endsWith("main.ts") ? "main.ts" : "guide.md",
+      },
+    });
+  });
+
+  it.each([
+    undefined,
+    {},
+    { uri: undefined },
+    { uri: fileUri("/workspace/docs/guide.md", "untitled") },
+    { uri: fileUri("") },
+    { uri: fileUri("   ") },
+  ])("rejects unusable tab input %# without throwing", (input) => {
+    expect(() => resolveTabInputFile(input as never, workspaceFolder)).not.toThrow();
+    expect(resolveTabInputFile(input as never, workspaceFolder)).toBeUndefined();
+  });
+});
+
+describe("VscodePlatformServices open editors", () => {
+  const fileUri = (fsPath: string, scheme = "file") => ({ fsPath, scheme }) as vscode.Uri;
+
+  beforeEach(() => {
+    vi.mocked(vscode.workspace).workspaceFolders = [{ uri: fileUri("/workspace") }];
+    vi.mocked(vscode.window).tabGroups.all = [];
+  });
+
+  it("includes file-backed custom Markdown tabs and ordinary text tabs once", async () => {
+    vi.mocked(vscode.window).tabGroups.all = [
+      {
+        tabs: [
+          { input: new vscode.TabInputCustom(fileUri("/workspace/docs/guide.md"), "office-viewer") },
+          { input: new vscode.TabInputText(fileUri("/workspace/src/main.ts")) },
+          { input: new vscode.TabInputText(fileUri("/workspace/docs/guide.md")) },
+        ],
+      },
+    ];
+
+    await expect(new VscodePlatformServices().getOpenEditors()).resolves.toEqual([
+      { filePath: "docs/guide.md", fileName: "guide.md" },
+      { filePath: "src/main.ts", fileName: "main.ts" },
+    ]);
+  });
+
+  it("omits non-file and missing-URI custom tabs without inspecting their content", async () => {
+    vi.mocked(vscode.window).tabGroups.all = [
+      {
+        tabs: [
+          { input: new vscode.TabInputCustom(fileUri("/workspace/docs/guide.md", "untitled"), "custom-webview") },
+          { input: new vscode.TabInputCustom(undefined as never, "custom-webview") },
+        ],
+      },
+    ];
+
+    await expect(new VscodePlatformServices().getOpenEditors()).resolves.toEqual([]);
+  });
+});
 
 describe("VscodePlatformServices terminal handoff", () => {
   const resolvedBinary = "/Users/test/.opencode/bin/opencode";

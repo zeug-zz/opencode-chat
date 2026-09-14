@@ -8,6 +8,17 @@ const harness = vi.hoisted(() => ({
   stopForReconnect: vi.fn().mockResolvedValue(undefined),
   updateLaunchConfiguration: vi.fn(),
   launchConfigurations: [] as unknown[],
+  backend: "vscode" as "nono" | "vscode",
+}));
+
+vi.mock("../nono-resolver", () => ({
+  resolveNonoBackend: vi.fn(() =>
+    Promise.resolve(
+      harness.backend === "nono"
+        ? { backend: "nono", executablePath: "/opt/nono", profile: "opencode", diagnostic: "resolved-and-preflighted" }
+        : { backend: "vscode", diagnostic: "preflight-failed" },
+    ),
+  ),
 }));
 
 vi.mock("@opencode-chat/agent-opencode", async () => {
@@ -79,160 +90,164 @@ function createWebview() {
 }
 
 describe("Chat MCP config ownership", () => {
-  it("does not write config files across a toggle and companion restart", async () => {
-    await mkdir("tmp", { recursive: true });
-    const fixtureRoot = await mkdtemp("tmp/chat-mcp-no-write-");
-    const previousEnvironment = {
-      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
-      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-      TMPDIR: process.env.TMPDIR,
-    };
-    const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
-    let mode: "inherit" | "on" = "inherit";
-    let extension: typeof import("../extension") | undefined;
-
-    try {
-      const workspaceRoot = resolve(join(fixtureRoot, "workspace"));
-      const globalConfigHome = resolve(join(fixtureRoot, "global-config-home"));
-      const globalConfigDir = join(globalConfigHome, "opencode");
-      await Promise.all([
-        mkdir(join(workspaceRoot, ".git"), { recursive: true }),
-        mkdir(globalConfigDir, { recursive: true }),
-        mkdir(join(fixtureRoot, "data"), { recursive: true }),
-        mkdir(join(fixtureRoot, "cache"), { recursive: true }),
-        mkdir(join(fixtureRoot, "temp"), { recursive: true }),
-      ]);
-
-      const configFiles = [
-        join(globalConfigDir, "opencode.json"),
-        join(globalConfigDir, "opencode.jsonc"),
-        join(workspaceRoot, "opencode.json"),
-        join(workspaceRoot, "opencode.jsonc"),
-        join(workspaceRoot, ".mcp.json"),
-      ];
-      await writeFile(
-        configFiles[0],
-        JSON.stringify({ mcp: { globalServer: { command: "global-command" } } }, null, 2),
-      );
-      await writeFile(
-        configFiles[2],
-        JSON.stringify({ mcp: { workspaceServer: { command: "workspace-command", enabled: false } } }, null, 2),
-      );
-      await writeFile(
-        configFiles[4],
-        JSON.stringify({ mcpServers: { dotMcpServer: { command: "dot-mcp-command" } } }, null, 2),
-      );
-
-      process.env.XDG_CONFIG_HOME = globalConfigHome;
-      process.env.XDG_DATA_HOME = resolve(join(fixtureRoot, "data"));
-      process.env.XDG_CACHE_HOME = resolve(join(fixtureRoot, "cache"));
-      process.env.TMPDIR = resolve(join(fixtureRoot, "temp"));
-      vscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file" } }] as never;
-      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
-          ({
-            get: vi.fn((key: string) => {
-              if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
-              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
-              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
-              return undefined;
-            }),
-            inspect: vi.fn(() => undefined),
-          }) as never,
-      );
-
-      const before = await Promise.all(configFiles.map((filePath) => snapshot(filePath)));
-      const beforeConfigEntries = await Promise.all(
-        [globalConfigDir, workspaceRoot].map(
-          async (directory) => [directory, (await readdir(directory)).sort()] as const,
-        ),
-      );
-      const webview = createWebview();
-      vi.mocked(vscode.window.registerWebviewViewProvider).mockImplementation(((
-        _viewType: string,
-        provider: { resolveWebviewView: (view: unknown, context: unknown, token: unknown) => void },
-      ) => {
-        provider.resolveWebviewView({ webview: webview.webview }, {}, { isCancellationRequested: false });
-        return { dispose: vi.fn() } as never;
-      }) as never);
-
-      vi.resetModules();
-      extension = await import("../extension");
-      const workspaceState = new Map<string, unknown>();
-      const context = {
-        extensionUri: { fsPath: join(fixtureRoot, "extension") },
-        subscriptions: [],
-        workspaceState: {
-          get: <T>(key: string) => workspaceState.get(key) as T | undefined,
-          update: async (key: string, value: unknown) => {
-            workspaceState.set(key, value);
-          },
-        },
+  it.each(["vscode", "nono"] as const)(
+    "does not write config files across a %s backend toggle and companion restart",
+    async (backend) => {
+      harness.backend = backend;
+      await mkdir("tmp", { recursive: true });
+      const fixtureRoot = await mkdtemp("tmp/chat-mcp-no-write-");
+      const previousEnvironment = {
+        XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+        XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+        XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+        TMPDIR: process.env.TMPDIR,
       };
-      await context.workspaceState.update("chatMcpPrefsByServer", { workspaceServer: true });
+      const originalWorkspaceFolders = vscode.workspace.workspaceFolders;
+      let mode: "inherit" | "on" = "inherit";
+      let extension: typeof import("../extension") | undefined;
 
-      await extension.activate(context as never);
-      expect(harness.connect).toHaveBeenCalledTimes(1);
+      try {
+        const workspaceRoot = resolve(join(fixtureRoot, "workspace"));
+        const globalConfigHome = resolve(join(fixtureRoot, "global-config-home"));
+        const globalConfigDir = join(globalConfigHome, "opencode");
+        await Promise.all([
+          mkdir(join(workspaceRoot, ".git"), { recursive: true }),
+          mkdir(globalConfigDir, { recursive: true }),
+          mkdir(join(fixtureRoot, "data"), { recursive: true }),
+          mkdir(join(fixtureRoot, "cache"), { recursive: true }),
+          mkdir(join(fixtureRoot, "temp"), { recursive: true }),
+        ]);
 
-      await webview.send({ type: "setMcpPrefs", prefs: { workspaceServer: true } });
-      expect(workspaceState.get("chatMcpPrefsByServer")).toEqual({ workspaceServer: true });
+        const configFiles = [
+          join(globalConfigDir, "opencode.json"),
+          join(globalConfigDir, "opencode.jsonc"),
+          join(workspaceRoot, "opencode.json"),
+          join(workspaceRoot, "opencode.jsonc"),
+          join(workspaceRoot, ".mcp.json"),
+        ];
+        await writeFile(
+          configFiles[0],
+          JSON.stringify({ mcp: { globalServer: { command: "global-command" } } }, null, 2),
+        );
+        await writeFile(
+          configFiles[2],
+          JSON.stringify({ mcp: { workspaceServer: { command: "workspace-command", enabled: false } } }, null, 2),
+        );
+        await writeFile(
+          configFiles[4],
+          JSON.stringify({ mcpServers: { dotMcpServer: { command: "dot-mcp-command" } } }, null, 2),
+        );
 
-      const configurationListener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls.at(-1)?.[0] as
-        | ((event: { affectsConfiguration: (section: string, scope?: unknown) => boolean }) => void)
-        | undefined;
-      expect(configurationListener).toBeDefined();
-      mode = "on";
-      configurationListener?.({
-        affectsConfiguration: (section) => section === "opencode-chat.chatSandbox.mode",
-      });
+        process.env.XDG_CONFIG_HOME = globalConfigHome;
+        process.env.XDG_DATA_HOME = resolve(join(fixtureRoot, "data"));
+        process.env.XDG_CACHE_HOME = resolve(join(fixtureRoot, "cache"));
+        process.env.TMPDIR = resolve(join(fixtureRoot, "temp"));
+        vscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file" } }] as never;
+        vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+          (section: string) =>
+            ({
+              get: vi.fn((key: string) => {
+                if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
+                if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+                if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+                return undefined;
+              }),
+              inspect: vi.fn(() => undefined),
+            }) as never,
+        );
 
-      await vi.waitFor(() => expect(harness.connect).toHaveBeenCalledTimes(2));
-      expect(harness.stopForReconnect).toHaveBeenCalledTimes(1);
-      expect(harness.updateLaunchConfiguration).toHaveBeenCalledWith(
-        expect.objectContaining({
-          mcpOverlay: {
-            mcp: {
-              globalServer: { enabled: false },
-              workspaceServer: { enabled: true },
-              dotMcpServer: { enabled: false },
+        const before = await Promise.all(configFiles.map((filePath) => snapshot(filePath)));
+        const beforeConfigEntries = await Promise.all(
+          [globalConfigDir, workspaceRoot].map(
+            async (directory) => [directory, (await readdir(directory)).sort()] as const,
+          ),
+        );
+        const webview = createWebview();
+        vi.mocked(vscode.window.registerWebviewViewProvider).mockImplementation(((
+          _viewType: string,
+          provider: { resolveWebviewView: (view: unknown, context: unknown, token: unknown) => void },
+        ) => {
+          provider.resolveWebviewView({ webview: webview.webview }, {}, { isCancellationRequested: false });
+          return { dispose: vi.fn() } as never;
+        }) as never);
+
+        vi.resetModules();
+        extension = await import("../extension");
+        const workspaceState = new Map<string, unknown>();
+        const context = {
+          extensionUri: { fsPath: join(fixtureRoot, "extension") },
+          subscriptions: [],
+          workspaceState: {
+            get: <T>(key: string) => workspaceState.get(key) as T | undefined,
+            update: async (key: string, value: unknown) => {
+              workspaceState.set(key, value);
             },
           },
-        }),
-      );
-      expect(harness.launchConfigurations.at(-1)).toEqual(
-        expect.objectContaining({
-          mcpOverlay: {
-            mcp: {
-              globalServer: { enabled: false },
-              workspaceServer: { enabled: true },
-              dotMcpServer: { enabled: false },
-            },
-          },
-        }),
-      );
+        };
+        await context.workspaceState.update("chatMcpPrefsByServer", { workspaceServer: true });
 
-      const after = await Promise.all(configFiles.map((filePath) => snapshot(filePath)));
-      expect(after).toEqual(before);
-      const afterConfigEntries = await Promise.all(
-        [globalConfigDir, workspaceRoot].map(
-          async (directory) => [directory, (await readdir(directory)).sort()] as const,
-        ),
-      );
-      expect(afterConfigEntries).toEqual(beforeConfigEntries);
-      for (const [index, filePath] of configFiles.entries()) {
-        expect((await snapshot(filePath)).exists).toBe(before[index].exists);
+        await extension.activate(context as never);
+        expect(harness.connect).toHaveBeenCalledTimes(1);
+
+        await webview.send({ type: "setMcpPrefs", prefs: { workspaceServer: true } });
+        expect(workspaceState.get("chatMcpPrefsByServer")).toEqual({ workspaceServer: true });
+
+        const configurationListener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls.at(-1)?.[0] as
+          | ((event: { affectsConfiguration: (section: string, scope?: unknown) => boolean }) => void)
+          | undefined;
+        expect(configurationListener).toBeDefined();
+        mode = "on";
+        configurationListener?.({
+          affectsConfiguration: (section) => section === "opencode-chat.chatSandbox.mode",
+        });
+
+        await vi.waitFor(() => expect(harness.connect).toHaveBeenCalledTimes(2));
+        expect(harness.stopForReconnect).toHaveBeenCalledTimes(1);
+        expect(harness.updateLaunchConfiguration).toHaveBeenCalledWith(
+          expect.objectContaining({
+            mcpOverlay: {
+              mcp: {
+                globalServer: { enabled: false },
+                workspaceServer: { enabled: true },
+                dotMcpServer: { enabled: false },
+              },
+            },
+          }),
+        );
+        expect(harness.launchConfigurations.at(-1)).toEqual(
+          expect.objectContaining({
+            mcpOverlay: {
+              mcp: {
+                globalServer: { enabled: false },
+                workspaceServer: { enabled: true },
+                dotMcpServer: { enabled: false },
+              },
+            },
+          }),
+        );
+
+        const after = await Promise.all(configFiles.map((filePath) => snapshot(filePath)));
+        expect(after).toEqual(before);
+        const afterConfigEntries = await Promise.all(
+          [globalConfigDir, workspaceRoot].map(
+            async (directory) => [directory, (await readdir(directory)).sort()] as const,
+          ),
+        );
+        expect(afterConfigEntries).toEqual(beforeConfigEntries);
+        for (const [index, filePath] of configFiles.entries()) {
+          expect((await snapshot(filePath)).exists).toBe(before[index].exists);
+        }
+      } finally {
+        extension?.deactivate();
+        vscode.workspace.workspaceFolders = originalWorkspaceFolders;
+        vi.mocked(vscode.workspace.getConfiguration).mockReset();
+        vi.mocked(vscode.window.registerWebviewViewProvider).mockReset();
+        for (const [key, value] of Object.entries(previousEnvironment)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+        await rm(fixtureRoot, { recursive: true, force: true });
       }
-    } finally {
-      extension?.deactivate();
-      vscode.workspace.workspaceFolders = originalWorkspaceFolders;
-      vi.mocked(vscode.workspace.getConfiguration).mockReset();
-      vi.mocked(vscode.window.registerWebviewViewProvider).mockReset();
-      for (const [key, value] of Object.entries(previousEnvironment)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-      await rm(fixtureRoot, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 });

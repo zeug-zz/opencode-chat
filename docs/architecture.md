@@ -2,7 +2,7 @@
 
 ## 概要
 
-OpenCode Scribe は、AI コーディングエージェントと対話するための VS Code 拡張機能を提供するマルチパッケージモノレポです。アーキテクチャは **Core**（共有型定義）、**Agents**（バックエンドアダプター）、**Platforms**（UI + プラットフォーム固有サービス）の3層に関心を分離しています。
+OpenCode Scribe は、OpenCode TUI と併用する調査・レポート執筆向けの VS Code 拡張機能を提供するマルチパッケージモノレポです。アーキテクチャは **Core**（共有型定義）、**Agents**（OpenCode アダプター）、**Platforms**（UI + プラットフォーム固有サービス）の3層に分離しています。
 
 ```
 opencode-chat-monorepo/
@@ -50,7 +50,8 @@ opencode-scribe
 
 | モジュール | 説明 |
 |-----------|------|
-| `opencode-agent.ts` | `IAgent` を実装する `OpenCodeAgent` クラス — ライフサイクル管理、イベント転送、全エージェント操作 |
+| `opencode-agent.ts` | `IAgent` を実装する `OpenCodeAgent` クラス — SDK、互換サンドボックス、外部 nono の子プロセスライフサイクル、イベント転送、エージェント操作 |
+| `launch-config.ts` | `sdk` / `vscode` / `nono` バックエンドの起動設定とプロセススコープのオーバーレイ |
 | `mappers.ts` | SDK 型 → core ドメイン型への変換関数群 (`mapSession`, `mapMessage`, `mapParts` 等) |
 | `memory-provider-discovery.ts` | プロバイダー検出、状態のサニタイズ、`none` フォールバック、既存検出 API の互換アダプター |
 | `memory-provider-registry.ts` | 承認済みプロバイダーの決定論的な登録・選択境界と置換プロバイダー対応 |
@@ -66,6 +67,7 @@ Extension Host プロセスと React Webview の両方を含む VS Code 拡張�
 | `src/extension.ts` | Extension Host | エントリーポイント — `OpenCodeAgent`、`VscodePlatformServices` を作成し `ChatViewProvider` を登録 |
 | `src/chat-view-provider.ts` | Extension Host | Webview とエージェント/プラットフォームサービス間のメッセージルーター（28以上のハンドラー） |
 | `src/vscode-platform-services.ts` | Extension Host | VS Code API を使用した `IPlatformServices` 実装 |
+| `src/nono-resolver.ts` / `src/nono-profile-settings.ts` | Extension Host | 外部 nono の実行ファイル・プロファイルの検証とワークスペース設定 |
 | `webview/bridges/VscodeBridge.ts` | Webview | `acquireVsCodeApi()` をラップする `IBridge` 実装 |
 | `webview/App.tsx` | Webview | ルート React コンポーネント |
 | `webview/contexts/` | Webview | React コンテキストプロバイダー |
@@ -139,10 +141,21 @@ type AgentCapabilities = {
 
 - `packages/core` は操作、能力、プロバイダー状態の正規化された型だけを公開し、Hindsight のツール名、パス、認証情報、ペイロード形式を持ちません。
 - `packages/agents/opencode` は決定論的なプロバイダーレジストリ、`none` フォールバック、完全一致した Hindsight アダプター、明示的保持の境界を管理します。
-- Extension Host は検出・在庫確認・保持ポリシーを起動ごとに組み立て、SDK 管理起動とサンドボックス起動へ同じプロセススコープのオーバーレイを渡します。
-- Hindsight の利用可能なツールは能力と実際の在庫に一致する完全なツール ID のみです。グローバル TUI プラグインの継承や `hindsight_*` ワイルドカードはありません。
+- Extension Host は検出・在庫確認・保持ポリシーを起動ごとに組み立て、`sdk` / `vscode` / `nono` の各バックエンドへ適切なプロセススコープのオーバーレイを渡します。
+- Hindsight の利用可能なツールは能力と実際の在庫に一致する完全なツール ID のみです。継承プラグインや `hindsight_*` ワイルドカードで権限を拡張しません。
 - プロバイダーがない、失敗した、ブロックされた、または無効化された場合は、通常の OpenCode コンテキストと適用可能な `AGENTS.md` がフォールバックになります。`AGENTS.md` は永続メモリではなくプロジェクトガイダンスです。
 - 明示的保持と自動セッション保持は別の能力です。自動保持は承認済みプロバイダーのライフサイクル・サンドボックス検証後だけ有効になり、ワークスペース設定で無効化できます。
+
+### サンドボックスバックエンドと Hindsight
+
+- `nono` は任意の外部ツールです。Scribe はバイナリやプロファイルをバンドル・インストール・変更しません。
+- 対応する macOS/Linux で Chat サンドボックスが有効な場合、検証済みの組み込み `opencode` プロファイルを既定で使用します。検出済みカスタムプロファイルがあり、保存済みの選択がない場合だけ、カスタム選択用のノンブロッキングなピッカーを一度表示し、保存するのはプロファイル名だけです。
+
+  ```sh
+  nono profile show <name>
+  ```
+
+- nono が起動前に利用できない、またはプロファイルの事前検証に失敗した場合だけ、既存の互換サンドボックスへフォールバックし、Hindsight は検索・一覧・読み取りだけです。nono 選択後の失敗は別のバックエンドへダウングレードせず、フェイルクローズします。nono と互換サンドボックスは別個の強制ポリシーです。
 
 ### IBridge
 
@@ -275,7 +288,7 @@ Webview と Extension Host 間の通信は型付き判別共用体を使用し�
 5. Webview パネルが開いた時:
    - React アプリがマウントされ、`ready` メッセージを送信
    - `ChatViewProvider` が `ready` を処理: `agent.connect()` を呼び出し、セッションを読み込み、`init` メッセージを送信
-   - エージェントが OpenCode サーバー (localhost HTTP) に接続
+   - エージェントが `sdk`、互換サンドボックス、または direct-argv の nono 経由で OpenCode サーバー (localhost HTTP) に接続
    - エージェントイベントが `HostToUIMessage` 経由で Webview に転送される
 
 ---
@@ -303,12 +316,12 @@ pnpm -r build
 
 ## テスト構造
 
-| スイート | ランナー | 設定 | テスト数 |
-|---------|---------|------|---------|
-| Agent-OpenCode | Vitest | `packages/agents/opencode/vitest.config.ts` | 85 |
-| Webview | Vitest + jsdom | `packages/platforms/vscode/vitest.config.ts` | 1475 |
-| Extension Host | Vitest | `packages/platforms/vscode/vitest.config.ext.ts` | 54 |
-| **合計** | | `pnpm test:all` | **1614** |
+| スイート | ランナー | 設定 |
+|---------|---------|------|
+| Agent-OpenCode | Vitest | `packages/agents/opencode/vitest.config.ts` |
+| Webview | Vitest + jsdom | `packages/platforms/vscode/vitest.config.ts` |
+| Extension Host | Vitest | `packages/platforms/vscode/vitest.config.ext.ts` |
+| **VS Code 合計** | | `pnpm test:all` |
 
 ### Extension Host テストの注意点
 

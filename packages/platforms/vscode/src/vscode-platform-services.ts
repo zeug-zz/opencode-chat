@@ -16,6 +16,32 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+export type ResolvedTabInputFile = {
+  uri: vscode.Uri;
+  attachment: FileAttachment;
+};
+
+/** Resolves only file-backed text and custom tabs into the existing attachment shape. */
+export function resolveTabInputFile(
+  input: vscode.TabInputText | vscode.TabInputCustom | undefined,
+  workspaceFolder: vscode.Uri | undefined,
+): ResolvedTabInputFile | undefined {
+  try {
+    if (!(input instanceof vscode.TabInputText || input instanceof vscode.TabInputCustom)) return undefined;
+
+    const uri = input.uri;
+    if (uri?.scheme !== "file" || typeof uri.fsPath !== "string" || !uri.fsPath.trim()) return undefined;
+
+    const filePath = workspaceFolder ? path.relative(workspaceFolder.fsPath, uri.fsPath) : path.basename(uri.fsPath);
+    return {
+      uri,
+      attachment: { filePath, fileName: path.basename(uri.fsPath) },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveOpencodeBinary(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
@@ -162,13 +188,9 @@ export class VscodePlatformServices implements IPlatformServices {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
     return vscode.window.tabGroups.all
       .flatMap((group) => group.tabs)
-      .filter((tab) => tab.input instanceof vscode.TabInputText)
-      .map((tab) => {
-        const uri = (tab.input as vscode.TabInputText).uri;
-        const relativePath = workspaceFolder
-          ? path.relative(workspaceFolder.fsPath, uri.fsPath)
-          : path.basename(uri.fsPath);
-        return { filePath: relativePath, fileName: path.basename(uri.fsPath) };
+      .flatMap((tab) => {
+        const resolved = resolveTabInputFile(tab.input, workspaceFolder);
+        return resolved ? [resolved.attachment] : [];
       })
       .filter((f, i, arr) => arr.findIndex((a) => a.filePath === f.filePath) === i);
   }

@@ -52,8 +52,8 @@ describe("resolveHindsightPlugin", () => {
       packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: "/Users/test/.hindsight/coding-agents",
       packageRoot: approvedMetadata.packageRoot,
-      runtimePaths: ["/Users/test/.hindsight/coding-agents/runtime"],
-      configurationPaths: ["/Users/test/.hindsight/config.json"],
+      runtimePaths: [],
+      configurationPaths: [],
     });
     expect(readMetadata).toHaveBeenCalledOnce();
   });
@@ -67,7 +67,7 @@ describe("resolveHindsightPlugin", () => {
     await expect(resolveHindsightPlugin({ plugin: [plugin] }, readMetadata)).resolves.toBeUndefined();
   });
 
-  it("rejects invalid metadata and unsafe paths without guessing", async () => {
+  it("does not copy native provider paths into the compatibility policy", async () => {
     const readMetadata = vi.fn(() => ({
       ...approvedMetadata,
       runtimePaths: ["/Users/test/.hindsight/../private"],
@@ -75,7 +75,11 @@ describe("resolveHindsightPlugin", () => {
 
     await expect(
       resolveHindsightPlugin({ plugin: ["/Users/test/.hindsight/coding-agents"] }, readMetadata),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+      packageName: APPROVED_HINDSIGHT_PACKAGE,
+      runtimePaths: [],
+      configurationPaths: [],
+    });
   });
 
   it("selects the first approved entry in declared order and never executes entries", async () => {

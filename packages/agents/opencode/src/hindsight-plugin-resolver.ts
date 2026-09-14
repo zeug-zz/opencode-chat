@@ -202,16 +202,14 @@ export async function resolveHindsightPlugin(
       continue;
     }
 
-    const runtimePaths = normalizePaths(metadata?.runtimePaths);
-    const configurationPaths = normalizePaths(metadata?.configurationPaths);
-    if (runtimePaths === undefined || configurationPaths === undefined) continue;
-
     return Object.freeze({
       packageName: APPROVED_HINDSIGHT_PACKAGE,
       pluginReference: reference,
       ...(metadata ? { packageRoot: metadata.packageRoot } : {}),
-      runtimePaths,
-      configurationPaths,
+      // Native provider state belongs to the selected launch backend. Never
+      // reconstruct profile/state paths into the compatibility policy.
+      runtimePaths: [],
+      configurationPaths: [],
     });
   }
 

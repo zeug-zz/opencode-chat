@@ -120,6 +120,58 @@ describe("useAutoScroll", () => {
     });
   });
 
+  context("メッセージ以外のコンテンツ変更シグナルが変更された場合", () => {
+    it("最下部付近にいれば scrollIntoView が呼ばれること", () => {
+      const scrollIntoViewMock = vi.fn();
+      const { result, rerender } = renderHook(
+        (props: { messages: unknown[]; contentChangeSignal: number }) =>
+          useAutoScroll(props.messages, props.contentChangeSignal),
+        { initialProps: { messages: ["message"], contentChangeSignal: 0 } },
+      );
+
+      const bottomEl = document.createElement("div");
+      bottomEl.scrollIntoView = scrollIntoViewMock;
+      (result.current.bottomRef as React.MutableRefObject<HTMLDivElement | null>).current = bottomEl;
+      scrollIntoViewMock.mockClear();
+
+      act(() => {
+        rerender({ messages: ["message"], contentChangeSignal: 1 });
+      });
+
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "auto" });
+    });
+
+    it("意図的に上へスクロール済みなら scrollIntoView が呼ばれないこと", () => {
+      const scrollIntoViewMock = vi.fn();
+      const { result, rerender } = renderHook(
+        (props: { messages: unknown[]; contentChangeSignal: number }) =>
+          useAutoScroll(props.messages, props.contentChangeSignal),
+        { initialProps: { messages: ["message"], contentChangeSignal: 0 } },
+      );
+
+      const containerEl = document.createElement("div");
+      Object.defineProperty(containerEl, "scrollHeight", { value: 1000 });
+      Object.defineProperty(containerEl, "scrollTop", { value: 0 });
+      Object.defineProperty(containerEl, "clientHeight", { value: 400 });
+      (result.current.containerRef as React.MutableRefObject<HTMLDivElement | null>).current = containerEl;
+
+      const bottomEl = document.createElement("div");
+      bottomEl.scrollIntoView = scrollIntoViewMock;
+      (result.current.bottomRef as React.MutableRefObject<HTMLDivElement | null>).current = bottomEl;
+
+      act(() => {
+        result.current.handleScroll();
+      });
+      scrollIntoViewMock.mockClear();
+
+      act(() => {
+        rerender({ messages: ["message"], contentChangeSignal: 1 });
+      });
+
+      expect(scrollIntoViewMock).not.toHaveBeenCalled();
+    });
+  });
+
   context("scrollToBottom を明示的に呼び出した場合", () => {
     it("scrollIntoView が呼ばれること", () => {
       const scrollIntoViewMock = vi.fn();

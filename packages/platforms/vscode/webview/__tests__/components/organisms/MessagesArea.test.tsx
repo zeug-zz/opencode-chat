@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import "@testing-library/jest-dom/vitest";
+import type { QuestionRequest } from "@opencode-chat/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessageWithParts } from "../../../App";
 import { MessagesArea } from "../../../components/organisms/MessagesArea";
@@ -44,6 +45,54 @@ describe("MessagesArea", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("質問を元のアシスタントメッセージにだけ関連付けること", () => {
+    const firstAssistant: MessageWithParts = {
+      info: createMessage({ role: "assistant", id: "assistant-1" }),
+      parts: [createTextPart("First response")],
+    };
+    const secondAssistant: MessageWithParts = {
+      info: createMessage({ role: "assistant", id: "assistant-2" }),
+      parts: [createTextPart("Second response")],
+    };
+    const question: QuestionRequest = {
+      id: "question-1",
+      sessionID: "session-1",
+      questions: [
+        {
+          question: "Which response?",
+          header: "Choose",
+          options: [{ label: "First", description: "Use the first response" }],
+        },
+      ],
+      tool: { messageID: firstAssistant.info.id, callID: "call-1" },
+    };
+    const orphanQuestion: QuestionRequest = {
+      ...question,
+      id: "orphan-question",
+      questions: [{ ...question.questions[0], question: "Should not render" }],
+      tool: { messageID: "missing-assistant", callID: "call-2" },
+    };
+
+    render(
+      <MessagesArea
+        {...defaultProps}
+        messages={[firstAssistant, secondAssistant]}
+        questions={
+          new Map([
+            [question.id, question],
+            [orphanQuestion.id, orphanQuestion],
+          ])
+        }
+      />,
+      { wrapper },
+    );
+
+    expect(screen.getByText("Which response?")).toBeInTheDocument();
+    expect(screen.queryByText("Should not render")).not.toBeInTheDocument();
+    expect(screen.getAllByText("First response")).toHaveLength(1);
+    expect(screen.getAllByText("Second response")).toHaveLength(1);
   });
 
   // when rendered with messages
@@ -149,6 +198,26 @@ describe("MessagesArea", () => {
 
   // auto-scroll integration
   context("自動スクロールの場合", () => {
+    it("質問の変更をメッセージ以外のコンテンツ変更シグナルとして渡すこと", () => {
+      const useAutoScroll = vi.spyOn(autoScrollHook, "useAutoScroll").mockReturnValue({
+        containerRef: { current: null },
+        bottomRef: { current: null },
+        handleScroll: vi.fn(),
+        isNearBottom: true,
+        scrollToBottom: vi.fn(),
+      });
+      const questions = new Map<string, QuestionRequest>();
+
+      const { rerender } = render(<MessagesArea {...defaultProps} questions={questions} />, { wrapper });
+
+      expect(useAutoScroll).toHaveBeenLastCalledWith(defaultProps.messages, questions);
+
+      const nextQuestions = new Map<string, QuestionRequest>();
+      rerender(<MessagesArea {...defaultProps} questions={nextQuestions} />);
+
+      expect(useAutoScroll).toHaveBeenLastCalledWith(defaultProps.messages, nextQuestions);
+    });
+
     // scrolls to bottom on initial render
     it("初回レンダリング時に scrollIntoView が呼ばれること", () => {
       render(<MessagesArea {...defaultProps} />, { wrapper });

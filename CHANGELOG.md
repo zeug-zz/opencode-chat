@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-14
+
+### Added
+
+- Added file-backed custom-editor attachments, including Markdown and PDF tabs.
+- Added an optional external `nono` backend for native Hindsight under validated profiles.
+
+### Fixed
+
+- Rendered question dialogs immediately during active turns while preserving scroll position.
+
 ## [0.13.5] - 2026-09-10
 
 ### Changed
@@ -295,7 +306,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.5...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.0...v0.13.5
 [0.12.5]: https://github.com/zeug-zz/opencode-chat/compare/v0.11.0...v0.12.5
 [0.11.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.1...v0.11.0

@@ -35,11 +35,16 @@ export const window = {
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn().mockResolvedValue(undefined),
   showInformationMessage: vi.fn().mockResolvedValue(undefined),
+  showQuickPick: vi.fn().mockResolvedValue(undefined),
   showTextDocument: vi.fn().mockResolvedValue(undefined),
   activeTextEditor: undefined as unknown,
   onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
   onDidChangeTerminalShellIntegration: vi.fn(() => ({ dispose: vi.fn() })),
-  tabGroups: { all: [] as unknown[] },
+  tabGroups: {
+    all: [] as unknown[],
+    activeTabGroup: { activeTab: undefined as unknown },
+    onDidChangeTabs: vi.fn(() => ({ dispose: vi.fn() })),
+  },
   createTerminal: vi.fn(() => ({ show: vi.fn(), sendText: vi.fn() })),
   createWebviewPanel: vi.fn(() => ({
     webview: { html: "", onDidReceiveMessage: vi.fn() },
@@ -60,6 +65,7 @@ export const env = {
 // --- commands ---
 export const commands = {
   executeCommand: vi.fn().mockResolvedValue(undefined),
+  registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
 };
 
 // --- l10n ---
@@ -114,6 +120,16 @@ export class TabInputText {
   public uri: { fsPath: string; scheme: string };
   constructor(uri: { fsPath: string; scheme: string }) {
     this.uri = uri;
+  }
+}
+
+// --- TabInputCustom ---
+export class TabInputCustom {
+  public uri: { fsPath: string; scheme: string };
+  public viewType: string;
+  constructor(uri: { fsPath: string; scheme: string }, viewType: string) {
+    this.uri = uri;
+    this.viewType = viewType;
   }
 }
 

@@ -19,6 +19,7 @@ import type {
 import { DEFAULT_MEMORY_RETENTION_POLICY } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
+import { resolveTabInputFile } from "./vscode-platform-services";
 
 type NormalPrompt = Extract<UIToHostMessage, { type: "sendMessage" }>;
 
@@ -195,7 +196,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // アクティブエディタが変わるたびに Webview に通知する
     // (プッシュ型通知はメッセージルーターの責務として残す)
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      this.postMessage({ type: "activeEditor", file: this.getActiveEditorFile(editor) });
+      this.publishActiveEditor(editor);
+    });
+    vscode.window.tabGroups.onDidChangeTabs(() => {
+      this.publishActiveEditor();
     });
   }
 
@@ -225,7 +229,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.postMessage({ type: "chatSandboxStatus", status: this.chatSandboxStatus });
         }
         // 初期アクティブエディタを送信する
-        this.postMessage({ type: "activeEditor", file: this.getActiveEditorFile(vscode.window.activeTextEditor) });
+        this.publishActiveEditor();
         break;
       }
       case "sendMessage": {
@@ -722,19 +726,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return true;
   }
 
-  /** アクティブなテキストエディタから FileAttachment を生成する。エディタがない場合は null を返す。 */
+  /** アクティブなエディタまたはファイル-backed custom tab から FileAttachment を生成する。 */
   private getActiveEditorFile(
-    editor: vscode.TextEditor | undefined,
+    editor: vscode.TextEditor | undefined = vscode.window.activeTextEditor,
   ): import("@opencode-chat/core").FileAttachment | null {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+
+    // A custom or otherwise unsupported active tab must not reuse a stale text editor.
+    if (activeTab && !(activeTab.input instanceof vscode.TabInputText)) {
+      if (!(activeTab.input instanceof vscode.TabInputCustom)) return null;
+      return resolveTabInputFile(activeTab.input, workspaceFolder)?.attachment ?? null;
+    }
+
     if (!editor) return null;
     const uri = editor.document.uri;
     // 出力パネルや設定画面など、file スキーム以外は対象外
     if (uri.scheme !== "file") return null;
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
     const relativePath = workspaceFolder
       ? path.relative(workspaceFolder.fsPath, uri.fsPath)
       : path.basename(uri.fsPath);
     return { filePath: relativePath, fileName: path.basename(uri.fsPath) };
+  }
+
+  private publishActiveEditor(editor?: vscode.TextEditor): void {
+    this.postMessage({ type: "activeEditor", file: this.getActiveEditorFile(editor) });
   }
 
   private postMessage(message: HostToUIMessage): void {
