@@ -2,7 +2,7 @@
   "name": "opencode-scribe",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.13.5",
+  "version": "0.14.0",
   "publisher": "drmrStudio",
   "license": "MIT",
   "repository": {
