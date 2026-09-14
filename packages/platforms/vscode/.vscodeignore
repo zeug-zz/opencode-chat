@@ -10,3 +10,8 @@ config.json
 *.vsix
 .DS_Store
 .env
+**/*.test.*
+**/*.spec.*
+**/__tests__/**
+**/*.map
+scripts/**

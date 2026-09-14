@@ -2,7 +2,7 @@
   "name": "opencode-scribe",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "publisher": "drmrStudio",
   "license": "MIT",
   "repository": {
@@ -94,7 +94,7 @@
     ]
   },
   "scripts": {
-    "build": "node --experimental-strip-types scripts/stage-bundled-research-resources.ts && node esbuild.mjs && vite build",
+    "build": "node esbuild.mjs && node --experimental-strip-types scripts/stage-bundled-research-resources.ts && vite build",
     "build:ext": "node esbuild.mjs",
     "build:webview": "vite build",
     "watch:ext": "node esbuild.mjs --watch",

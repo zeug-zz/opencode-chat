@@ -38,7 +38,7 @@ SOFTWARE.
 
 ## @opencode-ai/sdk
 
-- **Version:** 1.2.10
+- **Version:** 1.18.18
 - **License:** MIT
 - **Source:** https://www.npmjs.com/package/@opencode-ai/sdk
 
@@ -68,7 +68,7 @@ SOFTWARE.
 
 ## React
 
-- **Version:** 19.2.4
+- **Version:** 19.2.8
 - **License:** MIT
 - **Source:** https://github.com/facebook/react
 
@@ -98,7 +98,7 @@ SOFTWARE.
 
 ## ReactDOM
 
-- **Version:** 19.2.4
+- **Version:** 19.2.8
 - **License:** MIT
 - **Source:** https://github.com/facebook/react
 
@@ -128,7 +128,7 @@ SOFTWARE.
 
 ## DOMPurify
 
-- **Version:** 3.3.1
+- **Version:** 3.4.14
 - **License:** Apache-2.0 OR MPL-2.0 (distributed under Apache-2.0)
 - **Source:** https://github.com/cure53/DOMPurify
 
@@ -150,7 +150,7 @@ limitations under the License.
 
 ## Marked
 
-- **Version:** 17.0.4
+- **Version:** 18.0.9
 - **License:** MIT
 - **Source:** https://github.com/markedjs/marked
 
@@ -179,7 +179,7 @@ THE SOFTWARE.
 
 ## highlight.js
 
-- **Version:** 11.11.1
+- **Version:** 11.12.0
 - **License:** BSD-3-Clause
 - **Source:** https://github.com/highlightjs/highlight.js
 
@@ -217,7 +217,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## react-icons (VS Code Icons subset)
 
-- **Version:** 5.5.0
+- **Version:** 5.7.0
 - **License:** MIT
 - **Source:** https://github.com/react-icons/react-icons
 

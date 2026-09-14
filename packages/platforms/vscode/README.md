@@ -230,13 +230,12 @@ The following optional, user-installed runtime/tooling integrations can support 
 
 ### Installation
 
-Search for **OpenCode Scribe** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+On a trusted machine, download `opencode-scribe-<version>.vsix` from the [GitHub Releases](https://github.com/zeug-zz/opencode-chat/releases) page. In VS Code, open the Command Palette and run **Extensions: Install from VSIX...**, then select the downloaded file.
 
-**OpenCode Scribe** (`drmrStudio.opencode-scribe`) is a new, separate
-Marketplace listing from the legacy `zeug-zz.opencode-research` extension. VS
-Code will not automatically upgrade the legacy extension to the new
-publisher/name; install OpenCode Scribe separately if you used the legacy
-listing.
+The Marketplace information for **OpenCode Scribe** (`drmrStudio.opencode-scribe`)
+is retained for identity and history. The legacy `zeug-zz.opencode-research`
+listing is a separate extension; VS Code will not automatically upgrade it to
+the new publisher/name.
 
 ### Contributing
 
