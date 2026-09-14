@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-15
+
+### Added
+
+- Added credential-free update discovery and consent-gated installation from private GitHub Releases, with a separate reload confirmation.
+
 ## [0.15.2] - 2026-09-14
 
 ### Changed
@@ -331,7 +337,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.2...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.14.0...v0.15.0

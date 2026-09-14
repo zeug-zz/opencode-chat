@@ -230,12 +230,17 @@ The following optional, user-installed runtime/tooling integrations can support 
 
 ### Installation
 
-On a trusted machine, download `opencode-scribe-<version>.vsix` from the [GitHub Releases](https://github.com/zeug-zz/opencode-chat/releases) page. In VS Code, open the Command Palette and run **Extensions: Install from VSIX...**, then select the downloaded file.
+GitHub Releases is the private distribution source for OpenCode Scribe. On a trusted machine, download `opencode-scribe-<version>.vsix` from the [GitHub Releases](https://github.com/zeug-zz/opencode-chat/releases) page. In VS Code, open the Command Palette and run **Extensions: Install from VSIX...**, then select the downloaded file.
 
-The Marketplace information for **OpenCode Scribe** (`drmrStudio.opencode-scribe`)
-is retained for identity and history. The legacy `zeug-zz.opencode-research`
-listing is a separate extension; VS Code will not automatically upgrade it to
-the new publisher/name.
+After startup, the extension checks stable GitHub Releases without starting Chat
+or OpenCode. When an update is available, choose **Update** to opt into the
+combined download/install action, then separately confirm whether to reload.
+Use the **OpenCode Scribe: Check for Updates** command in the Command Palette
+for a manual check.
+
+The `drmrStudio.opencode-scribe` identity and the legacy
+`zeug-zz.opencode-research` history are retained for compatibility; neither is
+an update source.
 
 ### Contributing
 

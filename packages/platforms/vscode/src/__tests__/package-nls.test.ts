@@ -14,6 +14,7 @@ describe("nono profile localization", () => {
       expect(locale, file).toMatchObject({
         "configuration.nonoProfile": expect.any(String),
         "command.selectNonoProfile": expect.any(String),
+        "command.checkForUpdates": expect.any(String),
       });
     }
   });
