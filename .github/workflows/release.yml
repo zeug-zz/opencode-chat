@@ -23,7 +23,7 @@ jobs:
           version: 10.16.0
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         run: pnpm build
@@ -38,7 +38,17 @@ jobs:
         run: pnpm --filter opencode-scribe run package
         working-directory: .
 
+      - name: Verify packaged extension
+        run: pnpm --filter opencode-scribe run verify-package
+
+      - name: Resolve packaged VSIX
+        id: package
+        run: |
+          artifact_path="$(node -e 'const manifest = require("./packages/platforms/vscode/package.json"); if (manifest.name !== "opencode-scribe" || typeof manifest.version !== "string" || !/^[0-9A-Za-z.+-]+$/.test(manifest.version)) process.exit(1); process.stdout.write(`packages/platforms/vscode/${manifest.name}-${manifest.version}.vsix`);')"
+          test -f "$artifact_path"
+          printf 'path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
+
       - name: Upload .vsix to GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
-          files: packages/platforms/vscode/*.vsix
+          files: ${{ steps.package.outputs.path }}

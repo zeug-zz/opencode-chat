@@ -1,22 +1,4 @@
-# context-memory Specification
-
-## Purpose
-
-The InputArea displays a contextual memory chip showing context window usage (e.g. `22.1K (2%)`) using server-provided token data from events or React state.
-
-## Requirements
-
-### Requirement: Event types for context memory data flow
-
-The `AgentEvent` union in `@opencode-chat/core` MUST include event variants that carry token data for context memory computation: `session.next.context.updated` (server-provided text), `session.next.step.ended` (step tokens), and `message.updated` and `session.updated` (both with `sessionID` at properties level).
-
-#### Scenario: All required event variants compile
-
-- GIVEN the `AgentEvent` union in `packages/core/src/domain.ts`
-- WHEN TypeScript checks the type
-- THEN `session.next.context.updated`, `session.next.step.ended` variants are valid members
-- AND `session.updated` and `message.updated` include `sessionID: string` in properties
-- AND existing `AgentEvent` consumers remain type-compatible without modification.
+## MODIFIED Requirements
 
 ### Requirement: ChatSession carries aggregate token data
 
@@ -27,17 +9,17 @@ context-memory chip.
 
 #### Scenario: ChatSession tokens are accessible
 
-- GIVEN a `ChatSession` object with `tokens: { input: 19857, output: 65, reasoning: 75, cache: { read: 22016, write: 0 } }`
-- WHEN the state-based context memory calculation reads the token data
-- THEN `getContextTokenCount(tokens)` returns `22121` (`input + cache.read`)
-- AND the formatted string is computed correctly without treating the value as a cumulative chip total
+- **GIVEN** a `ChatSession` object with `tokens: { input: 19857, output: 65, reasoning: 75, cache: { read: 22016, write: 0 } }`
+- **WHEN** the state-based context memory calculation reads the token data
+- **THEN** `getContextTokenCount(tokens)` returns `22121` (`input + cache.read`)
+- **AND** the formatted string is computed correctly without treating the value as a cumulative chip total
 
 #### Scenario: Cumulative session tokens do not inflate current context
 
-- GIVEN the session aggregate contains token usage from multiple completed turns
-- WHEN the current context-memory value is derived
-- THEN the aggregate session total is not added to the latest context snapshot
-- AND current occupancy is derived from the latest valid assistant or step snapshot instead
+- **GIVEN** the session aggregate contains token usage from multiple completed turns
+- **WHEN** the current context-memory value is derived
+- **THEN** the aggregate session total is not added to the latest context snapshot
+- **AND** current occupancy is derived from the latest valid assistant or step snapshot instead
 
 ### Requirement: Multi-source context memory fallback
 
@@ -117,41 +99,3 @@ summing older messages.
 - **WHEN** compaction starts
 - **THEN** the chip is cleared
 - **AND** when a post-compaction context text or token snapshot arrives, the chip displays that new snapshot rather than pre-compaction totals
-
-### Requirement: Chip rendered in InputArea action bar
-
-The InputArea MUST render the context memory text as a `<span>` element in the `actionsLeft` bar when `contextMemoryText` is a non-empty string, placed after the terminal button.
-
-#### Scenario: Chip renders when text is non-empty
-
-- GIVEN `contextMemoryText` is `"22.1K (2%)"`
-- WHEN InputArea renders
-- THEN a `<span>` with the text content is present in `actionsLeft`
-- AND the `<span>` appears after the terminal button in DOM order.
-
-#### Scenario: Chip hidden when text is empty
-
-- GIVEN `contextMemoryText` is `""` (or `undefined`)
-- WHEN InputArea renders
-- THEN no context memory `<span>` is rendered.
-
-### Requirement: Chip styling matches TUI convention
-
-The context memory span SHALL use muted monospace styling to match the TUI's terminal-like appearance.
-
-#### Scenario: Chip uses muted monospace style
-
-- GIVEN the chip is rendered
-- THEN the span has CSS class `contextMemory`
-- AND the computed style includes `color: var(--vscode-descriptionForeground)`
-- AND the computed style includes a monospace font-family.
-
-### Requirement: Internationalized tooltip
-
-The context memory chip SHALL have a localized title attribute set to the `input.contextMemory` locale key across all eight supported locales.
-
-#### Scenario: Chip has localized title
-
-- GIVEN locale is English
-- WHEN the chip renders
-- THEN the `<span>` title attribute is `"Contextual memory"`.

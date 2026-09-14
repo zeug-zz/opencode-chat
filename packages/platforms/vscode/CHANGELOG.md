@@ -32,9 +32,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.13.5] - 2026-09-10
 
+### Added
+
+- Added provider-neutral Hindsight integration and retention gates, including bounded automatic session retention
+- Added inherited OpenCode global and project plugin support for the extension-owned companion
+
 ### Changed
 
 - Changed the VS Code Marketplace identity to `drmrStudio.opencode-scribe` with the display name **OpenCode Scribe**
+
+## [0.13.0] - 2026-09-10
+
+### Added
+
+- Added inherited OpenCode global and project plugin support for the extension-owned companion, including native plugin-directory discovery and opaque options
+
+### Changed
+
+- Changed the VS Code Marketplace publisher to `DRMR`, yielding extension ID `DRMR.opencode-research`
 
 ## [0.12.5] - 2026-09-08
 
@@ -323,6 +338,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [0.15.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/zeug-zz/opencode-chat/compare/v0.13.0...v0.13.5
+[0.13.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.12.5...v0.13.0
 [0.12.5]: https://github.com/zeug-zz/opencode-chat/compare/v0.11.0...v0.12.5
 [0.11.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.10.0...v0.10.1

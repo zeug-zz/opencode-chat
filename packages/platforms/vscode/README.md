@@ -48,7 +48,7 @@ The current product is intentionally focused on **chat + research + writing**, n
 - **Thinking models that actually stream** — Stable CoT / reasoning display for thinking models (no blanking/flicker mid-stream).
 - **Research-grade message surface** — Markdown with KaTeX math, Mermaid, syntax-highlighted code, and **copy as Markdown** on replies.
 - **Effort + model UX built for many providers** — Searchable models, sticky per-model effort variants, recent-models strip, collapsed providers by default.
-- **Context awareness** — In-input context/token chip so long research threads stay legible.
+- **Context awareness** — In-input chip showing the latest valid prompt-context snapshot, so long research threads stay legible without accumulating prompt work across messages and steps.
 - **Questions during active turns** — Interactive question dialogs appear as soon as the active turn asks, without waiting for an unrelated message update.
 - **Secure-by-default posture** — Secret scanning, SAST, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a documented MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit the extension process and write boundary.
 
@@ -230,13 +230,12 @@ The following optional, user-installed runtime/tooling integrations can support 
 
 ### Installation
 
-Search for **OpenCode Scribe** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+On a trusted machine, download `opencode-scribe-<version>.vsix` from the [GitHub Releases](https://github.com/zeug-zz/opencode-chat/releases) page. In VS Code, open the Command Palette and run **Extensions: Install from VSIX...**, then select the downloaded file.
 
-**OpenCode Scribe** (`drmrStudio.opencode-scribe`) is a new, separate
-Marketplace listing from the legacy `zeug-zz.opencode-research` extension. VS
-Code will not automatically upgrade the legacy extension to the new
-publisher/name; install OpenCode Scribe separately if you used the legacy
-listing.
+The Marketplace information for **OpenCode Scribe** (`drmrStudio.opencode-scribe`)
+is retained for identity and history. The legacy `zeug-zz.opencode-research`
+listing is a separate extension; VS Code will not automatically upgrade it to
+the new publisher/name.
 
 ### Contributing
 

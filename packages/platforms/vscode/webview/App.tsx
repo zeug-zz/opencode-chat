@@ -53,6 +53,16 @@ function isZeroContextText(text: string): boolean {
   return /^0(?:\.0+)?K?\s*(?:\(0%\))?$/.test(text.trim());
 }
 
+function getContextTokenCount(tokens?: { input: number; cache: { read: number } }): number {
+  if (!tokens) return 0;
+  const contextTokens = tokens.input + tokens.cache.read;
+  return Number.isFinite(contextTokens) ? contextTokens : 0;
+}
+
+function getContextTokenSignature(tokens: { input: number; cache: { read: number } }): string {
+  return `${tokens.input}:${tokens.cache.read}`;
+}
+
 export function App() {
   const activeSessionRef = useRef<ChatSession | null>(null);
   const session = useSession(activeSessionRef);
@@ -73,7 +83,8 @@ export function App() {
 
   useEffect(() => {
     setContextMemory("");
-    contextTokensRef.current.delete(session.activeSession?.id ?? "");
+    contextSourceRef.current = null;
+    awaitingCompactionContextRef.current = null;
   }, [session.activeSession?.id]);
 
   // Extension Host → Webview メッセージでのみ更新される単純なステート
@@ -114,7 +125,13 @@ export function App() {
 
   const [contextMemory, setContextMemory] = useState<string>("");
   const awaitingCompactionContextRef = useRef<string | null>(null);
-  const contextTokensRef = useRef<Map<string, number>>(new Map());
+  const contextSourceRef = useRef<
+    | { kind: "server"; assistantMessageId: string | null; stepSnapshotSignature: string | null }
+    | { kind: "assistant" | "step" }
+    | null
+  >(null);
+  const latestMessagesRef = useRef(msg.messages);
+  latestMessagesRef.current = msg.messages;
 
   const updateContextDisplay = useCallback(
     (tokens: number) => {
@@ -130,19 +147,18 @@ export function App() {
     const sessionId = session.activeSession?.id;
     if (!sessionId) return;
     if (awaitingCompactionContextRef.current === sessionId) return;
+    if (contextSourceRef.current?.kind === "server") return;
 
-    let total = 0;
-    for (const message of msg.messages) {
-      for (const part of message.parts) {
-        if (part.type === "step-finish") {
-          total += part.tokens?.input ?? 0;
-        }
-      }
+    let latestAssistantContext = 0;
+    for (const message of [...msg.messages].reverse()) {
+      if (message.info.sessionID !== sessionId || message.info.role !== "assistant") continue;
+      latestAssistantContext = getContextTokenCount(message.info.tokens);
+      if (latestAssistantContext > 0) break;
     }
+    if (latestAssistantContext <= 0) return;
 
-    if (total <= 0) return;
-    contextTokensRef.current.set(sessionId, total);
-    updateContextDisplay(total);
+    contextSourceRef.current = { kind: "assistant" };
+    updateContextDisplay(latestAssistantContext);
   }, [session.activeSession?.id, msg.messages, updateContextDisplay]);
 
   const handleOpenConfigFile = useCallback((filePath: string) => {
@@ -184,46 +200,72 @@ export function App() {
       }
 
       // --- コンテキストメモリ表示 ---
-      const provider = prov.providers.find((p) => p.id === prov.selectedModel?.providerID);
-      const model = provider?.models[prov.selectedModel?.modelID ?? ""];
-      const contextLimit = model?.limit?.context;
-
       if (event.type === "session.next.compaction.started" && event.properties.sessionID === currentSession?.id) {
         awaitingCompactionContextRef.current = event.properties.sessionID;
+        contextSourceRef.current = null;
         setContextMemory("");
       }
 
       if (event.type === "session.next.context.updated" && event.properties.sessionID === currentSession?.id) {
-        awaitingCompactionContextRef.current = null;
         if (!isZeroContextText(event.properties.text)) {
+          // Server text is authoritative for this update. Fallback token
+          // events for the same assistant message must not replace it while
+          // that context is settling. A later assistant message advances it.
+          const latestAssistant = [...latestMessagesRef.current]
+            .reverse()
+            .find((message) => message.info.sessionID === currentSession.id && message.info.role === "assistant");
+          contextSourceRef.current = {
+            kind: "server",
+            assistantMessageId: latestAssistant?.info.id ?? null,
+            stepSnapshotSignature: null,
+          };
           setContextMemory(event.properties.text);
+          awaitingCompactionContextRef.current = null;
         }
       }
 
-      const awaitingCompactionContext =
-        awaitingCompactionContextRef.current !== null && awaitingCompactionContextRef.current === currentSession?.id;
+      if (event.type === "message.updated" && event.properties.sessionID === currentSession?.id) {
+        const info = event.properties.info;
+        const tokenCount = info.role === "assistant" ? getContextTokenCount(info.tokens) : 0;
+        if (tokenCount > 0 && awaitingCompactionContextRef.current !== currentSession.id) {
+          const sameServerAssistant =
+            contextSourceRef.current?.kind === "server" && contextSourceRef.current.assistantMessageId === info.id;
+          if (!sameServerAssistant) {
+            contextSourceRef.current = { kind: "assistant" };
+            updateContextDisplay(tokenCount);
+          }
+        }
+      }
 
-      if (
-        !awaitingCompactionContext &&
-        event.type === "message.part.updated" &&
-        event.properties.sessionID === currentSession?.id &&
-        event.properties.part.type === "step-finish"
-      ) {
-        const partTokens = event.properties.part.tokens;
-        const partInput = partTokens?.input ?? 0;
-        if (partInput > 0) {
-          const prev = contextTokensRef.current.get(currentSession!.id) ?? 0;
-          const total = prev + partInput;
-          contextTokensRef.current.set(currentSession!.id, total);
-          setContextMemory(formatContextMemory(total, contextLimit));
+      if (event.type === "session.next.step.ended" && event.properties.sessionID === currentSession?.id) {
+        const tokenCount = getContextTokenCount(event.properties.tokens);
+        if (tokenCount > 0 && awaitingCompactionContextRef.current !== currentSession.id) {
+          const source = contextSourceRef.current;
+          if (source?.kind === "server") {
+            const signature = getContextTokenSignature(event.properties.tokens);
+            // Hold the first step fallback after server text (and duplicates
+            // of it) as part of that update. A different later snapshot is
+            // the bounded conversation advance that may replace the text.
+            if (source.stepSnapshotSignature === null) {
+              source.stepSnapshotSignature = signature;
+              return;
+            }
+            if (source.stepSnapshotSignature === signature) return;
+          }
+          contextSourceRef.current = { kind: "step" };
+          updateContextDisplay(tokenCount);
         }
       }
 
       if (event.type === "session.next.compaction.ended" && event.properties.sessionID === currentSession?.id) {
+        awaitingCompactionContextRef.current = null;
+        contextSourceRef.current = null;
         postMessage({ type: "getMessages", sessionId: currentSession.id });
       }
 
       if (event.type === "session.compacted" && event.properties.sessionID === currentSession?.id) {
+        awaitingCompactionContextRef.current = null;
+        contextSourceRef.current = null;
         postMessage({ type: "getMessages", sessionId: currentSession.id });
       }
     },
@@ -234,6 +276,7 @@ export function App() {
       quest.handleQuestionEvent,
       fileChanges.handleFileChangeEvent,
       sound.handleSoundEvent,
+      updateContextDisplay,
       prov.selectedModel,
       prov.providers,
     ],
@@ -273,6 +316,8 @@ export function App() {
             setTodos([]);
             setChildSessions([]);
             setContextMemory("");
+            contextSourceRef.current = null;
+            awaitingCompactionContextRef.current = null;
           }
           session.setActiveSession(data.session);
           if (data.session) {
@@ -287,6 +332,8 @@ export function App() {
             session.clearSessionState();
             setTodos([]);
             setChildSessions([]);
+            contextSourceRef.current = null;
+            awaitingCompactionContextRef.current = null;
           }
           break;
         }

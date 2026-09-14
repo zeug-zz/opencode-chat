@@ -1,8 +1,15 @@
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { cleanExtensionDist } from "../../scripts/clean-extension-dist.mjs";
 import { stageBundledResearchResources } from "../../scripts/stage-bundled-research-resources";
 import {
+  deriveExpectedExtensionManifest,
   EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS,
+  readZipArchiveEntries,
   verifyBundledResearchArchiveEntries,
+  verifyVsixArchiveHygiene,
+  verifyVsixManifest,
 } from "../../scripts/verify-bundled-research-package";
 import {
   BUNDLED_RESEARCH_RESOURCE_MANIFEST,
@@ -14,6 +21,73 @@ const validContent = (entry: BundledResourceManifestEntry) =>
   entry.type === "skill"
     ? `---\nname: ${entry.name}\ndescription: Description for ${entry.name}.\n---\n\nSkill body.`
     : `---\ndescription: Description for ${entry.name}.\n---\n\nUse the request: $ARGUMENTS`;
+
+const expectedManifest = deriveExpectedExtensionManifest({
+  name: "opencode-scribe",
+  publisher: "drmrStudio",
+  version: "0.15.0",
+  main: "./dist/extension.js",
+});
+
+function makeStoredZip(files: Readonly<Record<string, string>>): Uint8Array {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+  for (const [name, value] of Object.entries(files)) {
+    const nameBytes = encoder.encode(name);
+    const data = encoder.encode(value);
+    const local = new Uint8Array(30 + nameBytes.length + data.length);
+    const localView = new DataView(local.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint32(18, data.length, true);
+    localView.setUint32(22, data.length, true);
+    localView.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30);
+    local.set(data, 30 + nameBytes.length);
+    chunks.push(local);
+
+    const record = new Uint8Array(46 + nameBytes.length);
+    const recordView = new DataView(record.buffer);
+    recordView.setUint32(0, 0x02014b50, true);
+    recordView.setUint16(10, 0, true);
+    recordView.setUint32(20, data.length, true);
+    recordView.setUint32(24, data.length, true);
+    recordView.setUint16(28, nameBytes.length, true);
+    recordView.setUint32(42, offset, true);
+    record.set(nameBytes, 46);
+    central.push(record);
+    offset += local.length;
+  }
+  const directoryOffset = offset;
+  chunks.push(...central);
+  const directorySize = central.reduce((size, chunk) => size + chunk.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, central.length, true);
+  endView.setUint16(10, central.length, true);
+  endView.setUint32(12, directorySize, true);
+  endView.setUint32(16, directoryOffset, true);
+  chunks.push(end);
+  const archive = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
+  let cursor = 0;
+  for (const chunk of chunks) {
+    archive.set(chunk, cursor);
+    cursor += chunk.length;
+  }
+  return archive;
+}
+
+function makeArchive(extraEntries: Readonly<Record<string, string>> = {}): Uint8Array {
+  return makeStoredZip({
+    "extension/package.json": JSON.stringify(expectedManifest),
+    "extension/dist/extension.js": "bundle",
+    ...Object.fromEntries(EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS.map((entry) => [entry, "resource"])),
+    ...extraEntries,
+  });
+}
 
 describe("loadBundledResearchResources", () => {
   it("loads all allowlisted skills and commands with metadata and templates", async () => {
@@ -139,6 +213,28 @@ describe("stageBundledResearchResources", () => {
   });
 });
 
+describe("cleanExtensionDist", () => {
+  it("removes only the generated output and is safe to repeat", async () => {
+    const outputRoot = path.resolve("tmp/vscode-build-cleanup-test/dist");
+    const sourceRoot = path.resolve("tmp/vscode-build-cleanup-test/src");
+    await rm(path.dirname(outputRoot), { recursive: true, force: true });
+    await mkdir(sourceRoot, { recursive: true });
+    await mkdir(outputRoot, { recursive: true });
+    await writeFile(path.join(outputRoot, "stale.js"), "stale", "utf8");
+    await writeFile(path.join(sourceRoot, "keep.ts"), "source", "utf8");
+
+    try {
+      await cleanExtensionDist(outputRoot);
+      await cleanExtensionDist(outputRoot);
+
+      await expect(access(outputRoot)).rejects.toThrow();
+      await expect(access(path.join(sourceRoot, "keep.ts"))).resolves.toBeUndefined();
+    } finally {
+      await rm(path.dirname(outputRoot), { recursive: true, force: true });
+    }
+  });
+});
+
 describe("verifyBundledResearchArchiveEntries", () => {
   it("accepts extension-owned allowlisted resource paths", () => {
     expect(() => verifyBundledResearchArchiveEntries(EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS)).not.toThrow();
@@ -167,4 +263,59 @@ describe("verifyBundledResearchArchiveEntries", () => {
       ),
     ).toThrow("misplaced or unallowlisted research resources");
   });
+});
+
+describe("verify VSIX archive manifest and hygiene", () => {
+  it("accepts a valid archive and reads its central-directory entries", () => {
+    const archive = makeArchive();
+    const entries = readZipArchiveEntries(archive);
+    expect(() => verifyVsixManifest(archive, expectedManifest, entries)).not.toThrow();
+    expect(() => verifyVsixArchiveHygiene(entries)).not.toThrow();
+    expect(() => verifyBundledResearchArchiveEntries(entries)).not.toThrow();
+  });
+
+  it.each([
+    ["name", { name: "other-extension" }],
+    ["publisher", { publisher: "other-publisher" }],
+    ["version", { version: "9.9.9" }],
+    ["main", { main: "./dist/other.js" }],
+  ] as const)("rejects a mismatched manifest %s", (_field, change) => {
+    const actual = { ...expectedManifest, ...change };
+    const archive = makeStoredZip({
+      "extension/package.json": JSON.stringify(actual),
+      "extension/dist/extension.js": "bundle",
+      ...Object.fromEntries(EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS.map((entry) => [entry, "resource"])),
+    });
+    expect(() => verifyVsixManifest(archive, expectedManifest)).toThrow(/VSIX manifest/);
+  });
+
+  it("rejects an archive whose manifest main entry is absent", () => {
+    const archive = makeStoredZip({
+      "extension/package.json": JSON.stringify(expectedManifest),
+      ...Object.fromEntries(EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS.map((entry) => [entry, "resource"])),
+    });
+    expect(() => verifyVsixManifest(archive, expectedManifest)).toThrow("main entry is missing");
+  });
+
+  it.each([
+    "extension/__tests__/fixture.js",
+    "extension/specs/fixture.ts",
+    "extension/dist/fixture.js.map",
+    "extension/scripts/package.js",
+  ])("rejects development entry %s", (entry) =>
+    expect(() => verifyVsixArchiveHygiene(readZipArchiveEntries(makeArchive({ [entry]: "fixture" })))).toThrow(
+      "forbidden development or native entries",
+    ),
+  );
+
+  it.each([
+    "extension/native/addon.node",
+    "extension/native/library.dylib",
+    "extension/native/library.so",
+    "extension/native/tool.exe",
+  ])("rejects native entry %s", (entry) =>
+    expect(() => verifyVsixArchiveHygiene(readZipArchiveEntries(makeArchive({ [entry]: "native" })))).toThrow(
+      "forbidden development or native entries",
+    ),
+  );
 });

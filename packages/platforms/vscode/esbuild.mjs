@@ -1,9 +1,12 @@
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+import { cleanExtensionDist } from "./scripts/clean-extension-dist.mjs";
 
 const watch = process.argv.includes("--watch");
 
 const resolveFromHere = (relativePath) => fileURLToPath(new URL(relativePath, import.meta.url));
+
+await cleanExtensionDist(resolveFromHere("./dist"));
 
 /** @type {esbuild.BuildOptions} */
 const buildOptions = {

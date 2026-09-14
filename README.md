@@ -54,7 +54,7 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 - **Stable thinking / CoT stream** — Reasoning display for thinking models without mid-stream blanking.
 - **Research-grade message UI** — Markdown, KaTeX, Mermaid, highlighted code, stable reasoning streams, and **copy as Markdown**.
 - **Model + effort UX** — Search, sticky per-model effort, recent models, collapsed providers, and provider-aware model controls.
-- **Context chip** — token / context usage in the input area for long research threads.
+- **Context chip** — the latest valid prompt-context snapshot in the input area, rather than cumulative prompt work across messages and steps.
 - **Questions during active turns** — Interactive question dialogs appear as soon as the active turn asks, without waiting for an unrelated message update.
 - **Security posture** — Gitleaks, Semgrep, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a clear MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit the extension process and write boundary.
 
@@ -247,13 +247,12 @@ Streaming sessions, permissions and questions, file chips and diffs, undo/redo, 
 
 ### Installation
 
-Search for **OpenCode Scribe** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+On a trusted machine, download `opencode-scribe-<version>.vsix` from the [GitHub Releases](https://github.com/zeug-zz/opencode-chat/releases) page. In VS Code, open the Command Palette and run **Extensions: Install from VSIX...**, then select the downloaded file.
 
-**OpenCode Scribe** (`drmrStudio.opencode-scribe`) is a new, separate
-Marketplace listing from the legacy `zeug-zz.opencode-research` extension. VS
-Code will not automatically upgrade the legacy extension to the new
-publisher/name; install OpenCode Scribe separately if you used the legacy
-listing.
+The Marketplace information for **OpenCode Scribe** (`drmrStudio.opencode-scribe`)
+is retained for identity and history. The legacy `zeug-zz.opencode-research`
+listing is a separate extension; VS Code will not automatically upgrade it to
+the new publisher/name.
 
 ### Development
 
