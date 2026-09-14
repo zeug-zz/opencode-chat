@@ -38,15 +38,15 @@ Pin `github/codeql-action` init, autobuild, and analyze to the resolved commit f
 
 One revision eliminates drift among CodeQL stages. The resolved v4.38.0 tag points through an annotated tag to commit `b96794f015dfd88f77b49b1c93e0fa7110f94c63`.
 
-### 4. Migrate default setup after the workflow proves required checks
+### 4. Disable default setup before validating the advanced workflow
 
-Keep default setup configured while the workflow PR is evaluated. After the workflow is merged and GitHub records both required `Analyze (...)` checks as successful on `main` and a real Dependabot PR, disable CodeQL default setup through the repository Code Scanning default-setup API. Re-query the setting and check runs to prove advanced setup is authoritative.
+GitHub rejects advanced CodeQL SARIF uploads while default setup is enabled. Therefore, disable CodeQL default setup through the repository Code Scanning default-setup API after the workflow PR is created but before its failed CodeQL jobs are re-run. Re-query the setting, re-run the two advanced jobs, and require both exact `Analyze (...)` checks to pass before merging the workflow PR. After merge, verify the same workflow succeeds on `main` and on a refreshed real Dependabot PR.
 
-This sequencing preserves coverage and avoids a gap where neither scanner can satisfy required statuses. Rollback is to re-enable default setup via the same repository API if advanced setup fails.
+This creates a brief transition where the versioned PR workflow is the intended replacement for default setup; it is required by the platform's mutual-exclusivity rule and is safer than retaining a failing duplicate scanner or weakening the ruleset. Rollback is to re-enable default setup through the same repository API if the advanced re-run fails.
 
 ## Risks / Trade-offs
 
-- **Default and advanced setup overlap during rollout** → retain the overlap only through PR validation; disable default setup immediately after evidence of advanced checks.
+- **Default setup must be disabled before advanced uploads are accepted** → disable it only after the workflow PR exists, immediately re-run the advanced jobs, and re-enable default setup if either fails.
 - **A CodeQL job name differs from the ruleset context** → literal matrix values and status-name verification are mandatory before merge.
 - **Dependabot token restrictions prevent a result upload** → validate against existing Dependabot PR #69 before merging any dependency PR; do not introduce `pull_request_target` as a workaround.
 - **CodeQL action maintenance changes its pin** → retain immutable SHA comments and update all three action invocations together.
@@ -55,7 +55,7 @@ This sequencing preserves coverage and avoids a gap where neither scanner can sa
 ## Migration Plan
 
 1. Add and statically validate the advanced workflow in a dedicated PR.
-2. Confirm its two exact CodeQL checks run successfully on the PR and, after merge, on `main`.
-3. Use the repository Code Scanning API to change default setup from `configured` to `not-configured`; re-query it.
-4. Refresh Dependabot PR #69 and verify it receives both required checks; merge only after the ruleset permits it.
+2. Use the repository Code Scanning API to change default setup from `configured` to `not-configured`; re-query it.
+3. Re-run the workflow PR's failed CodeQL jobs and confirm its two exact required checks pass before merge.
+4. After merge, verify the advanced workflow succeeds on `main`, then refresh Dependabot PR #69 and verify it receives both required checks; merge only after the ruleset permits it.
 5. Roll back by re-enabling default setup if the versioned workflow cannot produce valid analyses.
