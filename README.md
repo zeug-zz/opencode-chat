@@ -54,7 +54,7 @@ The project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/o
 - **Stable thinking / CoT stream** — Reasoning display for thinking models without mid-stream blanking.
 - **Research-grade message UI** — Markdown, KaTeX, Mermaid, highlighted code, stable reasoning streams, and **copy as Markdown**.
 - **Model + effort UX** — Search, sticky per-model effort, recent models, collapsed providers, and provider-aware model controls.
-- **Context chip** — token / context usage in the input area for long research threads.
+- **Context chip** — the latest valid prompt-context snapshot in the input area, rather than cumulative prompt work across messages and steps.
 - **Questions during active turns** — Interactive question dialogs appear as soon as the active turn asks, without waiting for an unrelated message update.
 - **Security posture** — Gitleaks, Semgrep, dependency audit, SHA-pinned CI actions, explicit Scout/Write denials, and a clear MCP trust boundary. When Chat sandboxing is enabled, local MCPs inherit the extension process and write boundary.
 
