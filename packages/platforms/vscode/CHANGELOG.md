@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Aligned the React and React DOM runtime versions at 19.3.
 - Upgraded Mermaid to 12 and accepted its current defaults.
+- Raised the minimum VS Code engine version to ^1.137.0 to match the current VS Code type compatibility baseline.
 
 ### Security
 
