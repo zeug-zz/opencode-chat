@@ -58,10 +58,12 @@ make its tools safe or grant them generally to Chat agents.
 ## Optional Memory Provider and Retention
 
 Memory integration is capability-gated and process-scoped. The companion does
-not inherit the independent TUI's global plugin list or execute arbitrary
-configured plugins. The current approved adapter requires the exact Hindsight
-coding-agent package identity and exposes only exact verified recall/search and
-reflection tools to Chat/Scout and Write/Build.
+not rewrite the independent TUI's configuration. It preserves supported global
+and project plugin entries in the companion's process-scoped overlay; those
+plugins are trusted companion-process code, not isolated MCP children. The
+current approved adapter requires the exact Hindsight coding-agent package
+identity and exposes only exact verified recall/search and reflection tools to
+Chat/Scout and Write/Build.
 
 Explicit retention is a separate durable write. It is available only when the
 workspace policy enables it, the approved provider reports `retain`, and the
