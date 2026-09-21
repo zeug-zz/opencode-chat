@@ -5,6 +5,7 @@ import type {
   ReasoningReviewStatus,
   ReasoningReviewSummary,
 } from "@opencode-chat/core";
+import type { ReasoningReviewFeedback } from "../../../hooks/useReasoningReview";
 import { useLocale } from "../../../locales";
 import type { LocaleKeys } from "../../../locales/en";
 import styles from "./ReasoningReviewCard.module.css";
@@ -13,6 +14,10 @@ type Props = {
   summary?: ReasoningReviewSummary;
   isReviewing: boolean;
   runtime: ReasoningReviewRuntime | null;
+  /** Bounded local feedback already submitted for this review, if any. */
+  feedback?: ReasoningReviewFeedback;
+  /** Emits only the bounded feedback booleans; never content or paths. */
+  onFeedback?: (feedback: ReasoningReviewFeedback) => void;
 };
 
 const MAX_TEXT_LENGTH = 500;
@@ -65,7 +70,7 @@ function automaticRoutingReason(summary: ReasoningReviewSummary | undefined): Lo
     : null;
 }
 
-export function ReasoningReviewCard({ summary, isReviewing, runtime }: Props) {
+export function ReasoningReviewCard({ summary, isReviewing, runtime, feedback, onFeedback }: Props) {
   const t = useLocale();
   const status = statusFor(summary, isReviewing, runtime);
   const routingReason = automaticRoutingReason(summary);
@@ -127,6 +132,28 @@ export function ReasoningReviewCard({ summary, isReviewing, runtime }: Props) {
         </div>
       )}
       {status === "unavailable" && <div className={styles.note}>{t["review.unavailableNote"]}</div>}
+      {summary && status !== "reviewing" && onFeedback && (
+        // Feedback is offered only for a review result, and the challenge
+        // control only when the review actually raised an open challenge. The
+        // payload carries two booleans and nothing else.
+        <fieldset className={styles.feedback}>
+          <legend>{t["review.feedback.label"]}</legend>
+          {feedback ? (
+            <div className={styles.note}>{t["review.feedback.recorded"]}</div>
+          ) : (
+            <div className={styles.feedbackActions}>
+              <button type="button" onClick={() => onFeedback?.({ correct: true })}>
+                {t["review.feedback.correct"]}
+              </button>
+              {summary.openChallenges.length > 0 && (
+                <button type="button" onClick={() => onFeedback?.({ correct: false, falseChallenge: true })}>
+                  {t["review.feedback.unfoundedChallenge"]}
+                </button>
+              )}
+            </div>
+          )}
+        </fieldset>
+      )}
     </section>
   );
 }

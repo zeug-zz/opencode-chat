@@ -39,6 +39,10 @@ const reviewKeys = [
   "review.routingReason.evidenceDependent",
   "review.routingReason.multiStepArgument",
   "review.routingReason.highImpactRecommendation",
+  "review.feedback.label",
+  "review.feedback.correct",
+  "review.feedback.unfoundedChallenge",
+  "review.feedback.recorded",
 ] as const;
 
 describe("webview locale dictionaries", () => {

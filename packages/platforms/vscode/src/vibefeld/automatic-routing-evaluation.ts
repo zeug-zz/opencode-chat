@@ -41,6 +41,7 @@ export type AutomaticRoutingMeasurementCase = Readonly<{
 export type AutomaticRoutingEvaluationErrorCode =
   | "malformed"
   | "unknown-field"
+  | "stale-version"
   | "unsafe-value"
   | "non-finite"
   | "negative"
@@ -102,6 +103,7 @@ export function validateAutomaticRoutingEvaluation(value: unknown): AutomaticRou
     !CORPUS_ID.test(value.corpusId)
   )
     return fail("unsafe-value");
+  if (value.version !== AUTOMATIC_ROUTING_EVALUATION_VERSION) return fail("stale-version");
   if (!Number.isSafeInteger(value.caseCount) || value.caseCount < 0) return fail("negative");
   if (value.caseCount > AUTOMATIC_ROUTING_EVALUATION_TARGETS.maximumCaseCount) return fail("over-limit");
   if (![value.p95LatencyMs, value.expectedCalibrationError, value.falseChallengeRate].every(finiteNonNegative))

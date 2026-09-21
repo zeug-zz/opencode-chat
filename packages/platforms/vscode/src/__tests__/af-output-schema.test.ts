@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  AF_FIXTURE_RUNTIME_FACTS,
+  AF_FIXTURE_SCHEMA_VERSION,
+  AF_FIXTURE_WORKSPACE_FORMAT,
   parseAfInitOutput,
   parseAfSchemaOutput,
   parseAfStatusOutput,
@@ -9,20 +12,17 @@ import {
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/vibefeld/${name}`, import.meta.url), "utf8");
 
+const liveFixture = (name: string) =>
+  readFileSync(new URL(`./fixtures/vibefeld/live/af-0.1.11/${name}`, import.meta.url), "utf8");
+
 describe("AF output schema", () => {
   it("normalizes the pinned version fixture without exposing raw output", () => {
     const result = parseAfVersionOutput(fixture("version.json"));
     expect(result).toEqual({
       ok: true,
       facts: {
-        fixtureSchema: "af-runtime-fixture-1",
-        runtime: {
-          executableName: "af",
-          version: "0.1.7",
-          commit: "5a37413",
-          buildDate: "2026-09-08T02:25:39Z",
-          goVersion: "go1.27.1",
-        },
+        fixtureSchema: AF_FIXTURE_SCHEMA_VERSION,
+        runtime: AF_FIXTURE_RUNTIME_FACTS,
         operatingSystem: "darwin",
         architecture: "arm64",
       },
@@ -31,11 +31,25 @@ describe("AF output schema", () => {
     expect(JSON.stringify(result)).not.toContain("version.json");
   });
 
+  it("keeps the synthetic envelope as an explicit test double", () => {
+    expect(AF_FIXTURE_SCHEMA_VERSION).toBe("af-runtime-fixture-1");
+    expect(AF_FIXTURE_WORKSPACE_FORMAT).toBe("1.0");
+    expect(AF_FIXTURE_RUNTIME_FACTS.version).toBe("0.1.7");
+    expect(parseAfVersionOutput(liveFixture("version.json"))).toMatchObject({
+      ok: false,
+      failure: { outcome: "unavailable" },
+    });
+    expect(parseAfSchemaOutput(liveFixture("schema.json"))).toMatchObject({
+      ok: false,
+      failure: { outcome: "unavailable" },
+    });
+  });
+
   it("normalizes schema, initialization, and status while dropping content and paths", () => {
     expect(parseAfSchemaOutput(fixture("schema.json"))).toMatchObject({
       ok: true,
       facts: {
-        workspaceFormat: "1.0",
+        workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT,
         schemaKeys: [
           "inference_types",
           "node_types",
@@ -49,14 +63,14 @@ describe("AF output schema", () => {
     });
     expect(parseAfInitOutput(fixture("workspace-init.json"))).toMatchObject({
       ok: true,
-      facts: { workspaceFormat: "1.0", entryCount: 9, directoryCount: 7, fileCount: 2 },
+      facts: { workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT, entryCount: 9, directoryCount: 7, fileCount: 2 },
       structuralStatus: null,
     });
     const status = parseAfStatusOutput(fixture("status.json"));
     expect(status).toMatchObject({
       ok: true,
       facts: {
-        workspaceFormat: "1.0",
+        workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT,
         rootState: "pending",
         rootResolution: "unresolved",
         nodeCount: 1,

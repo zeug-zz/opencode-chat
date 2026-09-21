@@ -1,8 +1,10 @@
 import type { AfCommandOperation } from "./af-command-schema";
+import type { AfCompatibilityMetadata, AfCompatibilityReason, AfCompatibilityResult } from "./af-compatibility";
+import { classifyAfCompatibility } from "./af-compatibility";
 import type { AfExecutionPolicyAdapter } from "./af-execution-boundary";
-import type { AfInitFacts, AfSchemaFacts, AfStatusFacts, AfVersionFacts } from "./af-output-schema";
+import type { AfLiveInitFacts, AfLiveSchemaFacts, AfLiveStatusFacts, AfLiveVersionFacts } from "./af-live-output";
+import { type AfOutputParserSet, createProductionAfOutputParsers } from "./af-parser-mode";
 import { type AfProcessExecutor, type AfProcessResult, createAfProcessExecutor } from "./af-process-executor";
-import { parseAfFixtureJson } from "./af-runtime-contract";
 import type { ProofWorkspaceHandle, ProofWorkspaceStore } from "./proof-workspace-store";
 
 export type AfBridgeState =
@@ -14,10 +16,9 @@ export type AfBridgeState =
   | "running"
   | "audit-failed";
 export type AfBridgeOperation = Extract<AfCommandOperation, { operation: "init" | "status" }>;
-export type AfBridgeFacts = AfInitFacts | AfStatusFacts;
+export type AfBridgeFacts = AfLiveInitFacts | AfLiveStatusFacts;
 export type AfBridgeFailureReason =
   | "unsupported-platform"
-  | "fixture-invalid"
   | "missing-executable"
   | "policy-unavailable"
   | "preflight-failed"
@@ -35,44 +36,39 @@ export type AfBridgeFailureReason =
 export type AfBridgeResult<T = AfBridgeFacts> = Readonly<{
   state: AfBridgeState;
   structuralStatus: null;
-  compatibility?: Readonly<{
-    fixtureSchema: "af-runtime-fixture-1";
-    version: "0.1.7";
-    commit: "5a37413";
-    workspaceFormat: "1.0";
-  }>;
+  compatibility?: AfCompatibilityMetadata;
   facts?: T;
   reason?: AfBridgeFailureReason;
-  diagnostic?: "fixture" | "platform" | "executable" | "policy" | "preflight" | "operation" | "cleanup" | "audit";
+  diagnostic?: "platform" | "executable" | "policy" | "preflight" | "operation" | "cleanup" | "audit";
 }>;
 
 export type AfBridgeExecutor = Pick<AfProcessExecutor, "execute" | "executePreflight"> &
   Readonly<{ isInvalidated: boolean }>;
 
+export type AfBridgeExecutorOptions = Readonly<{
+  adapter: AfExecutionPolicyAdapter | undefined;
+  executable: string;
+  workspace: string;
+  parsers: AfOutputParserSet;
+}>;
+
 export type AfRuntimeBridgeOptions = Readonly<{
-  fixtureJson: string;
   platform: NodeJS.Platform;
   architecture: "arm64" | "x64" | "arm" | "ia32";
   resolveExecutable: () => string | undefined | Promise<string | undefined>;
   policy: AfExecutionPolicyAdapter | undefined;
   proofStore: ProofWorkspaceStore;
-  readOnlyRuntimeGrants: readonly { path: string }[];
+  /**
+   * Mode-selected parsers. The production default is the live parser set, so
+   * fixture-shaped evidence is never promoted by a production caller.
+   */
+  parsers?: AfOutputParserSet;
   preflightCwd: string;
-  createExecutor?: (options: {
-    adapter: AfExecutionPolicyAdapter | undefined;
-    executable: string;
-    workspace: string;
-    readOnlyRuntimeGrants: readonly { path: string }[];
-    reviewRootWriteGrant: { path: string };
-  }) => AfBridgeExecutor;
+  createExecutor?: (options: AfBridgeExecutorOptions) => AfBridgeExecutor;
 }>;
 
-const compatibility = {
-  fixtureSchema: "af-runtime-fixture-1",
-  version: "0.1.7",
-  commit: "5a37413",
-  workspaceFormat: "1.0",
-} as const;
+const SUPPORTED_PLATFORMS = ["darwin", "linux"] as const;
+const SUPPORTED_ARCHITECTURES = ["arm64", "x64", "arm", "ia32"] as const;
 
 const result = <T>(value: Omit<AfBridgeResult<T>, "structuralStatus">): AfBridgeResult<T> => ({
   ...value,
@@ -99,9 +95,22 @@ const failureDiagnostic = (reason: AfBridgeFailureReason): AfBridgeResult["diagn
             ? "executable"
             : reason === "policy-unavailable"
               ? "policy"
-              : reason === "fixture-invalid"
-                ? "fixture"
-                : "operation";
+              : "operation";
+
+/** Missing, malformed, oversized, unsafe, or fixture-shaped live evidence stays dormant. */
+const compatibilityFailureReason = (reason: AfCompatibilityReason): AfBridgeFailureReason =>
+  reason === "oversized-evidence"
+    ? "oversized"
+    : reason === "unsupported-platform" || reason === "unsupported-architecture"
+      ? "unsupported-platform"
+      : "malformed";
+
+const defaultCreateExecutor = (options: AfBridgeExecutorOptions): AfBridgeExecutor =>
+  createAfProcessExecutor({
+    adapter: options.adapter,
+    commandContext: { executable: options.executable, workspace: options.workspace },
+    parsers: options.parsers,
+  });
 
 /** Host-private AF bridge. Construction is intentionally side-effect free. */
 export class VibefeldRuntimeBridge {
@@ -109,8 +118,12 @@ export class VibefeldRuntimeBridge {
   private workspace?: ProofWorkspaceHandle;
   private executor?: AfBridgeExecutor;
   private initialized = false;
+  private compatibility?: AfCompatibilityMetadata;
+  private readonly parsers: AfOutputParserSet;
 
-  constructor(private readonly options: AfRuntimeBridgeOptions) {}
+  constructor(private readonly options: AfRuntimeBridgeOptions) {
+    this.parsers = options.parsers ?? createProductionAfOutputParsers();
+  }
 
   getState(): AfBridgeState {
     return this.state;
@@ -120,18 +133,16 @@ export class VibefeldRuntimeBridge {
     if (this.state === "audit-failed" || this.state === "ready" || this.state === "running") {
       return result({
         state: this.state,
-        ...(this.state === "ready" || this.state === "running" ? { compatibility } : {}),
+        ...(this.state === "ready" || this.state === "running" ? { compatibility: this.compatibility } : {}),
         reason: this.state === "audit-failed" ? "audit-failure" : undefined,
         diagnostic: this.state === "audit-failed" ? "audit" : undefined,
       });
     }
     this.state = "preflighting";
-    const fixture = parseAfFixtureJson(this.options.fixtureJson);
-    if (!fixture.ok) {
-      this.state = "incompatible";
-      return result({ state: this.state, reason: "fixture-invalid", diagnostic: "fixture" });
-    }
-    if (this.options.platform !== "darwin" && this.options.platform !== "linux") {
+    if (
+      !SUPPORTED_PLATFORMS.includes(this.options.platform as (typeof SUPPORTED_PLATFORMS)[number]) ||
+      !SUPPORTED_ARCHITECTURES.includes(this.options.architecture)
+    ) {
       this.state = "unavailable";
       return result({ state: this.state, reason: "unsupported-platform", diagnostic: "platform" });
     }
@@ -155,52 +166,36 @@ export class VibefeldRuntimeBridge {
       return result({ state: this.state, reason: "missing-executable", diagnostic: "executable" });
     }
     const preflight = this.createPreflightExecutor(executable);
-    const version = await preflight.executePreflight<AfVersionFacts>(
+    const version = await preflight.executePreflight<AfLiveVersionFacts>(
       { operation: "version" },
-      {
-        cwd: this.options.preflightCwd,
-        readOnlyRuntimeGrants: this.options.readOnlyRuntimeGrants,
-      },
+      { cwd: this.options.preflightCwd },
     );
     if (!version.ok) return this.failPreflight(version);
-    const schema = await preflight.executePreflight<AfSchemaFacts>(
+    const schema = await preflight.executePreflight<AfLiveSchemaFacts>(
       { operation: "schema" },
-      {
-        cwd: this.options.preflightCwd,
-        readOnlyRuntimeGrants: this.options.readOnlyRuntimeGrants,
-      },
+      { cwd: this.options.preflightCwd },
     );
     if (!schema.ok) return this.failPreflight(schema);
-    if (
-      version.facts.operatingSystem !== this.options.platform ||
-      version.facts.architecture !== this.options.architecture ||
-      schema.facts.workspaceFormat !== "1.0"
-    ) {
-      this.state = "incompatible";
-      return result({ state: this.state, reason: "runtime-mismatch", diagnostic: "preflight" });
-    }
-    // Security ordering: no proof root is allocated until both compatibility operations pass.
+    const compatibility = classifyAfCompatibility({
+      platform: this.options.platform,
+      architecture: this.options.architecture,
+      version: version.facts,
+      schema: schema.facts,
+    });
+    if (compatibility.state !== "available") return this.failCompatibility(compatibility);
+    this.compatibility = compatibility.metadata;
+    // Security ordering: no proof root is allocated until compatibility passes.
     try {
       this.workspace = await this.options.proofStore.allocate();
       const root = this.options.proofStore.resolvePath(this.workspace);
-      this.executor = (
-        this.options.createExecutor ??
-        ((executorOptions) =>
-          createAfProcessExecutor({
-            adapter: executorOptions.adapter,
-            commandContext: { executable: executorOptions.executable, workspace: executorOptions.workspace },
-            readOnlyRuntimeGrants: executorOptions.readOnlyRuntimeGrants,
-            reviewRootWriteGrant: executorOptions.reviewRootWriteGrant,
-          }))
-      )({
+      this.executor = (this.options.createExecutor ?? defaultCreateExecutor)({
         adapter: this.options.policy,
         executable,
         workspace: root,
-        readOnlyRuntimeGrants: this.options.readOnlyRuntimeGrants,
-        reviewRootWriteGrant: { path: root },
+        parsers: this.parsers,
       });
       this.state = "ready";
-      return result({ state: this.state, compatibility });
+      return result({ state: this.state, compatibility: this.compatibility });
     } catch {
       this.state = "audit-failed";
       return result({ state: this.state, reason: "audit-failure", diagnostic: "audit" });
@@ -231,7 +226,7 @@ export class VibefeldRuntimeBridge {
     }
     this.state = "ready";
     if (operation.operation === "init") this.initialized = true;
-    return result({ state: this.state, compatibility, facts: value.facts as AfBridgeFacts });
+    return result({ state: this.state, compatibility: this.compatibility, facts: value.facts as AfBridgeFacts });
   }
 
   async teardown(): Promise<AfBridgeResult<never>> {
@@ -248,21 +243,11 @@ export class VibefeldRuntimeBridge {
   }
 
   private createPreflightExecutor(executable: string): AfBridgeExecutor {
-    return (
-      this.options.createExecutor ??
-      ((executorOptions) =>
-        createAfProcessExecutor({
-          adapter: executorOptions.adapter,
-          commandContext: { executable: executorOptions.executable, workspace: executorOptions.workspace },
-          readOnlyRuntimeGrants: executorOptions.readOnlyRuntimeGrants,
-          reviewRootWriteGrant: executorOptions.reviewRootWriteGrant,
-        }))
-    )({
+    return (this.options.createExecutor ?? defaultCreateExecutor)({
       adapter: this.options.policy,
       executable,
       workspace: this.options.preflightCwd,
-      readOnlyRuntimeGrants: this.options.readOnlyRuntimeGrants,
-      reviewRootWriteGrant: { path: this.options.preflightCwd },
+      parsers: this.parsers,
     });
   }
 
@@ -273,6 +258,22 @@ export class VibefeldRuntimeBridge {
       state: this.state,
       reason: reason === "operation-not-ready" ? "preflight-failed" : reason,
       diagnostic: "preflight",
+    });
+  }
+
+  private failCompatibility(
+    compatibility: Exclude<AfCompatibilityResult, { state: "available" }>,
+  ): AfBridgeResult<never> {
+    if (compatibility.state === "incompatible") {
+      this.state = "incompatible";
+      return result({ state: this.state, reason: "runtime-mismatch", diagnostic: "preflight" });
+    }
+    const reason = compatibilityFailureReason(compatibility.reason);
+    this.state = "unavailable";
+    return result({
+      state: this.state,
+      reason,
+      diagnostic: reason === "unsupported-platform" ? "platform" : "preflight",
     });
   }
 }

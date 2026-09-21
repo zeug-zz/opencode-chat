@@ -27,6 +27,7 @@ import { useMessages } from "./hooks/useMessages";
 import { usePermissions } from "./hooks/usePermissions";
 import { useProviders } from "./hooks/useProviders";
 import { useQuestions } from "./hooks/useQuestions";
+import type { ReasoningReviewFeedback, ReasoningReviewPreferencePatch } from "./hooks/useReasoningReview";
 import { useReasoningReview } from "./hooks/useReasoningReview";
 import { useSession } from "./hooks/useSession";
 import { useSoundNotification } from "./hooks/useSoundNotification";
@@ -79,8 +80,10 @@ export function App() {
   const review = useReasoningReview(activeSessionRef);
   const {
     runtime: reasoningReviewRuntime,
+    preference: reasoningReviewPreference,
     summaries: reasoningReviewSummaries,
     getSummary: getReasoningReviewSummary,
+    updatePreference: updateReasoningReviewPreference,
     handleHostMessage: handleReasoningReviewHostMessage,
     handleSessionEvent: handleReasoningReviewSessionEvent,
     clearSessionState: clearReasoningReviewSessionState,
@@ -96,6 +99,18 @@ export function App() {
       if (session.activeSession) review.cancelReview(session.activeSession.id, messageId);
     },
     [review.cancelReview, session.activeSession],
+  );
+  const handleReasoningReviewPreferenceChange = useCallback(
+    (patch: ReasoningReviewPreferencePatch) => {
+      updateReasoningReviewPreference(patch);
+    },
+    [updateReasoningReviewPreference],
+  );
+  const handleSubmitReasoningReviewFeedback = useCallback(
+    (sessionId: string, messageId: string, value: ReasoningReviewFeedback) => {
+      review.submitFeedback(sessionId, messageId, value);
+    },
+    [review.submitFeedback],
   );
   const [showAllThinking, setShowAllThinking] = useState(() => getPersistedState()?.showAllThinking ?? false);
   const handleShowAllThinkingChange = useCallback((value: boolean) => {
@@ -467,6 +482,7 @@ export function App() {
           setChatSandboxStatus(data.status);
           break;
         case "reasoningRuntime":
+        case "reasoningReviewPreference":
         case "reasoningReview":
           handleReasoningReviewHostMessage(data);
           break;
@@ -745,9 +761,11 @@ export function App() {
     reasoningReviewRuntime,
     reasoningReviewSummaries,
     getReasoningReviewSummary,
+    getReasoningReviewFeedback: review.getFeedback,
     isReasoningReviewing: review.isReviewing,
     onRequestReasoningReview: handleRequestReasoningReview,
     onCancelReasoningReview: handleCancelReasoningReview,
+    onSubmitReasoningReviewFeedback: handleSubmitReasoningReviewFeedback,
     chatSandboxStatus,
     onChatSandboxSettingsChange: handleChatSandboxSettingsChange,
   };
@@ -834,6 +852,9 @@ export function App() {
                   onMcpRefresh={capabilities?.mcp ? mcp.refresh : undefined}
                   chatSandboxStatus={chatSandboxStatus ?? undefined}
                   onChatSandboxSettingsChange={handleChatSandboxSettingsChange}
+                  reasoningReviewRuntime={reasoningReviewRuntime}
+                  reasoningReviewPreference={reasoningReviewPreference}
+                  onReasoningReviewPreferenceChange={handleReasoningReviewPreferenceChange}
                 />
               )}
             </>

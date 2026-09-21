@@ -1,0 +1,8 @@
+{
+  "version": "0.1.11",
+  "commit": "611291b",
+  "build_date": "2026-09-21T00:24:48Z",
+  "go_version": "go1.27.1",
+  "format": "1.1",
+  "policy": "0.1.9"
+}

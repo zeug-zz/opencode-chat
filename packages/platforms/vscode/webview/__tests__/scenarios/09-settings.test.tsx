@@ -258,6 +258,87 @@ describe("設定", () => {
     });
   });
 
+  context("Reasoning review settings", () => {
+    it("renders the control only for an available runtime", async () => {
+      await setupForSettings();
+      const user = userEvent.setup();
+      await user.click(screen.getByTitle("Settings"));
+
+      expect(screen.queryByTestId("reasoning-review-section")).not.toBeInTheDocument();
+
+      for (const state of ["checking", "incompatible", "unavailable"] as const) {
+        await sendExtMessage({ type: "reasoningRuntime", runtime: { state } });
+        await sendExtMessage({
+          type: "reasoningReviewPreference",
+          preference: { userEnabled: true, workspaceOptOut: false, effective: false },
+        });
+        expect(screen.queryByTestId("reasoning-review-section")).not.toBeInTheDocument();
+      }
+
+      await sendExtMessage({ type: "reasoningRuntime", runtime: { state: "available" } });
+      await sendExtMessage({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: true },
+      });
+
+      expect(screen.getByTestId("reasoning-review-section")).toBeInTheDocument();
+      expect(screen.getByTestId("reasoning-review-enabled")).toBeChecked();
+      expect(screen.getByTestId("reasoning-review-workspace-opt-out")).not.toBeChecked();
+      expect(screen.getByText("Active in this workspace")).toBeInTheDocument();
+    });
+
+    it("sends only the toggled key and reflects the host-published update", async () => {
+      await setupForSettings();
+      const user = userEvent.setup();
+      await sendExtMessage({ type: "reasoningRuntime", runtime: { state: "available" } });
+      await sendExtMessage({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: true },
+      });
+      await user.click(screen.getByTitle("Settings"));
+
+      await user.click(screen.getByTestId("reasoning-review-enabled"));
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "setReasoningReviewPreference",
+        preference: { userEnabled: false },
+      });
+
+      await sendExtMessage({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: false, workspaceOptOut: false, effective: false },
+      });
+      expect(screen.getByTestId("reasoning-review-enabled")).not.toBeChecked();
+      expect(screen.getByText("Inactive in this workspace")).toBeInTheDocument();
+
+      await user.click(screen.getByTestId("reasoning-review-workspace-opt-out"));
+      expect(postMessage).toHaveBeenLastCalledWith({
+        type: "setReasoningReviewPreference",
+        preference: { workspaceOptOut: true },
+      });
+
+      await sendExtMessage({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: false, workspaceOptOut: true, effective: false },
+      });
+      expect(screen.getByTestId("reasoning-review-workspace-opt-out")).toBeChecked();
+    });
+
+    it("never renders a non-functional control for a dormant runtime", async () => {
+      await setupForSettings();
+      const user = userEvent.setup();
+      await sendExtMessage({ type: "reasoningRuntime", runtime: { state: "unavailable" } });
+      await sendExtMessage({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: false },
+      });
+      await user.click(screen.getByTitle("Settings"));
+
+      expect(screen.queryByTestId("reasoning-review-section")).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: "Enable reasoning review" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: "Opt out in this workspace" })).not.toBeInTheDocument();
+    });
+  });
+
   it("omits retention controls while preserving the other settings controls", async () => {
     await setupForSettings();
     const user = userEvent.setup();

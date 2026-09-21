@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-09-21T07:23:54Z",
+  "runtime": {
+    "version": "0.1.11",
+    "commit": "611291b",
+    "build_date": "2026-09-21T00:24:48Z",
+    "go_version": "go1.27.1",
+    "format": "1.1",
+    "policy": "0.1.9"
+  },
+  "commands": [
+    ["af", "version", "--json"],
+    ["af", "schema", "--format", "json"],
+    ["af", "init", "-c", "<conjecture>", "-a", "<author>", "-d", "<workspace>"],
+    ["af", "status", "-d", "<workspace>", "--format", "json"]
+  ]
+}

@@ -553,56 +553,119 @@ when it is not.
 
 ### `add-vibefeld-activation` Scope
 
-1. Runtime discovery: resolve the `af` executable from fixed candidate
-   locations and `PATH`, verify the pinned version and commit against captured
-   fixtures, and report `unavailable` without side effects when AF is absent,
-   incompatible, or the dedicated policy is not ready. Dormancy is the default
-   on systems without AF.
+1. Discovery and pin: resolve the host-owned `af` executable from fixed
+   candidate locations plus `PATH`, verify the pinned version, commit, and
+   workspace-format identity against captured fixtures (`af` 0.1.7 / commit
+   `5a37413` / workspace format `1.0`), and stay dormant without side effects
+   when AF is absent, incompatible, unsupported, or the policy is not ready.
 2. Production policy provider: implement `AfExecutionPolicyAdapter` for
-   macOS/Linux against an AF-specific nono profile. Scribe must not mutate the
-   user's profiles; the intended flow is a bundled draft profile that the user
-   promotes once, mirroring the existing nono profile selection UX, with
-   fail-closed dormancy when it is absent. An alternative is to reuse an
-   existing user-selected profile only if it independently satisfies every
-   `AF_DENIED_POLICY_DOMAINS` requirement. This decision is open for review.
-3. Live output contract: capture real `af version`, `schema`, `init`, and
-   `status --json` output on a development machine, sanitize it into versioned
-   fixtures, and add live parsers beside the fixture-schema parser. The
-   fixture-schema parser remains the test double; production must not accept
-   fixture-shaped output as evidence of a live runtime.
+   macOS/Linux against a documented AF-specific draft nono profile that the
+   user promotes once outside Scribe, mirroring the existing nono profile
+   selection UX. Scribe persists only a validated selection and fails closed
+   when it is absent or invalid; Scribe never creates, edits, or promotes nono
+   profiles, and must not reuse the Chat sandbox policy.
+3. Live output contract: capture real, sanitized `af version`, `schema`,
+   `init`, and `status --json` output and derive live parsers from it. The
+   fixture-schema parser stays a test double; production must never accept
+   fixture-shaped output as evidence of a live runtime, and the two parsers are
+   separate and explicitly selected by mode.
 4. Controller selection and publication: construct the proof store under
    `context.globalStorageUri`, preflight the bridge once per extension
-   activation, and inject the claim-projection controller when the runtime is
-   ready. Publish runtime state so the review card distinguishes unavailable,
-   checking, incompatible, and available instead of always showing unavailable.
+   activation, inject the claim-projection controller when the runtime is
+   ready, and publish runtime status so the review card distinguishes
+   unavailable, checking, incompatible, and available.
 5. Preference semantics: when AF is available and the policy is ready,
-   reasoning review is enabled by default with a per-workspace opt-out,
-   matching the integration behavior of the privileged nono and Hindsight
-   paths. This supersedes the earlier opt-in-first wording for the eventual
-   runtime change. Absent or incompatible AF must never render a control.
-6. Security-negative amendment: replace the assertions that forbid any bridge
+   reasoning review is on by default with a per-workspace opt-out. Store the
+   preference at the Global target, gate the `ToolConfigPanel` control on
+   availability, and never render a non-functional control when AF is absent or
+   incompatible. This supersedes the earlier opt-in-first wording.
+6. Automatic-routing enablement: inject the qualified evaluation and enable
+   selection while keeping the existing fail-closed policy and thresholds
+   (`automatic-routing-evaluation.ts`) unchanged; no selection unless the
+   evaluation validates as qualified, the runtime is available, and the policy
+   signals pass. The existing bounded rationale rendering is reused.
+7. Hybrid qualification pipeline: validate the pipeline against a versioned
+   30–50 case adjudicated seed corpus, then accumulate host-private live
+   outcome capture to the 100-case minimum. Qualification stays aggregate-only
+   and host-private; the seed corpus is a versioned repo artifact; live capture
+   records latency automatically, derives `challenged` from review status, and
+   collects `correct`/`falseChallenge` through bounded local review-card
+   feedback. No Hindsight runtime coupling.
+8. Security-negative amendment: replace the assertions that forbid any bridge
    import in `extension.ts` and `chat-view-provider.ts` with assertions that
    permit only the constrained wiring (fixed argv, required ready policy,
-   host-owned workspace, bounded output, no plugin/MCP/tool/agent/`IAgent`
-   exposure) while retaining every current prohibition that still applies.
+   host-owned workspace, bounded output) while retaining every prohibition on
+   plugins, MCP, custom tools, agent overlays, `IAgent`/protocol AF fields,
+   arbitrary argv, and unsandboxed retries.
 
-### Explicitly Still Blocked
+### Decisions Taken (2026-09-21)
 
-- Adversarial review needs a host-owned restricted child-model API. A hidden,
-  tool-less session through the existing agent package is a candidate, but it
-  requires its own security-reviewed change; the default seam stays
-  unsupported until then.
-- The response gate needs a transactional draft/review/release insertion
-  point. `promptAsync` streams immediately; a host-side buffer before webview
-  publication is possible but changes streaming behavior and needs an explicit
-  product decision.
-- Automatic routing remains deferred until a reviewed evaluation corpus exists.
+- **Response gate dismissed.** Post-response review is the final semantics.
+  There is no buffering or hold-before-release; live streaming is preserved.
+  The existing response-gate implementation stays a fixture-level contract and
+  is never activated. Do not create a gate change.
+- **Adversarial review deferred.** It moves to a separate follow-up change,
+  `add-vibefeld-restricted-contexts`, created only after activation proves
+  useful. It is independent of AF (it critiques the claim graph) and requires
+  its own security review for a restricted tool-less child-model context. No
+  `vibefeld-prover`/`vibefeld-verifier` agents, tools, or plugins.
+- **Automatic routing folded into activation.** The deliverable injects the
+  qualified evaluation and enables selection. Qualification is hybrid: a 30–50
+  case adjudicated seed corpus validates the pipeline, then host-private live
+  outcome capture accumulates reviews to the 100-case minimum. The selection
+  policy and thresholds (`automatic-routing-evaluation.ts`) are unchanged.
+- **Hindsight boundary.** Hindsight is an offline corpus-research aid only,
+  used by developers. It is never a runtime routing input and never an
+  automatic recipient of review state; qualification aggregates remain
+  host-private; no automatic ingestion of review content into memory.
+- **Policy provider selection.** The provider is a documented AF-specific draft
+  nono profile that the user promotes once outside Scribe, mirroring the
+  existing nono profile selection UX. Scribe only persists a validated profile
+  selection and fails closed when it is absent or invalid; Scribe never
+  creates, edits, or promotes nono profiles.
+- **Direct execution replaces the AF nono profile (KISS).** Vibefeld AF uses no
+  nested nono profile and no second sandbox. AF runs directly as a bounded child
+  process of the extension host under whatever enclosing sandbox the user's
+  session already has (none is claimed or required), with fixed host-owned argv,
+  `shell: false`, an allowlisted environment, bounded I/O, and
+  terminate-and-reap. There is no AF profile, no profile-selection or promotion
+  flow, no runtime grants, and no denied-domain attestation; readiness is
+  `{ state: "ready", execution: "direct" }` on supported platforms with a
+  compatible executable. If AF needs additional allows under the user's nono
+  profile, the standard nono skill flow (`nono why` plus a drafted profile
+  promotion) handles it outside Scribe. The "AF sees only the ephemeral proof
+  workspace" isolation guarantee is withdrawn as a design goal; the proof
+  workspace remains only AF's working directory for review scratch. This
+  supersedes the policy provider selection decision above, the corresponding
+  addendum scope wording, and the dedicated-policy completion criteria.
+- **Compatibility is format-pinned and version-tolerant.** Support requires an
+  `af` version matching `^0\.1\.\d{1,3}$` (the 0.1.x line), a `format` exactly
+  `1.1`, and all required version fields present, bounded (≤256 characters),
+  and safe; `version`, `commit`, `build_date`, `go_version`, and `policy` are
+  recorded as host-private metadata but never exact-matched, so exact commit
+  equality does not gate support. Platform and architecture are host-derived
+  (`process.platform` in {darwin, linux}; `process.arch` in {arm64, x64, arm,
+  ia32}); real `af version --json` output exposes no OS or architecture and is
+  not expected to. Fail closed: missing, malformed, oversized, unsafe, or
+  ambiguous fields and unsupported host platforms stay dormant `unavailable`;
+  a version outside 0.1.x or `format` other than `1.1` stays dormant
+  `incompatible`. This supersedes the pinned-identity wording in the addendum
+  scope above: the earlier 0.1.7 / commit `5a37413` / workspace format `1.0`
+  evidence was stale, replaced by sanitized real captures (2026-09-21: `af`
+  0.1.11, commit `611291b`, format `1.1`, policy `0.1.9`, build
+  `2026-09-21T00:24:48Z`, go `go1.27.1`), and the synthetic
+  `af-runtime-fixture-1` envelope is retired to test-double status. AF is under
+  active development, so version and commit bumps within the 0.1.x line with a
+  valid `format` and field shape must not force dormancy.
 
 ### Activation Completion Criteria
 
 `add-vibefeld-activation` is complete only when: AF is discovered and pinned;
 the dedicated policy is enforced or the runtime stays dormant; live fixtures
 replace fixture-shaped parsing; the injected controller is selected
-dynamically; ordinary Chat, Write, Scout, MCP, sandbox, and the independent TUI
-are provably unchanged when AF is absent; and the amended security-negative
-suite still fails closed on any broader authority.
+dynamically; automatic routing selects only when the evaluation validates as
+qualified; the hybrid qualification pipeline and its escape hatches are in
+place; no response is claimed as gated; ordinary Chat, Write, Scout, MCP,
+sandbox, and the independent TUI are provably unchanged when AF is absent or
+the policy is unavailable; and the amended security-negative suite still fails
+closed on any broader authority.

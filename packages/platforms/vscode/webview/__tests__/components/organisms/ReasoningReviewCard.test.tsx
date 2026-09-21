@@ -1,5 +1,5 @@
 import type { ReasoningReviewStatus, ReasoningReviewSummary } from "@opencode-chat/core";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ReasoningReviewCard } from "../../../components/organisms/ReasoningReviewCard";
 import { LocaleProvider } from "../../../locales";
@@ -176,5 +176,77 @@ describe("ReasoningReviewCard", () => {
     expect(screen.queryByText(en["review.automaticLabel"])).not.toBeInTheDocument();
     expect(screen.queryByText("unsafe")).not.toBeInTheDocument();
     expect(screen.queryByText("unsafe_reason")).not.toBeInTheDocument();
+  });
+
+  it("emits only bounded feedback booleans from the review result", () => {
+    const onFeedback = vi.fn();
+    render(
+      <LocaleProvider value={en}>
+        <ReasoningReviewCard
+          summary={makeSummary("conditional")}
+          isReviewing={false}
+          runtime={{ state: "available" }}
+          onFeedback={onFeedback}
+        />
+      </LocaleProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: en["review.feedback.correct"] }));
+    expect(onFeedback).toHaveBeenLastCalledWith({ correct: true });
+    expect(Object.keys(onFeedback.mock.calls.at(-1)?.[0] ?? {})).toEqual(["correct"]);
+
+    fireEvent.click(screen.getByRole("button", { name: en["review.feedback.unfoundedChallenge"] }));
+    expect(onFeedback).toHaveBeenLastCalledWith({ correct: false, falseChallenge: true });
+    expect(Object.keys(onFeedback.mock.calls.at(-1)?.[0] ?? {}).sort()).toEqual(["correct", "falseChallenge"]);
+    expect(JSON.stringify(onFeedback.mock.calls)).not.toMatch(/prompt|source|response|path/iu);
+  });
+
+  it("offers the challenge control only when the review raised open challenges", () => {
+    const onFeedback = vi.fn();
+    render(
+      <LocaleProvider value={en}>
+        <ReasoningReviewCard
+          summary={{ ...makeSummary("conditional"), openChallenges: [] }}
+          isReviewing={false}
+          runtime={{ state: "available" }}
+          onFeedback={onFeedback}
+        />
+      </LocaleProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: en["review.feedback.correct"] })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en["review.feedback.unfoundedChallenge"] })).not.toBeInTheDocument();
+  });
+
+  it("offers no feedback controls without a result or without a handler", () => {
+    const onFeedback = vi.fn();
+    const { unmount } = render(
+      <LocaleProvider value={en}>
+        <ReasoningReviewCard isReviewing runtime={{ state: "available" }} onFeedback={onFeedback} />
+      </LocaleProvider>,
+    );
+    expect(screen.queryByRole("button", { name: en["review.feedback.correct"] })).not.toBeInTheDocument();
+    unmount();
+
+    renderCard(makeSummary("structurally_checked"));
+    expect(screen.queryByRole("button", { name: en["review.feedback.correct"] })).not.toBeInTheDocument();
+  });
+
+  it("replaces the controls with a localized recorded note after feedback", () => {
+    render(
+      <LocaleProvider value={en}>
+        <ReasoningReviewCard
+          summary={makeSummary("conditional")}
+          isReviewing={false}
+          runtime={{ state: "available" }}
+          feedback={{ correct: false, falseChallenge: true }}
+          onFeedback={vi.fn()}
+        />
+      </LocaleProvider>,
+    );
+
+    expect(screen.getByText(en["review.feedback.recorded"])).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en["review.feedback.correct"] })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en["review.feedback.unfoundedChallenge"] })).not.toBeInTheDocument();
   });
 });

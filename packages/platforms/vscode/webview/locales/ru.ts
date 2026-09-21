@@ -65,6 +65,10 @@ export const ru: LocaleSchema = {
   "review.routingReason.evidenceDependent": "Ответ зависит от доказательств",
   "review.routingReason.multiStepArgument": "Многоэтапный аргумент",
   "review.routingReason.highImpactRecommendation": "Рекомендация с высоким воздействием",
+  "review.feedback.label": "Отзыв",
+  "review.feedback.correct": "Верно",
+  "review.feedback.unfoundedChallenge": "Необоснованное возражение",
+  "review.feedback.recorded": "Отзыв записан",
 
   // MessagesArea
   "checkpoint.revertTitle": "Вернуться к этой точке",
@@ -164,6 +168,15 @@ export const ru: LocaleSchema = {
   "config.sandboxManaged": "Настройки песочницы Chat управляются и не могут быть изменены.",
   "config.sandboxApplying": "Применение настроек песочницы…",
   "config.sandboxError": (error: string) => `Ошибка песочницы: ${error}`,
+
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Проверка рассуждений",
+  "config.reasoningReviewEnable": "Включить проверку рассуждений",
+  "config.reasoningReviewWorkspaceOptOut": "Отказаться в этом рабочем пространстве",
+  "config.reasoningReviewDescription":
+    "Проверяет ответы на этом хосте, когда среда проверки рассуждений доступна. Отказ рабочего пространства переопределяет глобальную настройку для этого рабочего пространства.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Включена в этом рабочем пространстве" : "Отключена в этом рабочем пространстве",
 
   // Language setting
   "config.language": "Язык",

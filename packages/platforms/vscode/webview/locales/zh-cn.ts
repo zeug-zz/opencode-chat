@@ -65,6 +65,10 @@ export const zhCn: LocaleSchema = {
   "review.routingReason.evidenceDependent": "依赖证据的回答",
   "review.routingReason.multiStepArgument": "多步骤论证",
   "review.routingReason.highImpactRecommendation": "高影响建议",
+  "review.feedback.label": "反馈",
+  "review.feedback.correct": "正确",
+  "review.feedback.unfoundedChallenge": "无依据的质疑",
+  "review.feedback.recorded": "反馈已记录",
 
   // MessagesArea
   "checkpoint.revertTitle": "回退到此处",
@@ -161,6 +165,14 @@ export const zhCn: LocaleSchema = {
   "config.sandboxManaged": "聊天沙箱设置由管理员管理，无法更改。",
   "config.sandboxApplying": "正在应用沙箱设置…",
   "config.sandboxError": (error: string) => `沙箱错误：${error}`,
+
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "推理审查",
+  "config.reasoningReviewEnable": "启用推理审查",
+  "config.reasoningReviewWorkspaceOptOut": "在此工作区中选择退出",
+  "config.reasoningReviewDescription":
+    "当推理审查运行时可用时，将在此主机上审查回复。工作区退出设置会覆盖此工作区的全局偏好。",
+  "config.reasoningReviewEffective": (enabled: boolean) => (enabled ? "在此工作区中已启用" : "在此工作区中未启用"),
 
   // Language setting
   "config.language": "语言",

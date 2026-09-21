@@ -195,6 +195,57 @@ describe("reasoning review protocol", () => {
     ]);
   });
 
+  it("serializes bounded preference discriminants without runtime metadata", () => {
+    const hostPreference = {
+      type: "reasoningReviewPreference",
+      preference: { userEnabled: true, workspaceOptOut: false, effective: true },
+    } satisfies HostToUIMessage;
+    const partialPreference = {
+      type: "setReasoningReviewPreference",
+      preference: { userEnabled: false },
+    } satisfies UIToHostMessage;
+    const optOutPreference = {
+      type: "setReasoningReviewPreference",
+      preference: { workspaceOptOut: true },
+    } satisfies UIToHostMessage;
+
+    expect(JSON.parse(JSON.stringify([hostPreference, partialPreference, optOutPreference]))).toEqual([
+      hostPreference,
+      partialPreference,
+      optOutPreference,
+    ]);
+    expect(Object.keys(hostPreference).sort()).toEqual(["preference", "type"]);
+    expect(Object.keys(hostPreference.preference).sort()).toEqual(["effective", "userEnabled", "workspaceOptOut"]);
+    expect(Object.keys(partialPreference.preference)).toEqual(["userEnabled"]);
+    expect(Object.keys(optOutPreference.preference)).toEqual(["workspaceOptOut"]);
+    expect(JSON.stringify([hostPreference, partialPreference, optOutPreference])).not.toMatch(
+      /executablePath|workspacePath|command|flags|ledger|prompt|sourcePacket|runtime/i,
+    );
+  });
+
+  it("carries bounded local review feedback without content or paths", () => {
+    const feedback: UIToHostMessage = {
+      type: "setReasoningReviewFeedback",
+      sessionId: "session-1",
+      messageId: "message-1",
+      correct: false,
+      falseChallenge: true,
+    };
+    const minimalFeedback: UIToHostMessage = {
+      type: "setReasoningReviewFeedback",
+      sessionId: "session-1",
+      messageId: "message-1",
+      correct: true,
+    };
+
+    expect(JSON.parse(JSON.stringify([feedback, minimalFeedback]))).toEqual([feedback, minimalFeedback]);
+    expect(Object.keys(feedback).sort()).toEqual(["correct", "falseChallenge", "messageId", "sessionId", "type"]);
+    expect(Object.keys(minimalFeedback).sort()).toEqual(["correct", "messageId", "sessionId", "type"]);
+    expect(JSON.stringify([feedback, minimalFeedback])).not.toMatch(
+      /prompt|sourcePacket|responseText|reviewText|workspacePath|reasoningTrace|executable/i,
+    );
+  });
+
   it("carries bounded automatic routing metadata without requiring it for manual summaries", () => {
     const automaticSummary: ReasoningReviewSummary = {
       ...summary,

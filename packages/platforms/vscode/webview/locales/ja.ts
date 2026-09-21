@@ -65,6 +65,10 @@ export const ja: LocaleSchema = {
   "review.routingReason.evidenceDependent": "証拠に依存する回答",
   "review.routingReason.multiStepArgument": "複数段階の論証",
   "review.routingReason.highImpactRecommendation": "影響の大きい推奨",
+  "review.feedback.label": "フィードバック",
+  "review.feedback.correct": "正しい",
+  "review.feedback.unfoundedChallenge": "根拠のない指摘",
+  "review.feedback.recorded": "フィードバックを記録しました",
 
   // MessagesArea
   "checkpoint.revertTitle": "ここまで巻き戻す",
@@ -164,6 +168,15 @@ export const ja: LocaleSchema = {
   "config.sandboxManaged": "チャットのサンドボックス設定は管理されているため変更できません。",
   "config.sandboxApplying": "サンドボックス設定を適用中…",
   "config.sandboxError": (error: string) => `サンドボックスエラー: ${error}`,
+
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "推論レビュー",
+  "config.reasoningReviewEnable": "推論レビューを有効にする",
+  "config.reasoningReviewWorkspaceOptOut": "このワークスペースでは使用しない",
+  "config.reasoningReviewDescription":
+    "推論レビューのランタイムが利用可能なとき、このホストで応答をレビューします。ワークスペースのオプトアウトは、このワークスペースのグローバル設定より優先されます。",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "このワークスペースで有効" : "このワークスペースでは無効",
 
   // Language setting
   "config.language": "言語",

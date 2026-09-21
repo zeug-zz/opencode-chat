@@ -1,11 +1,15 @@
 /**
- * Platform-private evidence for a future AF bridge.
+ * Platform-private evidence for the AF bridge contract.
  *
  * These shapes describe recorded observations and boundary requirements only.
  * They are deliberately not part of the host/webview protocol and do not
- * authorize loading a runtime or starting a process.
+ * authorize loading a runtime or starting a process. The synthetic
+ * `af-runtime-fixture-1` envelope and its `AF_FIXTURE_*` constants are an
+ * explicit test double: sanitized real captures are the live-shape reference
+ * and fixture evidence is never production runtime evidence.
  */
 
+/** Test-double schema tag for the synthetic fixture envelope; never production evidence. */
 export type AfFixtureSchemaVersion = `af-runtime-fixture-${number}`;
 
 export type AfRuntimeIdentity = {
@@ -127,6 +131,7 @@ export function classifyAfRuntimeResult(kind: AfRuntimeResultKind): AfResultClas
   };
 }
 
+/** Fixture test-double evidence records; not production runtime evidence. */
 export type AfRuntimeEvidence = {
   schemaVersion: AfFixtureSchemaVersion;
   runtime: AfRuntimeIdentity;
@@ -136,6 +141,7 @@ export type AfRuntimeEvidence = {
   approvedOperations: AfApprovedOperationSet;
 };
 
+/** Fixture test-double compatibility result; not a live compatibility verdict. */
 export type AfCompatibility =
   | { state: "compatible"; schemaVersion: AfFixtureSchemaVersion; runtime: AfRuntimeIdentity }
   | { state: "incompatible"; reason: "schema" | "runtime" | "platform" | "workspace" | "incomplete" };
@@ -219,16 +225,20 @@ export type AfFixtureValidation =
   | { ok: true; value: AfRuntimeContract }
   | { ok: false; errors: readonly AfFixtureValidationError[] };
 
-const EXPECTED_SCHEMA: AfFixtureSchemaVersion = "af-runtime-fixture-1";
-const EXPECTED_RUNTIME: AfRuntimeIdentity = {
+/** Explicit fixture test-double schema marker for the synthetic envelope; never production evidence. */
+export const AF_FIXTURE_SCHEMA_VERSION = "af-runtime-fixture-1" as const;
+/** Explicit fixture test-double runtime identity for the synthetic envelope; never production evidence. */
+export const AF_FIXTURE_RUNTIME_IDENTITY: AfRuntimeIdentity = {
   executableName: "af",
   version: "0.1.7",
   commit: "5a37413",
   buildDate: "2026-09-08T02:25:39Z",
   goVersion: "go1.27.1",
 };
-const EXPECTED_PLATFORM: AfCapturePlatform = { operatingSystem: "darwin", architecture: "arm64" };
-const EXPECTED_WORKSPACE: AfWorkspaceMetadata = { format: "1.0", root: "fixture-workspace" };
+/** Explicit fixture test-double capture platform for the synthetic envelope; never production evidence. */
+export const AF_FIXTURE_PLATFORM: AfCapturePlatform = { operatingSystem: "darwin", architecture: "arm64" };
+/** Explicit fixture test-double workspace identity for the synthetic envelope; never production evidence. */
+export const AF_FIXTURE_WORKSPACE: AfWorkspaceMetadata = { format: "1.0", root: "fixture-workspace" };
 const UNSAFE_MARKER =
   /(?:prompt|source[-_ ]?packet|private[-_ ]?reasoning|chain[-_ ]?of[-_ ]?thought|secret|password|token|authorization|credential|api[-_ ]?key)/i;
 const SHELL_TOKEN = /[;&|`$\n\r]|\$\(|\b(?:sh|bash|zsh|fish|powershell|cmd)\s+-c\b/i;
@@ -456,13 +466,13 @@ export function normalizeAfFixture(input: unknown): AfFixtureValidation {
   const processBoundary = input.processBoundary;
   const workspace =
     isRecord(input.workspace) && input.workspace.format === "1.0" && input.workspace.root === "fixture-workspace"
-      ? EXPECTED_WORKSPACE
+      ? AF_FIXTURE_WORKSPACE
       : undefined;
-  if (input.fixtureSchema !== EXPECTED_SCHEMA)
+  if (input.fixtureSchema !== AF_FIXTURE_SCHEMA_VERSION)
     errors.push(error("unsupported-schema", "fixture schema is unsupported"));
-  if (!runtime || JSON.stringify(runtime) !== JSON.stringify(EXPECTED_RUNTIME))
+  if (!runtime || JSON.stringify(runtime) !== JSON.stringify(AF_FIXTURE_RUNTIME_IDENTITY))
     errors.push(error("unsupported-runtime", "fixture runtime identity is unsupported"));
-  if (!platform || JSON.stringify(platform) !== JSON.stringify(EXPECTED_PLATFORM))
+  if (!platform || JSON.stringify(platform) !== JSON.stringify(AF_FIXTURE_PLATFORM))
     errors.push(error("unsupported-platform", "fixture capture platform is unsupported"));
   if (!workspace) errors.push(error("unsupported-workspace", "fixture workspace identity is unsupported"));
   if (!hasCompleteBoundary(processBoundary))
@@ -488,14 +498,14 @@ export function normalizeAfFixture(input: unknown): AfFixtureValidation {
     ok: true,
     value: {
       evidence: {
-        schemaVersion: EXPECTED_SCHEMA,
+        schemaVersion: AF_FIXTURE_SCHEMA_VERSION,
         runtime,
         platform,
         workspace,
         observedOperations,
         approvedOperations: AF_APPROVED_OPERATIONS,
       },
-      compatibility: { state: "compatible", schemaVersion: EXPECTED_SCHEMA, runtime },
+      compatibility: { state: "compatible", schemaVersion: AF_FIXTURE_SCHEMA_VERSION, runtime },
       processBoundary,
     },
   };

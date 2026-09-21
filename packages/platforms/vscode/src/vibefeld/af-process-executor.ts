@@ -3,10 +3,10 @@ import {
   type AfExecutionPolicyAdapter,
   type AfPolicyExecutionFact,
   type AfPolicyIoLimits,
-  type AfPreflightDescriptor,
   buildAfPolicyDescriptor,
   buildAfPreflightDescriptor,
 } from "./af-execution-boundary";
+import type { AfLiveOutputResult } from "./af-live-output";
 import {
   type AfOutputExecution,
   type AfOutputResult,
@@ -15,6 +15,7 @@ import {
   parseAfStatusOutput,
   parseAfVersionOutput,
 } from "./af-output-schema";
+import type { AfOutputParserSet } from "./af-parser-mode";
 import {
   AF_FIXTURE_LIMITS,
   type AfResultClassification,
@@ -31,7 +32,7 @@ const IO_LIMITS: AfPolicyIoLimits = Object.freeze({
 });
 
 type AfOperationName = AfCommandOperation["operation"];
-type AfParsedResult = AfOutputResult<unknown>;
+type AfParsedResult = AfOutputResult<unknown> | AfLiveOutputResult<unknown>;
 
 export type AfProcessFailure = Readonly<{
   ok: false;
@@ -51,8 +52,12 @@ export type AfProcessResult<T = unknown> = AfProcessSuccess<T> | AfProcessFailur
 export type AfProcessExecutorOptions = Readonly<{
   adapter: AfExecutionPolicyAdapter | undefined;
   commandContext: AfCommandContext;
-  readOnlyRuntimeGrants: readonly { path: string }[];
-  reviewRootWriteGrant: { path: string };
+  /**
+   * Mode-selected output parsers. Production callers pass the live parser set;
+   * the fixture-schema test double remains the default so existing host-private
+   * tests keep their recorded evidence.
+   */
+  parsers?: AfOutputParserSet;
 }>;
 
 const utf8Bytes = (value: string): number => new TextEncoder().encode(value).length;
@@ -76,16 +81,16 @@ const failure = (
   diagnostic,
 });
 
-const parserFor = (operation: AfOperationName) => {
+const parserFor = (operation: AfOperationName, parsers: AfOutputParserSet | undefined) => {
   switch (operation) {
     case "version":
-      return parseAfVersionOutput;
+      return parsers?.version ?? parseAfVersionOutput;
     case "schema":
-      return parseAfSchemaOutput;
+      return parsers?.schema ?? parseAfSchemaOutput;
     case "init":
-      return parseAfInitOutput;
+      return parsers?.init ?? parseAfInitOutput;
     case "status":
-      return parseAfStatusOutput;
+      return parsers?.status ?? parseAfStatusOutput;
   }
 };
 
@@ -138,8 +143,6 @@ export class AfProcessExecutor {
         executable: launch.executable,
         argv: launch.argv,
         cwd: launch.cwd ?? this.options.commandContext.workspace,
-        readOnlyRuntimeGrants: this.options.readOnlyRuntimeGrants,
-        reviewRootWriteGrant: this.options.reviewRootWriteGrant,
       });
     } catch {
       return failure("policy-failure", "policy");
@@ -187,7 +190,7 @@ export class AfProcessExecutor {
 
     if (fact.outcome === "signaled") return failure("signaled", "signal");
     if (!boundedOutput(fact.stdout) || !boundedOutput(fact.stderr ?? "")) return failure("oversized", "oversized");
-    const parsed = parserFor(operation.operation)(fact.stdout ?? "", executionForParser(fact));
+    const parsed = parserFor(operation.operation, this.options.parsers)(fact.stdout ?? "", executionForParser(fact));
     if (!parsed.ok) return parserFailure(parsed) as AfProcessFailure;
     return { ok: true, operation: operation.operation, facts: parsed.facts as T, structuralStatus: null };
   }
@@ -195,21 +198,20 @@ export class AfProcessExecutor {
   /** Execute only version/schema before a proof root is allocated. */
   async executePreflight<T = unknown>(
     operation: Extract<AfCommandOperation, { operation: "version" | "schema" }>,
-    preflight: Readonly<{ cwd: string; readOnlyRuntimeGrants: readonly { path: string }[] }>,
+    preflight: Readonly<{ cwd: string }>,
     signal?: AbortSignal,
   ): Promise<AfProcessResult<T>> {
     if (this.invalidated || signal?.aborted)
       return failure(signal?.aborted ? "cancelled" : "audit-failure", signal?.aborted ? "cancelled" : "cleanup");
     const adapter = this.options.adapter;
     if (!adapter?.launchPreflight) return failure("policy-failure", "policy");
-    let descriptor: AfPreflightDescriptor;
+    let descriptor: ReturnType<typeof buildAfPreflightDescriptor>["descriptor"];
     try {
       const launch = this.commands.build(operation);
       const result = buildAfPreflightDescriptor(adapter, {
         executable: launch.executable,
         argv: launch.argv,
         cwd: preflight.cwd,
-        readOnlyRuntimeGrants: preflight.readOnlyRuntimeGrants,
       });
       if (!result.available) return failure("policy-failure", "policy");
       descriptor = result.descriptor;
@@ -251,7 +253,7 @@ export class AfProcessExecutor {
     }
     if (fact.outcome === "signaled") return failure("signaled", "signal");
     if (!boundedOutput(fact.stdout) || !boundedOutput(fact.stderr ?? "")) return failure("oversized", "oversized");
-    const parsed = parserFor(operation.operation)(fact.stdout ?? "", executionForParser(fact));
+    const parsed = parserFor(operation.operation, this.options.parsers)(fact.stdout ?? "", executionForParser(fact));
     if (!parsed.ok) return parserFailure(parsed) as AfProcessFailure;
     return { ok: true, operation: operation.operation, facts: parsed.facts as T, structuralStatus: null };
   }

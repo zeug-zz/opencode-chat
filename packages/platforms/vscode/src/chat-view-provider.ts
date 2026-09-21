@@ -14,12 +14,15 @@ import type {
   IPlatformServices,
   MemoryProviderStatus,
   MemoryRetentionStatus,
+  ReasoningReviewRuntime,
+  ReasoningReviewStatus,
   ReasoningReviewSummary,
   UIToHostMessage,
 } from "@opencode-chat/core";
 import { DEFAULT_MEMORY_RETENTION_POLICY } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
+import { validateAutomaticRoutingEvaluation } from "./vibefeld/automatic-routing-evaluation";
 import { type AutomaticRoutingBinding, createAutomaticRoutingLifecycle } from "./vibefeld/automatic-routing-lifecycle";
 import type {
   AutomaticRoutingEvaluation,
@@ -29,8 +32,10 @@ import type {
   AutomaticRoutingStructuralSignals,
   AutomaticRoutingWorkMode,
 } from "./vibefeld/automatic-routing-policy";
+import type { QualificationRecorderSeam } from "./vibefeld/qualification-recorder";
 import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
 import { buildReasoningReviewSourcePacket } from "./vibefeld/reasoning-review-source-packet";
+import { resolveEffectiveVibefeldEnabled, type VibefeldPreference } from "./vibefeld/vibefeld-settings";
 import { resolveTabInputFile } from "./vscode-platform-services";
 
 type NormalPrompt = Extract<UIToHostMessage, { type: "sendMessage" }>;
@@ -61,7 +66,36 @@ export type AutomaticRoutingRouter = (input: AutomaticRoutingPolicyInput) => Aut
 export type AutomaticRoutingOptions = Readonly<{
   enabled: boolean;
   evaluation?: AutomaticRoutingEvaluation;
+  /**
+   * Optional dynamic evaluation source. When present it is read at selection
+   * time (falling back to `evaluation` when it reports nothing), so a
+   * host-private recorder can expose its aggregate as soon as the case
+   * minimum is reached without re-constructing the provider.
+   */
+  evaluationProvider?: () => AutomaticRoutingEvaluation | undefined;
   router?: AutomaticRoutingRouter;
+}>;
+
+/** Host-private evidence retained for the bounded feedback that follows a completed review. */
+type PendingQualificationEvidence = Readonly<{
+  latencyMs: number;
+  status: ReasoningReviewStatus;
+  hasOpenChallenges: boolean;
+}>;
+
+/** Bounds the retained completion evidence; nothing here leaves the host. */
+const MAX_PENDING_QUALIFICATION_EVIDENCE = 200;
+const MAX_QUALIFICATION_ID_LENGTH = 256;
+
+/**
+ * Host seam for the reasoning-review preference. The user toggle writes the
+ * Global target and the workspace opt-out writes the Workspace target; both
+ * write only their own key and never unrelated configuration.
+ */
+export type ReasoningReviewPreferenceSeam = Readonly<{
+  read: () => VibefeldPreference;
+  setUserEnabled: (value: boolean) => Promise<void>;
+  setWorkspaceOptOut: (value: boolean) => Promise<void>;
 }>;
 
 const MEMORY_RETENTION_PERMISSION = "hindsight_ingest_document";
@@ -99,6 +133,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly writeSystemPrompt: string | null;
   private readonly setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
   private readonly reasoningReviewController?: IReasoningReviewController;
+  private readonly reasoningReviewPreference?: ReasoningReviewPreferenceSeam;
+  private reasoningReviewRuntime: ReasoningReviewRuntime | undefined;
+  private readonly qualificationRecorder?: QualificationRecorderSeam;
+  private readonly pendingQualificationEvidence = new Map<string, PendingQualificationEvidence>();
   private readonly automaticRouting?: AutomaticRoutingOptions;
   private readonly automaticRoutingLifecycle = createAutomaticRoutingLifecycle();
   private latestAutomaticRoutingMetadata: LatestAutomaticRoutingMetadata | undefined;
@@ -129,6 +167,83 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private reasoningReviewKey(sessionId: string, messageId: string): string {
     return `${sessionId}\u0000${messageId}`;
+  }
+
+  /**
+   * Retain the bounded latency/status facts for a completed review until the
+   * bounded review-card feedback arrives. Only the summary status and its
+   * open-challenge bit are kept; review text and the summary itself are
+   * discarded. Retention is capped, so abandoned evidence can never grow.
+   */
+  private retainQualificationEvidence(
+    sessionId: string,
+    messageId: string,
+    latencyMs: number,
+    summary: ReasoningReviewSummary,
+  ): void {
+    if (!this.qualificationRecorder || !this.isQualificationCaptureEnabled()) {
+      this.pendingQualificationEvidence.clear();
+      return;
+    }
+    const key = this.reasoningReviewKey(sessionId, messageId);
+    if (
+      !this.pendingQualificationEvidence.has(key) &&
+      this.pendingQualificationEvidence.size >= MAX_PENDING_QUALIFICATION_EVIDENCE
+    ) {
+      const oldest = this.pendingQualificationEvidence.keys().next().value;
+      if (oldest !== undefined) this.pendingQualificationEvidence.delete(oldest);
+    }
+    this.pendingQualificationEvidence.set(key, {
+      latencyMs,
+      status: summary.status,
+      hasOpenChallenges: summary.openChallenges.length > 0,
+    });
+  }
+
+  /**
+   * Record one bounded aggregate case. Every incoming field is re-validated at
+   * runtime, the completed review must already be host-observed for this
+   * session/message, and the challenge signal is normalized to a review that
+   * actually raised open challenges. Nothing is stored on failure.
+   */
+  private recordQualificationFeedback(
+    sessionId: unknown,
+    messageId: unknown,
+    correct: unknown,
+    falseChallenge: unknown,
+  ): void {
+    const recorder = this.qualificationRecorder;
+    if (!recorder || !this.isQualificationCaptureEnabled()) {
+      this.pendingQualificationEvidence.delete(this.reasoningReviewKey(String(sessionId), String(messageId)));
+      return;
+    }
+    if (typeof sessionId !== "string" || sessionId.length === 0 || sessionId.length > MAX_QUALIFICATION_ID_LENGTH) {
+      return;
+    }
+    if (typeof messageId !== "string" || messageId.length === 0 || messageId.length > MAX_QUALIFICATION_ID_LENGTH) {
+      return;
+    }
+    if (typeof correct !== "boolean") return;
+    if (falseChallenge !== undefined && typeof falseChallenge !== "boolean") return;
+    const key = this.reasoningReviewKey(sessionId, messageId);
+    const pending = this.pendingQualificationEvidence.get(key);
+    if (!pending) return;
+    const result = recorder.record({
+      latencyMs: pending.latencyMs,
+      status: pending.status,
+      feedback: {
+        correct,
+        falseChallenge: pending.hasOpenChallenges && falseChallenge === true,
+      },
+    });
+    // Consume the evidence only after an accepted case, so duplicate feedback
+    // can never double-count and a rejected tuple stores nothing.
+    if (result.ok) this.pendingQualificationEvidence.delete(key);
+  }
+
+  private isQualificationCaptureEnabled(): boolean {
+    if (!this.reasoningReviewPreference) return true;
+    return resolveEffectiveVibefeldEnabled(this.reasoningReviewPreference.read(), this.reasoningReviewRuntime);
   }
 
   private invalidateReasoningReview(sessionId: string, messageId: string, cancelUnderlying: boolean): void {
@@ -162,6 +277,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  /**
+   * Publish the seam's current preference with the effective state resolved
+   * from the already-published runtime. This reads configuration through the
+   * seam and performs no runtime discovery or process work.
+   */
+  private publishReasoningReviewPreference(): void {
+    const seam = this.reasoningReviewPreference;
+    if (!seam) return;
+    const preference = seam.read();
+    this.postMessage({
+      type: "reasoningReviewPreference",
+      preference: {
+        userEnabled: preference.userEnabled,
+        workspaceOptOut: preference.workspaceOptOut,
+        effective: resolveEffectiveVibefeldEnabled(preference, this.reasoningReviewRuntime),
+      },
+    });
+  }
+
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly agent: IAgent,
@@ -171,6 +305,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       memoryProviderStatus?: MemoryProviderStatus;
       memoryRetentionStatus?: MemoryRetentionStatus;
       reasoningReviewController?: IReasoningReviewController;
+      reasoningReviewPreference?: ReasoningReviewPreferenceSeam;
+      qualificationRecorder?: QualificationRecorderSeam;
       automaticRouting?: AutomaticRoutingOptions;
       chatMcpPrefs?: ChatMcpPrefsStore;
       bundledCommandNames?: readonly string[];
@@ -191,6 +327,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       state: "unavailable",
     };
     this.reasoningReviewController = options?.reasoningReviewController;
+    this.reasoningReviewPreference = options?.reasoningReviewPreference;
+    this.qualificationRecorder = options?.qualificationRecorder;
     this.automaticRouting = options?.automaticRouting;
     this.chatMcpPrefs = options?.chatMcpPrefs;
     this.bundledResources = options?.bundledResources ?? [];
@@ -302,11 +440,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (this.reasoningReviewController) {
           try {
             const runtime = await this.reasoningReviewController.getRuntime();
+            this.reasoningReviewRuntime = runtime;
             this.postMessage({ type: "reasoningRuntime", runtime });
           } catch {
             // An optional review runtime must not block ordinary initialization.
           }
         }
+        this.publishReasoningReviewPreference();
         this.postMessage({ type: "bundledResources", resources: [...this.bundledResources] });
         this.postMcpPrefs();
         await this.refresh(undefined, paths);
@@ -386,6 +526,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           );
           if (!targetMessage) break;
 
+          const reviewStartedAt = Date.now();
           const summary = await controller.review({
             sessionId: message.sessionId,
             messageId: message.messageId,
@@ -398,6 +539,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           ) {
             break;
           }
+          this.retainQualificationEvidence(
+            message.sessionId,
+            message.messageId,
+            Math.max(0, Date.now() - reviewStartedAt),
+            summary,
+          );
           this.postMessage({ type: "reasoningReview", sessionId: message.sessionId, summary });
         } finally {
           this.automaticRoutingLifecycle.endManual(manualBinding);
@@ -411,6 +558,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (this.activeSession?.id !== message.sessionId) break;
         this.invalidateReasoningReview(message.sessionId, message.messageId, false);
         this.reasoningReviewController?.cancel(message.sessionId, message.messageId);
+        break;
+      }
+      case "setReasoningReviewPreference": {
+        const seam = this.reasoningReviewPreference;
+        if (!seam) break;
+        const incoming: unknown = message.preference;
+        if (isRecord(incoming)) {
+          // Only present, bounded booleans are written: the user toggle writes
+          // the Global target and the workspace opt-out writes the Workspace
+          // target, never another configuration key.
+          if (typeof incoming.userEnabled === "boolean") await seam.setUserEnabled(incoming.userEnabled);
+          if (typeof incoming.workspaceOptOut === "boolean") await seam.setWorkspaceOptOut(incoming.workspaceOptOut);
+        }
+        if (!this.isQualificationCaptureEnabled()) {
+          this.pendingQualificationEvidence.clear();
+          this.clearAutomaticRoutingMetadata();
+          this.invalidateAllReasoningReviews(true);
+        }
+        this.publishReasoningReviewPreference();
+        break;
+      }
+      case "setReasoningReviewFeedback": {
+        if (this.activeSession?.id !== message.sessionId) break;
+        this.recordQualificationFeedback(message.sessionId, message.messageId, message.correct, message.falseChallenge);
         break;
       }
       case "createSession": {
@@ -983,7 +1154,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async routeAutomaticReviewAfterIdle(metadata: LatestAutomaticRoutingMetadata): Promise<void> {
     const options = this.automaticRouting;
     const controller = this.reasoningReviewController;
-    if (!options?.router || !options.evaluation || !controller) return;
+    if (!options?.router || !controller) return;
+    // Read the evaluation at selection time so a host-private recorder can
+    // report its aggregate as soon as the case minimum is reached; the static
+    // field remains the fallback when no dynamic source is configured. A
+    // failing source fails closed.
+    let suppliedEvaluation: AutomaticRoutingEvaluation | undefined;
+    try {
+      suppliedEvaluation = options.evaluationProvider?.() ?? options.evaluation;
+    } catch {
+      return;
+    }
+    const evaluation = validateAutomaticRoutingEvaluation(suppliedEvaluation);
+    if (!evaluation.ok || !evaluation.value.qualified) return;
     if (this.activeSession?.id !== metadata.sessionId || this.sessionOperationGeneration !== metadata.generation)
       return;
 
@@ -995,6 +1178,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     if (this.activeSession?.id !== metadata.sessionId || this.sessionOperationGeneration !== metadata.generation)
       return;
+
+    const enabled = this.reasoningReviewPreference
+      ? resolveEffectiveVibefeldEnabled(this.reasoningReviewPreference.read(), runtime)
+      : options.enabled;
 
     let messages: Awaited<ReturnType<IAgent["getMessages"]>>;
     try {
@@ -1017,9 +1204,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let selection: AutomaticRoutingPolicyDecision;
     try {
       selection = options.router({
-        enabled: options.enabled,
+        enabled,
         runtime: runtime.state,
-        evaluation: options.evaluation,
+        evaluation: evaluation.value,
         workMode: metadata.workMode,
         requestClass: metadata.requestClass,
         response: {
@@ -1046,6 +1233,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.inFlightAutomaticReviews.set(automaticKey, { attemptId: started.attemptId, binding });
 
     try {
+      const reviewStartedAt = Date.now();
       const summary = await controller.review({
         sessionId: binding.sessionId,
         messageId: binding.messageId,
@@ -1065,6 +1253,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.inFlightAutomaticReviews.delete(automaticKey);
         return;
       }
+      this.retainQualificationEvidence(
+        binding.sessionId,
+        binding.messageId,
+        Math.max(0, Date.now() - reviewStartedAt),
+        automaticSummary,
+      );
       this.inFlightAutomaticReviews.delete(automaticKey);
       this.postMessage({ type: "reasoningReview", sessionId: binding.sessionId, summary: automaticSummary });
     } catch {

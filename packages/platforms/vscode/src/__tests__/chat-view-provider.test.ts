@@ -23,13 +23,15 @@ import * as fs from "node:fs/promises";
 import type { IAgent, IPlatformServices, MemoryProviderStatus } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "../chat-mcp-prefs";
-import type { AutomaticRoutingOptions } from "../chat-view-provider";
+import type { AutomaticRoutingOptions, ReasoningReviewPreferenceSeam } from "../chat-view-provider";
 import { ChatViewProvider, MEMORY_RETENTION_CONFIRMATION_TTL_MS } from "../chat-view-provider";
 import type { AutomaticRoutingEvaluation } from "../vibefeld/automatic-routing-evaluation";
 import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-projection-reasoning-review-controller";
 import { createClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
 import { createFixtureOnlyClaimProjectionSeam } from "../vibefeld/fixture-claim-projection-seam";
+import type { QualificationRecorderSeam } from "../vibefeld/qualification-recorder";
 import type { IReasoningReviewController } from "../vibefeld/reasoning-review-controller";
+import { RuntimeReportingReasoningReviewController } from "../vibefeld/runtime-reporting-reasoning-review-controller";
 import { UnavailableReasoningReviewController } from "../vibefeld/unavailable-reasoning-review-controller";
 
 // --- Helper: IAgent のモック ---
@@ -175,6 +177,8 @@ function setupProvider(
   memoryRetentionStatus?: import("@opencode-chat/core").MemoryRetentionStatus,
   reasoningReviewController?: IReasoningReviewController,
   automaticRouting?: AutomaticRoutingOptions,
+  reasoningReviewPreference?: ReasoningReviewPreferenceSeam,
+  qualificationRecorder?: QualificationRecorderSeam,
 ) {
   const extensionUri = { fsPath: "/ext" };
   const ps = mockPlatformServices ?? createMockPlatformServices();
@@ -187,6 +191,8 @@ function setupProvider(
     memoryRetentionStatus,
     reasoningReviewController,
     automaticRouting,
+    reasoningReviewPreference,
+    qualificationRecorder,
   });
   const mock = createMockWebviewView();
   provider.resolveWebviewView(
@@ -1374,6 +1380,347 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  describe("qualification recorder wiring", () => {
+    function recorderSeam() {
+      return {
+        record: vi.fn().mockReturnValue({ ok: true, caseCount: 1 }),
+        currentEvaluation: vi.fn().mockReturnValue(undefined),
+      } satisfies QualificationRecorderSeam;
+    }
+
+    function completedReviewSummary(overrides: Record<string, unknown> = {}) {
+      return {
+        reviewedMessageId: "message-1",
+        status: "structurally_checked" as const,
+        invocation: "manual" as const,
+        conclusion: "checked",
+        assumptions: [],
+        evidenceStatus: "source_recorded" as const,
+        openChallenges: [],
+        ...overrides,
+      };
+    }
+
+    function manualReviewMessages() {
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: { id: "message-1", sessionID: "session-a", role: "assistant" as const, time: { completed: 2 } },
+          parts: [{ type: "text" as const, text: "visible response" }],
+        },
+      ]);
+    }
+
+    it("records one bounded tuple through the seam when bounded feedback arrives", async () => {
+      manualReviewMessages();
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockResolvedValue(completedReviewSummary()),
+        cancel: vi.fn(),
+      };
+      const recorder = recorderSeam();
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        undefined,
+        undefined,
+        recorder,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      expect(recorder.record).not.toHaveBeenCalled();
+
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: true,
+      });
+
+      expect(recorder.record).toHaveBeenCalledTimes(1);
+      const recorded = recorder.record.mock.calls[0]?.[0] as {
+        latencyMs: number;
+        status: string;
+        feedback: { correct: boolean; falseChallenge?: boolean };
+      };
+      expect(Number.isFinite(recorded.latencyMs)).toBe(true);
+      expect(recorded.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(recorded).toMatchObject({
+        status: "structurally_checked",
+        feedback: { correct: true, falseChallenge: false },
+      });
+      expect(Object.keys(recorded).sort()).toEqual(["feedback", "latencyMs", "status"]);
+      expect(JSON.stringify(recorded)).not.toContain("visible response");
+
+      // The retained completion evidence is consumed: duplicate feedback and
+      // feedback for an unknown message record nothing further.
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: true,
+      });
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "unknown-message",
+        correct: true,
+      });
+      expect(recorder.record).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      { label: "user disable", preference: { userEnabled: false, workspaceOptOut: false } },
+      { label: "workspace opt-out", preference: { userEnabled: true, workspaceOptOut: true } },
+    ])("drops pending evidence and resumes capture after $label is re-enabled", async ({ preference }) => {
+      manualReviewMessages();
+      const state = { ...preference };
+      const seam: ReasoningReviewPreferenceSeam = {
+        read: () => ({ userEnabled: state.userEnabled, workspaceOptOut: state.workspaceOptOut }),
+        setUserEnabled: vi.fn(async (value: boolean) => {
+          state.userEnabled = value;
+        }),
+        setWorkspaceOptOut: vi.fn(async (value: boolean) => {
+          state.workspaceOptOut = value;
+        }),
+      };
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" }),
+        review: vi.fn().mockResolvedValue(completedReviewSummary()),
+        cancel: vi.fn(),
+      };
+      const recorder = recorderSeam();
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        undefined,
+        seam,
+        recorder,
+      );
+
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: true,
+      });
+      expect(recorder.record).not.toHaveBeenCalled();
+
+      state.userEnabled = true;
+      state.workspaceOptOut = false;
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: true,
+      });
+      expect(recorder.record).toHaveBeenCalledTimes(1);
+    });
+
+    it("derives the challenge feedback from the review summary's open challenges", async () => {
+      manualReviewMessages();
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockResolvedValue(
+          completedReviewSummary({
+            status: "unresolved",
+            openChallenges: [{ severity: "major", target: "claim", reason: "A bounded challenge" }],
+          }),
+        ),
+        cancel: vi.fn(),
+      };
+      const recorder = recorderSeam();
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        undefined,
+        undefined,
+        recorder,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: false,
+        falseChallenge: true,
+      });
+
+      expect(recorder.record).toHaveBeenCalledWith({
+        latencyMs: expect.any(Number),
+        status: "unresolved",
+        feedback: { correct: false, falseChallenge: true },
+      });
+      expect(JSON.stringify(recorder.record.mock.calls)).not.toContain("A bounded challenge");
+    });
+
+    it("rejects non-boolean, unknown, and inactive-session feedback without recording", async () => {
+      manualReviewMessages();
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockResolvedValue(completedReviewSummary()),
+        cancel: vi.fn(),
+      };
+      const recorder = recorderSeam();
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        undefined,
+        undefined,
+        recorder,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: "yes" as never,
+      });
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: true,
+        falseChallenge: "yes" as never,
+      });
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-b",
+        messageId: "message-1",
+        correct: true,
+      });
+      expect(recorder.record).not.toHaveBeenCalled();
+
+      // Valid feedback still records afterwards; the rejected attempts stored
+      // nothing and did not consume the retained completion evidence.
+      await sendMessage({
+        type: "setReasoningReviewFeedback",
+        sessionId: "session-a",
+        messageId: "message-1",
+        correct: false,
+      });
+      expect(recorder.record).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads the dynamic evaluation at selection time and fails closed on a throwing source", async () => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn().mockResolvedValue(completedReviewSummary()),
+        cancel: vi.fn(),
+      };
+      let dynamicEvaluation: AutomaticRoutingEvaluation | undefined;
+      const router = selectedAutomaticRouter();
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluationProvider: () => dynamicEvaluation, router },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+      expect(controller.review).not.toHaveBeenCalled();
+
+      dynamicEvaluation = qualifiedAutomaticEvaluation();
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+      expect(controller.review).toHaveBeenCalledTimes(1);
+
+      const throwing = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        {
+          enabled: true,
+          evaluationProvider: () => {
+            throw new Error("evaluation source failed");
+          },
+          router,
+        },
+      );
+      const throwingEventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as (
+        value: unknown,
+      ) => void;
+      await selectAutomaticFixture(mockAgent, throwing.sendMessage, throwingEventCallback);
+      expect(controller.review).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to the static evaluation when no dynamic source is configured", async () => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn().mockResolvedValue(completedReviewSummary()),
+        cancel: vi.fn(),
+      };
+      const router = selectedAutomaticRouter();
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation: qualifiedAutomaticEvaluation(), router },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+
+      expect(controller.review).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // ============================================================
   // SSE イベント転送
   // ============================================================
@@ -1583,6 +1930,43 @@ describe("ChatViewProvider", () => {
 
       expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningRuntime" }));
       expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "init" }));
+    });
+
+    it.each([
+      { label: "available", runtime: { state: "available" as const } },
+      {
+        label: "incompatible",
+        runtime: { state: "incompatible" as const, reason: "runtime-mismatch" as const },
+      },
+      {
+        label: "dormant",
+        runtime: { state: "unavailable" as const, reason: "runtime-unavailable" as const },
+      },
+    ])("publishes the fixed $label runtime status over reasoningRuntime", async ({ runtime }) => {
+      const controller = new RuntimeReportingReasoningReviewController(
+        new UnavailableReasoningReviewController(),
+        runtime,
+      );
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "reasoningRuntime", runtime });
+      const runtimeMessages = postMessage.mock.calls.filter(
+        ([message]) => (message as { type?: string }).type === "reasoningRuntime",
+      );
+      expect(runtimeMessages).toHaveLength(1);
+      expect(JSON.stringify(runtimeMessages)).not.toContain("compatibility");
     });
 
     it("should send init, sessions, activeSession, providers, and activeEditor", async () => {
@@ -1832,6 +2216,233 @@ describe("ChatViewProvider", () => {
       await sendMessage({ type: "ready" });
 
       expect(postMessage).toHaveBeenCalledWith({ type: "mcpPrefs", prefs: { selected: true }, locked: [] });
+    });
+  });
+
+  describe("reasoning review preference", () => {
+    function createPreferenceSeam(initial: { userEnabled: boolean; workspaceOptOut: boolean }) {
+      const state = { ...initial };
+      const setUserEnabled = vi.fn(async (value: boolean) => {
+        state.userEnabled = value;
+      });
+      const setWorkspaceOptOut = vi.fn(async (value: boolean) => {
+        state.workspaceOptOut = value;
+      });
+      const seam: ReasoningReviewPreferenceSeam = {
+        read: () => ({ ...state }),
+        setUserEnabled,
+        setWorkspaceOptOut,
+      };
+      return { seam, setUserEnabled, setWorkspaceOptOut };
+    }
+
+    function availableController() {
+      return new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), {
+        state: "available",
+      });
+    }
+
+    it("publishes the effective preference from the already-published runtime on ready", async () => {
+      const { seam } = createPreferenceSeam({ userEnabled: true, workspaceOptOut: false });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        undefined,
+        seam,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: true },
+      });
+      const preferenceMessages = postMessage.mock.calls.filter(
+        ([message]) => (message as { type?: string }).type === "reasoningReviewPreference",
+      );
+      expect(preferenceMessages).toHaveLength(1);
+      expect(JSON.stringify(preferenceMessages)).not.toMatch(/executable|workspacePath|command|argv|proof/i);
+    });
+
+    it.each([
+      { label: "checking", runtime: { state: "checking" as const } },
+      { label: "incompatible", runtime: { state: "incompatible" as const, reason: "runtime-mismatch" } },
+      { label: "unavailable", runtime: { state: "unavailable" as const, reason: "runtime-unavailable" } },
+    ])("keeps effective false for a $label runtime", async ({ runtime }) => {
+      const { seam } = createPreferenceSeam({ userEnabled: true, workspaceOptOut: false });
+      const controller = new RuntimeReportingReasoningReviewController(
+        new UnavailableReasoningReviewController(),
+        runtime,
+      );
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        undefined,
+        seam,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: false },
+      });
+    });
+
+    it("publishes effective false when no review runtime is injected", async () => {
+      const { seam } = createPreferenceSeam({ userEnabled: true, workspaceOptOut: true });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        seam,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: true, effective: false },
+      });
+    });
+
+    it("writes only the Global key for the user toggle and republishes the effective state", async () => {
+      const { seam, setUserEnabled, setWorkspaceOptOut } = createPreferenceSeam({
+        userEnabled: true,
+        workspaceOptOut: false,
+      });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        undefined,
+        seam,
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({ type: "setReasoningReviewPreference", preference: { userEnabled: false } });
+
+      expect(setUserEnabled).toHaveBeenCalledTimes(1);
+      expect(setUserEnabled).toHaveBeenCalledWith(false);
+      expect(setWorkspaceOptOut).not.toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: false, workspaceOptOut: false, effective: false },
+      });
+    });
+
+    it("writes only the Workspace key for the opt-out and republishes the effective state", async () => {
+      const { seam, setUserEnabled, setWorkspaceOptOut } = createPreferenceSeam({
+        userEnabled: true,
+        workspaceOptOut: false,
+      });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        undefined,
+        seam,
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({ type: "setReasoningReviewPreference", preference: { workspaceOptOut: true } });
+
+      expect(setWorkspaceOptOut).toHaveBeenCalledTimes(1);
+      expect(setWorkspaceOptOut).toHaveBeenCalledWith(true);
+      expect(setUserEnabled).not.toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: true, effective: false },
+      });
+    });
+
+    it("ignores non-boolean preference values without writing configuration", async () => {
+      const { seam, setUserEnabled, setWorkspaceOptOut } = createPreferenceSeam({
+        userEnabled: true,
+        workspaceOptOut: false,
+      });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        undefined,
+        seam,
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({
+        type: "setReasoningReviewPreference",
+        preference: { userEnabled: "yes", workspaceOptOut: 1 },
+      } as never);
+
+      expect(setUserEnabled).not.toHaveBeenCalled();
+      expect(setWorkspaceOptOut).not.toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: true },
+      });
+    });
+
+    it("stays inert without an injected preference seam", async () => {
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({ type: "setReasoningReviewPreference", preference: { userEnabled: false } });
+
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReviewPreference" }));
     });
   });
 

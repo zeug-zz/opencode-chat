@@ -1,35 +1,48 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import type { AfExecutionPolicyAdapter } from "../vibefeld/af-execution-boundary";
+import type {
+  AfExecutionPolicyAdapter,
+  AfPolicyDescriptor,
+  AfPolicyExecutionFact,
+  AfPreflightDescriptor,
+} from "../vibefeld/af-execution-boundary";
+import type { AfLiveSchemaFacts, AfLiveStatusFacts, AfLiveVersionFacts } from "../vibefeld/af-live-output";
+import {
+  type AfOutputParserSet,
+  createAfOutputParsers,
+  createProductionAfOutputParsers,
+} from "../vibefeld/af-parser-mode";
 import type { AfProcessResult } from "../vibefeld/af-process-executor";
 import { VibefeldRuntimeBridge } from "../vibefeld/vibefeld-runtime";
 
-const fixture = readFileSync(new URL("./fixtures/vibefeld/manifest.json", import.meta.url), "utf8");
-const readiness = {
-  state: "ready" as const,
-  descendantConfinement: "inherited" as const,
-  childExecution: "deny-unapproved" as const,
-  deniedDomains: "enforced" as const,
-  audit: "verified" as const,
-};
+const live = (name: string) =>
+  readFileSync(new URL(`./fixtures/vibefeld/live/af-0.1.11/${name}`, import.meta.url), "utf8");
+const fixtureManifest = readFileSync(new URL("./fixtures/vibefeld/manifest.json", import.meta.url), "utf8");
 
-const version = {
-  fixtureSchema: "af-runtime-fixture-1" as const,
-  runtime: {
-    executableName: "af" as const,
-    version: "0.1.7" as const,
-    commit: "5a37413" as const,
-    buildDate: "2026-09-08T02:25:39Z" as const,
-    goVersion: "go1.27.1" as const,
+const readiness = { state: "ready" as const, execution: "direct" as const };
+
+/** Normalized live `af version --json` facts (sanitized capture). */
+const version: AfLiveVersionFacts = {
+  version: "0.1.11",
+  commit: "611291b",
+  buildDate: "2026-09-21T00:24:48Z",
+  goVersion: "go1.27.1",
+  format: "1.1",
+  policy: "0.1.9",
+};
+/** Normalized live `af schema --format json` facts (bounded section counts). */
+const schema: AfLiveSchemaFacts = {
+  sections: {
+    inference_types: 11,
+    node_types: 5,
+    workflow_states: 3,
+    epistemic_states: 7,
+    taint_states: 4,
+    challenge_targets: 9,
   },
-  operatingSystem: "darwin" as const,
-  architecture: "arm64" as const,
+  totalEntries: 39,
 };
-const schema = {
-  fixtureSchema: "af-runtime-fixture-1" as const,
-  workspaceFormat: "1.0" as const,
-  schemaKeys: [] as never[],
-};
+const compatibility = { version: "0.1.11", commit: "611291b", format: "1.1", policy: "0.1.9" } as const;
 
 const success = <T>(operation: "version" | "schema" | "init" | "status", facts: T): AfProcessResult<T> => ({
   ok: true,
@@ -38,15 +51,23 @@ const success = <T>(operation: "version" | "schema" | "init" | "status", facts: 
   structuralStatus: null,
 });
 
+const readyPolicy = (): AfExecutionPolicyAdapter => ({
+  platform: "darwin",
+  readiness,
+  launch: vi.fn(),
+  launchPreflight: vi.fn(),
+  terminateAndReap: vi.fn(),
+});
+
 const makeBridge = (
   executor: { executePreflight: ReturnType<typeof vi.fn>; execute: ReturnType<typeof vi.fn>; isInvalidated: boolean },
   allocate = vi.fn(async () => ({ token: "opaque" }) as never),
   resolveExecutable: () => string | undefined | Promise<string | undefined> = vi.fn(async () => "/private/af"),
   overrides: Partial<{
-    fixtureJson: string;
     platform: NodeJS.Platform;
-    architecture: "arm64" | "x64" | "arm" | "ia32";
+    architecture: string;
     policy: AfExecutionPolicyAdapter | undefined;
+    parsers: AfOutputParserSet;
   }> = {},
 ) => {
   const proofStore = {
@@ -54,27 +75,70 @@ const makeBridge = (
     resolvePath: vi.fn(() => "/private/review-root"),
     cleanup: vi.fn(async () => ({ ok: true as const })),
   };
-  const policy: AfExecutionPolicyAdapter = {
-    platform: "darwin",
-    readiness,
-    launch: vi.fn(),
-    launchPreflight: vi.fn(),
-    terminateAndReap: vi.fn(),
-  };
+  const createExecutor = vi.fn(() => executor);
   return {
     bridge: new VibefeldRuntimeBridge({
-      fixtureJson: overrides.fixtureJson ?? fixture,
       platform: overrides.platform ?? "darwin",
-      architecture: overrides.architecture ?? "arm64",
+      architecture: (overrides.architecture ?? "arm64") as "arm64" | "x64" | "arm" | "ia32",
       resolveExecutable,
-      policy: Object.hasOwn(overrides, "policy") ? overrides.policy : policy,
+      policy: Object.hasOwn(overrides, "policy") ? overrides.policy : readyPolicy(),
       proofStore,
-      readOnlyRuntimeGrants: [{ path: "/private/runtime" }],
+      ...(overrides.parsers ? { parsers: overrides.parsers } : {}),
       preflightCwd: "/private/preflight",
-      createExecutor: vi.fn(() => executor),
+      createExecutor,
     }),
     proofStore,
+    createExecutor,
   };
+};
+
+/** A fake dedicated policy that replays sanitized live captures; it never spawns. */
+const createLiveCapturePolicy = (
+  outputs: Readonly<{ version: string; schema: string; init?: string; status?: string }>,
+) => {
+  const preflightLaunches: Array<AfPreflightDescriptor> = [];
+  const launches: Array<AfPolicyDescriptor> = [];
+  const stdoutFor = (operation: string | undefined): string | undefined => {
+    if (operation === "init") return outputs.init;
+    if (operation === "status") return outputs.status;
+    if (operation === "schema") return outputs.schema;
+    return outputs.version;
+  };
+  const adapter: AfExecutionPolicyAdapter = {
+    platform: "darwin",
+    readiness,
+    launch: async (descriptor) => {
+      launches.push(descriptor);
+      return { outcome: "exited", exitCode: 0, stdout: stdoutFor(descriptor.argv[1]) };
+    },
+    launchPreflight: async (descriptor) => {
+      preflightLaunches.push(descriptor);
+      return { outcome: "exited", exitCode: 0, stdout: stdoutFor(descriptor.argv[1]) };
+    },
+    terminateAndReap: async () => ({ outcome: "reaped" }),
+  };
+  return { adapter, preflightLaunches, launches };
+};
+
+/** Bridge with the real host-private executor and a fake policy; nothing spawns. */
+const makeLiveCaptureBridge = (
+  outputs: Readonly<{ version: string; schema: string; init?: string; status?: string }>,
+) => {
+  const { adapter, preflightLaunches, launches } = createLiveCapturePolicy(outputs);
+  const proofStore = {
+    allocate: vi.fn(async () => ({ token: "opaque" }) as never),
+    resolvePath: vi.fn(() => "/private/review-root"),
+    cleanup: vi.fn(async () => ({ ok: true as const })),
+  };
+  const bridge = new VibefeldRuntimeBridge({
+    platform: "darwin",
+    architecture: "arm64",
+    resolveExecutable: async () => "/private/af",
+    policy: adapter,
+    proofStore,
+    preflightCwd: "/private/preflight",
+  });
+  return { bridge, proofStore, adapter, preflightLaunches, launches };
 };
 
 const expectBoundedResult = (value: unknown, forbidden: readonly string[] = []) => {
@@ -85,7 +149,7 @@ const expectBoundedResult = (value: unknown, forbidden: readonly string[] = []) 
 };
 
 describe("Vibefeld runtime bridge", () => {
-  it("is dormant until explicit preflight and allocates only after version/schema", async () => {
+  it("is dormant until explicit preflight and allocates only after live version/schema", async () => {
     const events: string[] = [];
     const executor = {
       isInvalidated: false,
@@ -111,13 +175,7 @@ describe("Vibefeld runtime bridge", () => {
     const executor = { isInvalidated: false, executePreflight: vi.fn(), execute: vi.fn() };
     const allocate = vi.fn();
     const resolveExecutable = vi.fn(async () => "/private/af");
-    const policy: AfExecutionPolicyAdapter = {
-      platform: "darwin",
-      readiness,
-      launch: vi.fn(),
-      launchPreflight: vi.fn(),
-      terminateAndReap: vi.fn(),
-    };
+    const policy = readyPolicy();
     const { bridge } = makeBridge(executor, allocate, resolveExecutable, { policy });
 
     expect(bridge.getState()).toBe("dormant");
@@ -128,77 +186,136 @@ describe("Vibefeld runtime bridge", () => {
     expect(policy.launchPreflight).not.toHaveBeenCalled();
   });
 
-  it("reaches ready only after pinned version and schema validation", async () => {
-    const events: string[] = [];
+  it("reaches ready only after live compatibility and returns the host-private metadata", async () => {
     const executor = {
       isInvalidated: false,
-      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) => {
-        events.push(operation);
-        return success(operation, operation === "version" ? version : schema);
-      }),
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? version : schema),
+      ),
       execute: vi.fn(),
     };
     const { bridge } = makeBridge(executor);
     const result = await bridge.preflight();
 
-    expect(events).toEqual(["version", "schema"]);
-    expect(result).toEqual({
-      state: "ready",
-      compatibility: {
-        fixtureSchema: "af-runtime-fixture-1",
-        version: "0.1.7",
-        commit: "5a37413",
-        workspaceFormat: "1.0",
-      },
-      structuralStatus: null,
-    });
+    expect(result).toEqual({ state: "ready", compatibility, structuralStatus: null });
     expectBoundedResult(result, ["/private"]);
   });
 
-  it("does not allocate a root when compatibility fails", async () => {
-    const executor = {
-      isInvalidated: false,
-      executePreflight: vi.fn(async () => success("version", { ...version, architecture: "x64" })),
-      execute: vi.fn(),
-    };
-    const { bridge, proofStore } = makeBridge(executor);
-    const result = await bridge.preflight();
-    expect(result).toMatchObject({ state: "incompatible", reason: "runtime-mismatch", structuralStatus: null });
-    expect(proofStore.allocate).not.toHaveBeenCalled();
-  });
-
-  it("rejects a schema workspace-format mismatch before root allocation", async () => {
+  it("uses the production live parsers by default and forwards injected parsers to the executor seam", async () => {
     const executor = {
       isInvalidated: false,
       executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
-        success(operation, operation === "version" ? version : { ...schema, workspaceFormat: "2.0" }),
+        success(operation, operation === "version" ? version : schema),
+      ),
+      execute: vi.fn(),
+    };
+    const { bridge, createExecutor } = makeBridge(executor);
+    await bridge.preflight();
+    expect(createExecutor.mock.calls.at(-1)?.[0].parsers).toBe(createProductionAfOutputParsers());
+
+    const injected = createAfOutputParsers("fixture");
+    if (!injected) throw new Error("expected the fixture test double");
+    const second = makeBridge(executor, undefined, undefined, { parsers: injected });
+    await second.bridge.preflight();
+    expect(second.createExecutor.mock.calls.at(-1)?.[0].parsers).toBe(injected);
+    expect(createExecutor.mock.calls.at(-1)?.[0].parsers).not.toBe(injected);
+  });
+
+  it("parses sanitized live captures through the production parsers and never exposes raw output", async () => {
+    const { bridge, proofStore, preflightLaunches } = makeLiveCaptureBridge({
+      version: live("version.json"),
+      schema: live("schema.json"),
+      init: live("init.txt"),
+      status: live("status.json"),
+    });
+    const result = await bridge.preflight();
+
+    expect(result).toEqual({ state: "ready", compatibility, structuralStatus: null });
+    expect(preflightLaunches.map((descriptor) => descriptor.argv.slice(1))).toEqual([
+      ["version", "--json"],
+      ["schema", "--format", "json"],
+    ]);
+    expect(
+      preflightLaunches.every((descriptor) => Object.keys(descriptor).sort().join(",") === "argv,cwd,executable"),
+    ).toBe(true);
+
+    const init = await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+    expect(init).toMatchObject({ state: "ready", facts: { initialized: true }, compatibility });
+    const status = await bridge.run({ operation: "status" });
+    expect(status).toMatchObject({
+      state: "ready",
+      facts: {
+        statistics: { totalNodes: 1, totalChallenges: 0, openChallenges: 0 },
+        jobs: { proverJobs: 0, verifierJobs: 1 },
+        nodeCount: 1,
+      },
+    });
+    expect(proofStore.allocate).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify([result, init, status])).not.toContain("All primes");
+    expect(JSON.stringify([result, init, status])).not.toContain("/private");
+    expect(JSON.stringify([result, init, status])).not.toMatch(/(?:workspace|path|raw|stdout)/iu);
+  });
+
+  it("keeps fixture-shaped live evidence dormant and never allocates a root", async () => {
+    const { bridge, proofStore, preflightLaunches } = makeLiveCaptureBridge({
+      version: fixtureManifest,
+      schema: fixtureManifest,
+    });
+    const result = await bridge.preflight();
+
+    expect(result).toMatchObject({ state: "unavailable", reason: "malformed", diagnostic: "preflight" });
+    expect(proofStore.allocate).not.toHaveBeenCalled();
+    expect(preflightLaunches).toHaveLength(1);
+    expectBoundedResult(result, ["/private", "af-runtime-fixture"]);
+  });
+
+  it("does not allocate a root when live compatibility fails", async () => {
+    const executor = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? { ...version, version: "0.2.0" } : schema),
       ),
       execute: vi.fn(),
     };
     const { bridge, proofStore } = makeBridge(executor);
     const result = await bridge.preflight();
-
     expect(result).toMatchObject({ state: "incompatible", reason: "runtime-mismatch", structuralStatus: null });
     expect(proofStore.allocate).not.toHaveBeenCalled();
-    expectBoundedResult(result, ["/private"]);
   });
 
-  it.each([["malformed fixture", "{", "fixture-invalid"]])(
-    "returns bounded incompatibility for %s",
-    async (_name, fixtureJson, reason) => {
-      const executor = { isInvalidated: false, executePreflight: vi.fn(), execute: vi.fn() };
-      const { bridge, proofStore } = makeBridge(executor, undefined, undefined, { fixtureJson });
-      const result = await bridge.preflight();
+  it("rejects a non-1.1 format and missing fields before root allocation", async () => {
+    const formatMismatch = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? { ...version, format: "2.0" } : schema),
+      ),
+      execute: vi.fn(),
+    };
+    const first = makeBridge(formatMismatch);
+    expect(await first.bridge.preflight()).toMatchObject({ state: "incompatible", reason: "runtime-mismatch" });
+    expect(first.proofStore.allocate).not.toHaveBeenCalled();
 
-      expect(result).toMatchObject({ state: "incompatible", reason, structuralStatus: null });
-      expect(proofStore.allocate).not.toHaveBeenCalled();
-      expect(executor.executePreflight).not.toHaveBeenCalled();
-      expectBoundedResult(result, ["/private"]);
-    },
-  );
+    const missingField = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? { ...version, policy: undefined } : schema),
+      ),
+      execute: vi.fn(),
+    };
+    const second = makeBridge(missingField);
+    const missingFieldResult = await second.bridge.preflight();
+    expect(missingFieldResult).toMatchObject({
+      state: "unavailable",
+      reason: "malformed",
+      diagnostic: "preflight",
+    });
+    expect(second.proofStore.allocate).not.toHaveBeenCalled();
+    expectBoundedResult(missingFieldResult, ["/private"]);
+  });
 
   it.each([
     ["unsupported platform", { platform: "win32" as NodeJS.Platform }, "unsupported-platform"],
+    ["unsupported architecture", { architecture: "riscv64" }, "unsupported-platform"],
     ["missing policy", { policy: undefined }, "policy-unavailable"],
     [
       "ambiguous policy",
@@ -313,22 +430,11 @@ describe("Vibefeld runtime bridge", () => {
   });
 
   it("rejects status before init and returns ready-running-ready for init then status", async () => {
-    const initFacts = {
-      fixtureSchema: "af-runtime-fixture-1" as const,
-      workspaceFormat: "1.0" as const,
-      entryCount: 1,
-      directoryCount: 1,
-      fileCount: 0,
-    };
-    const statusFacts = {
-      fixtureSchema: "af-runtime-fixture-1" as const,
-      workspaceFormat: "1.0" as const,
-      rootState: "pending" as const,
-      rootResolution: "unresolved" as const,
-      statistics: { totalNodes: 0, pendingNodes: 0, unresolvedNodes: 0, totalChallenges: 0, openChallenges: 0 },
+    const initFacts = { initialized: true } as const;
+    const statusFacts: AfLiveStatusFacts = {
+      statistics: { totalNodes: 0, totalChallenges: 0, openChallenges: 0 },
       jobs: { proverJobs: 0, verifierJobs: 0 },
       nodeCount: 0,
-      challengeCount: 0,
     };
     const executor = {
       isInvalidated: false,
@@ -360,15 +466,7 @@ describe("Vibefeld runtime bridge", () => {
       executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
         success(operation, operation === "version" ? version : schema),
       ),
-      execute: vi.fn(async () =>
-        success("init", {
-          fixtureSchema: "af-runtime-fixture-1",
-          workspaceFormat: "1.0",
-          entryCount: 0,
-          directoryCount: 0,
-          fileCount: 0,
-        }),
-      ),
+      execute: vi.fn(async () => success("init", { initialized: true })),
     };
     const createExecutor = vi.fn(() => executor);
     const proofStore = {
@@ -377,22 +475,19 @@ describe("Vibefeld runtime bridge", () => {
       cleanup: vi.fn(async () => ({ ok: true as const })),
     };
     const bridge = new VibefeldRuntimeBridge({
-      fixtureJson: fixture,
       platform: "darwin",
       architecture: "arm64",
       resolveExecutable: vi.fn(async () => "/private/af"),
-      policy: { platform: "darwin", readiness, launch: vi.fn(), launchPreflight: vi.fn(), terminateAndReap: vi.fn() },
+      policy: readyPolicy(),
       proofStore,
-      readOnlyRuntimeGrants: [{ path: "/private/runtime" }],
       preflightCwd: "/private/preflight",
       createExecutor,
     });
     await bridge.preflight();
     expect(createExecutor).toHaveBeenCalledTimes(2);
-    expect(createExecutor.mock.calls.at(-1)?.[0]).toMatchObject({
-      workspace: "/private/review-root",
-      reviewRootWriteGrant: { path: "/private/review-root" },
-    });
+    expect(createExecutor.mock.calls.at(-1)?.[0]).toMatchObject({ workspace: "/private/review-root" });
+    expect(createExecutor.mock.calls.at(-1)?.[0]).not.toHaveProperty("reviewRootWriteGrant");
+    expect(createExecutor.mock.calls.at(-1)?.[0]).not.toHaveProperty("readOnlyRuntimeGrants");
     expectBoundedResult(await bridge.run({ operation: "init", conjecture: "c", author: "a" }), [
       "/private/review-root",
       "/private/af",

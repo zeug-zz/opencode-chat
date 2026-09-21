@@ -65,6 +65,10 @@ export const ptBr: LocaleSchema = {
   "review.routingReason.evidenceDependent": "Resposta dependente de evidências",
   "review.routingReason.multiStepArgument": "Argumento em várias etapas",
   "review.routingReason.highImpactRecommendation": "Recomendação de alto impacto",
+  "review.feedback.label": "Comentários",
+  "review.feedback.correct": "Correto",
+  "review.feedback.unfoundedChallenge": "Contestação infundada",
+  "review.feedback.recorded": "Comentários registrados",
 
   // MessagesArea
   "checkpoint.revertTitle": "Reverter para este ponto",
@@ -164,6 +168,15 @@ export const ptBr: LocaleSchema = {
   "config.sandboxManaged": "As configurações de sandbox do Chat são gerenciadas e não podem ser alteradas.",
   "config.sandboxApplying": "Aplicando configurações de sandbox…",
   "config.sandboxError": (error: string) => `Erro de sandbox: ${error}`,
+
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Revisão de raciocínio",
+  "config.reasoningReviewEnable": "Ativar revisão de raciocínio",
+  "config.reasoningReviewWorkspaceOptOut": "Optar por não participar neste workspace",
+  "config.reasoningReviewDescription":
+    "Revisa respostas neste host quando o runtime de revisão de raciocínio está disponível. A opção de não participação do workspace substitui a preferência global neste workspace.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Ativa neste workspace" : "Inativa neste workspace",
 
   // Language setting
   "config.language": "Idioma",

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   AF_APPROVED_OPERATIONS,
   AF_EXECUTION_REQUIREMENTS,
+  AF_FIXTURE_PLATFORM,
+  AF_FIXTURE_RUNTIME_IDENTITY,
+  AF_FIXTURE_SCHEMA_VERSION,
+  AF_FIXTURE_WORKSPACE,
   AF_PROCESS_BOUNDARY_REQUIREMENTS,
   AF_REVIEW_ROOT_REQUIREMENTS,
   classifyAfRuntimeResult,
@@ -15,16 +19,10 @@ const readFixture = (name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(fixtureUrl(name), "utf8")) as Record<string, unknown>;
 
 const validFixture = {
-  fixtureSchema: "af-runtime-fixture-1",
-  runtime: {
-    executableName: "af",
-    version: "0.1.7",
-    commit: "5a37413",
-    buildDate: "2026-09-08T02:25:39Z",
-    goVersion: "go1.27.1",
-  },
-  capturePlatform: { operatingSystem: "darwin", architecture: "arm64" },
-  workspace: { format: "1.0", root: "fixture-workspace" },
+  fixtureSchema: AF_FIXTURE_SCHEMA_VERSION,
+  runtime: AF_FIXTURE_RUNTIME_IDENTITY,
+  capturePlatform: AF_FIXTURE_PLATFORM,
+  workspace: AF_FIXTURE_WORKSPACE,
   processBoundary: {
     supportedPlatforms: ["darwin", "linux"],
     policy: "dedicated-separate-from-chat-sandbox",
@@ -308,6 +306,16 @@ describe("AF fixture normalization", () => {
   it("parses JSON-shaped fixtures without filesystem access", () => {
     const result = parseAfFixtureJson(JSON.stringify(validFixture));
     expect(result.ok).toBe(true);
+  });
+
+  it("keeps the synthetic envelope as an explicit test double", () => {
+    expect(AF_FIXTURE_SCHEMA_VERSION).toBe("af-runtime-fixture-1");
+    expect(AF_FIXTURE_RUNTIME_IDENTITY).toMatchObject({ executableName: "af", version: "0.1.7" });
+    expect(AF_FIXTURE_PLATFORM).toEqual({ operatingSystem: "darwin", architecture: "arm64" });
+    expect(AF_FIXTURE_WORKSPACE).toEqual({ format: "1.0", root: "fixture-workspace" });
+    const source = readFileSync(new URL("../vibefeld/af-runtime-contract.ts", import.meta.url), "utf8");
+    expect(source).toContain("test double");
+    expect(normalizeAfFixture(readFixture("live/af-0.1.11/version.json")).ok).toBe(false);
   });
 
   it.each([

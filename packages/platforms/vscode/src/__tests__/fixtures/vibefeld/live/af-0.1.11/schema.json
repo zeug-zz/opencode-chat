@@ -1,0 +1,58 @@
+{
+  "inference_types": [
+    { "id": "assumption", "name": "Assumption", "form": "global hypothesis" },
+    { "id": "by_definition", "name": "By Definition", "form": "unfold definition" },
+    { "id": "contradiction", "name": "Contradiction", "form": "P ∧ ¬P ⊢ ⊥" },
+    { "id": "existential_generalization", "name": "Existential Generalization", "form": "P(c) ⊢ ∃x.P(x)" },
+    { "id": "existential_instantiation", "name": "Existential Instantiation", "form": "∃x.P(x) ⊢ P(c) for fresh c" },
+    { "id": "local_assume", "name": "Local Assume", "form": "introduce local hypothesis" },
+    { "id": "local_discharge", "name": "Local Discharge", "form": "conclude from local hypothesis" },
+    { "id": "modus_ponens", "name": "Modus Ponens", "form": "P, P → Q ⊢ Q" },
+    { "id": "modus_tollens", "name": "Modus Tollens", "form": "¬Q, P → Q ⊢ ¬P" },
+    { "id": "universal_generalization", "name": "Universal Generalization", "form": "P(x) for arbitrary x ⊢ ∀x.P(x)" },
+    { "id": "universal_instantiation", "name": "Universal Instantiation", "form": "∀x.P(x) ⊢ P(t)" }
+  ],
+  "node_types": [
+    { "id": "claim", "description": "A mathematical assertion to be justified" },
+    { "id": "local_assume", "description": "Introduce a local hypothesis (opens scope)", "opens_scope": true },
+    { "id": "local_discharge", "description": "Conclude from local hypothesis (closes scope)", "closes_scope": true },
+    { "id": "case", "description": "One branch of a case split" },
+    { "id": "qed", "description": "Final step concluding the proof or subproof" }
+  ],
+  "workflow_states": [
+    { "id": "available", "description": "Node is free for any agent to claim" },
+    { "id": "claimed", "description": "Node is currently owned by an agent" },
+    { "id": "blocked", "description": "Node cannot be worked on (e.g., awaiting dependency)" }
+  ],
+  "epistemic_states": [
+    { "id": "pending", "description": "Awaiting verification" },
+    { "id": "validated", "description": "Verified correct by verifier", "is_final": true },
+    {
+      "id": "admitted",
+      "description": "Accepted without full verification (introduces taint)",
+      "is_final": true,
+      "introduces_taint": true
+    },
+    { "id": "refuted", "description": "Proven incorrect", "is_final": true },
+    { "id": "archived", "description": "No longer relevant (branch abandoned)", "is_final": true },
+    { "id": "needs_refinement", "description": "Validated node reopened for refinement" },
+    { "id": "draft", "description": "Work in progress (not yet submitted for verification)" }
+  ],
+  "taint_states": [
+    { "id": "clean", "description": "No uncertainty in the ancestor chain or active subtree" },
+    { "id": "self_admitted", "description": "This node itself was admitted without proof" },
+    { "id": "tainted", "description": "Depends on an admitted ancestor or active descendant" },
+    { "id": "unresolved", "description": "Self, ancestor, or active descendant is pending/draft/needs_refinement" }
+  ],
+  "challenge_targets": [
+    { "id": "completeness", "description": "Missing cases or incomplete argument" },
+    { "id": "context", "description": "Referenced definitions are wrong/missing" },
+    { "id": "dependencies", "description": "Node dependencies are incorrect" },
+    { "id": "domain", "description": "Domain restriction violation" },
+    { "id": "gap", "description": "Logical gap in reasoning" },
+    { "id": "inference", "description": "The inference type is inappropriate" },
+    { "id": "scope", "description": "Scope/local assumption issues" },
+    { "id": "statement", "description": "The claim text itself is disputed" },
+    { "id": "type_error", "description": "Type mismatch in mathematical objects" }
+  ]
+}

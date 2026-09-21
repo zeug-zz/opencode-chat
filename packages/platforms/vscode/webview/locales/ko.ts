@@ -65,6 +65,10 @@ export const ko: LocaleSchema = {
   "review.routingReason.evidenceDependent": "근거에 의존하는 응답",
   "review.routingReason.multiStepArgument": "다단계 논증",
   "review.routingReason.highImpactRecommendation": "영향이 큰 추천",
+  "review.feedback.label": "피드백",
+  "review.feedback.correct": "정확함",
+  "review.feedback.unfoundedChallenge": "근거 없는 이의",
+  "review.feedback.recorded": "피드백이 기록되었습니다",
 
   // MessagesArea
   "checkpoint.revertTitle": "이 지점으로 되돌리기",
@@ -162,6 +166,15 @@ export const ko: LocaleSchema = {
   "config.sandboxManaged": "채팅 샌드박스 설정은 관리되므로 변경할 수 없습니다.",
   "config.sandboxApplying": "샌드박스 설정 적용 중…",
   "config.sandboxError": (error: string) => `샌드박스 오류: ${error}`,
+
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "추론 검토",
+  "config.reasoningReviewEnable": "추론 검토 사용",
+  "config.reasoningReviewWorkspaceOptOut": "이 작업 공간에서 사용 안 함",
+  "config.reasoningReviewDescription":
+    "추론 검토 런타임을 사용할 수 있을 때 이 호스트에서 응답을 검토합니다. 작업 공간 옵트아웃은 이 작업 공간의 전역 설정보다 우선합니다.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "이 작업 공간에서 활성화됨" : "이 작업 공간에서 비활성화됨",
 
   // Language setting
   "config.language": "언어",

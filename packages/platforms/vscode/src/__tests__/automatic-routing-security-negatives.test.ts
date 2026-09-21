@@ -10,6 +10,8 @@ const extensionSource = readSource("../extension.ts");
 const evaluationSource = readSource("../vibefeld/automatic-routing-evaluation.ts");
 const policySource = readSource("../vibefeld/automatic-routing-policy.ts");
 const lifecycleSource = readSource("../vibefeld/automatic-routing-lifecycle.ts");
+const qualificationRecorderSource = readSource("../vibefeld/qualification-recorder.ts");
+const qualificationStoreSource = readSource("../vibefeld/qualification-store.ts");
 
 const qualifiedEvaluation = {
   version: "automatic-routing-evaluation-1",
@@ -22,18 +24,24 @@ const qualifiedEvaluation = {
 } as const;
 
 describe("automatic-routing security negatives", () => {
-  it("keeps production bootstrap dormant and the unavailable controller as fallback", () => {
+  it("pins the constrained automatic-routing wiring and the unavailable controller as fallback", () => {
     expect(extensionSource).toContain("UnavailableReasoningReviewController");
-    expect(extensionSource).not.toMatch(/automatic-routing-(?:evaluation|policy|lifecycle)/u);
-    expect(extensionSource).not.toMatch(
-      /(?:createAutomaticRouting|selectAutomaticRouting|qualifiedAutomaticEvaluation)/u,
-    );
-    expect(extensionSource).not.toMatch(/automaticRouting\s*:/u);
+    // The activation path is the only permitted route: the extension resolves
+    // the gated activation, selects through the router, and reads a dynamic
+    // evaluation provider instead of carrying hard-coded qualification.
+    expect(extensionSource).toContain("resolveAutomaticRoutingActivation");
+    expect(extensionSource).toContain("selectAutomaticRouting");
+    expect(extensionSource).toContain("evaluationProvider");
     expect(extensionSource).not.toMatch(/(?:fixture-corpus|evaluation-1)/u);
+    expect(extensionSource).not.toMatch(/qualified:\s*true/u);
+    // The evaluation and lifecycle modules stay behind the router/activation
+    // route; the extension never imports them directly.
+    expect(extensionSource).not.toContain('from "./vibefeld/automatic-routing-evaluation"');
+    expect(extensionSource).not.toContain('from "./vibefeld/automatic-routing-lifecycle"');
   });
 
   it("keeps automatic-routing modules pure and outside execution or authority boundaries", () => {
-    const sources = [evaluationSource, policySource, lifecycleSource];
+    const sources = [evaluationSource, policySource, lifecycleSource, qualificationRecorderSource];
     const forbidden = [
       /(?:node:child_process|node:net|node:http|node:https|node:fs|vscode)/u,
       /(?:spawn|exec|fork|fetch|WebSocket|createServer|writeFile|mkdir|mkdtemp)\s*\(/u,
@@ -43,7 +51,13 @@ describe("automatic-routing security negatives", () => {
 
     for (const source of sources) {
       for (const pattern of forbidden) expect(source).not.toMatch(pattern);
+      expect(source).not.toMatch(
+        /(?:from\s+["'][^"']*(?:hindsight|memory)|(?:hindsight_|ctx_|detectMemoryProvider|resolveHindsightPlugin|buildHindsight))/iu,
+      );
     }
+    expect(qualificationStoreSource).not.toMatch(
+      /(?:from\s+["'][^"']*(?:hindsight|memory)|(?:hindsight_|ctx_|detectMemoryProvider|resolveHindsightPlugin|buildHindsight))/iu,
+    );
 
     expect(evaluationSource).toContain("callers must not treat fixture output as production evidence");
     expect(lifecycleSource).toContain("It never stores request/response text");

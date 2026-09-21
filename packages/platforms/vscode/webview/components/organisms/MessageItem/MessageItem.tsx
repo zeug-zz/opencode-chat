@@ -81,9 +81,11 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
     onNavigateToChild,
     isReasoningReviewing = () => false,
     getReasoningReviewSummary = () => undefined,
+    getReasoningReviewFeedback = () => undefined,
     reasoningReviewRuntime = null,
     onRequestReasoningReview = () => {},
     onCancelReasoningReview = () => {},
+    onSubmitReasoningReviewFeedback = () => {},
   } = useAppContext();
   const { info, parts } = message;
   const isUser = info.role === "user";
@@ -92,6 +94,7 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
   const isCompletedAssistant = !isUser && !isShell && info.time.completed !== undefined;
   const isReviewing = isReasoningReviewing(activeSessionId, info.id);
   const reviewSummary = getReasoningReviewSummary(activeSessionId, info.id);
+  const reviewFeedback = getReasoningReviewFeedback(activeSessionId, info.id);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const editRef = useRef<HTMLTextAreaElement>(null);
@@ -301,7 +304,13 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
             </div>
           )}
           {isCompletedAssistant && (isReviewing || reviewSummary) && (
-            <ReasoningReviewCard summary={reviewSummary} isReviewing={isReviewing} runtime={reasoningReviewRuntime} />
+            <ReasoningReviewCard
+              summary={reviewSummary}
+              isReviewing={isReviewing}
+              runtime={reasoningReviewRuntime}
+              feedback={reviewFeedback}
+              onFeedback={(value) => onSubmitReasoningReviewFeedback(activeSessionId, info.id, value)}
+            />
           )}
         </div>
       )}

@@ -1,19 +1,45 @@
-import type { AgentEvent, HostToUIMessage, ReasoningReviewRuntime, ReasoningReviewSummary } from "@opencode-chat/core";
+import type {
+  AgentEvent,
+  HostToUIMessage,
+  ReasoningReviewRuntime,
+  ReasoningReviewSummary,
+  UIToHostMessage,
+} from "@opencode-chat/core";
 import { type RefObject, useCallback, useRef, useState } from "react";
 import { postMessage } from "../vscode-api";
 
 export type ReasoningReviewSummaries = ReadonlyMap<string, ReadonlyMap<string, ReasoningReviewSummary>>;
 export type ReasoningReviewPending = ReadonlyMap<string, ReadonlySet<string>>;
+/** Bounded local review-card feedback: two booleans, never content or paths. */
+export type ReasoningReviewFeedback = Readonly<{ correct: boolean; falseChallenge?: boolean }>;
+export type ReasoningReviewFeedbackMap = ReadonlyMap<string, ReasoningReviewFeedback>;
+/** Host-published preference for the availability-gated settings control. */
+export type ReasoningReviewPreference = Extract<HostToUIMessage, { type: "reasoningReviewPreference" }>["preference"];
+/** Bounded preference patch sent back to the host; only present keys are written. */
+export type ReasoningReviewPreferencePatch = Extract<
+  UIToHostMessage,
+  { type: "setReasoningReviewPreference" }
+>["preference"];
 
-type ReasoningReviewHostMessage = Extract<HostToUIMessage, { type: "reasoningRuntime" | "reasoningReview" }>;
+type ReasoningReviewHostMessage = Extract<
+  HostToUIMessage,
+  { type: "reasoningRuntime" | "reasoningReviewPreference" | "reasoningReview" }
+>;
 
 /** Ephemeral review state, explicitly scoped by session and assistant message. */
 export function useReasoningReview(activeSessionRef: RefObject<{ id: string } | null>) {
   const [runtime, setRuntime] = useState<ReasoningReviewRuntime | null>(null);
+  const [preference, setPreference] = useState<ReasoningReviewPreference | null>(null);
   const [summaries, setSummaries] = useState<ReasoningReviewSummaries>(new Map());
+  const [feedback, setFeedback] = useState<ReasoningReviewFeedbackMap>(new Map());
   const [pending, setPending] = useState<ReasoningReviewPending>(new Map());
   const pendingKeysRef = useRef<Set<string>>(new Set());
   const cancelledKeysRef = useRef<Set<string>>(new Set());
+  const submittedFeedbackKeysRef = useRef<Set<string>>(new Set());
+
+  const updatePreference = useCallback((patch: ReasoningReviewPreferencePatch) => {
+    postMessage({ type: "setReasoningReviewPreference", preference: patch });
+  }, []);
 
   const getSummary = useCallback(
     (sessionId: string, messageId: string): ReasoningReviewSummary | undefined =>
@@ -25,6 +51,32 @@ export function useReasoningReview(activeSessionRef: RefObject<{ id: string } | 
     (sessionId: string, messageId: string) => pendingKeysRef.current.has(`${sessionId}:${messageId}`),
     [],
   );
+
+  const getFeedback = useCallback(
+    (sessionId: string, messageId: string): ReasoningReviewFeedback | undefined =>
+      feedback.get(`${sessionId}:${messageId}`),
+    [feedback],
+  );
+
+  /**
+   * Post one bounded feedback tuple at most once per session/message. Only the
+   * two booleans leave the webview; response text and paths are never carried.
+   */
+  const submitFeedback = useCallback((sessionId: string, messageId: string, value: ReasoningReviewFeedback) => {
+    const key = `${sessionId}:${messageId}`;
+    if (submittedFeedbackKeysRef.current.has(key)) return;
+    submittedFeedbackKeysRef.current.add(key);
+    const normalized: ReasoningReviewFeedback = {
+      correct: value.correct === true,
+      ...(value.falseChallenge === true ? { falseChallenge: true } : {}),
+    };
+    setFeedback((previous) => {
+      const next = new Map(previous);
+      next.set(key, normalized);
+      return next;
+    });
+    postMessage({ type: "setReasoningReviewFeedback", sessionId, messageId, ...normalized });
+  }, []);
 
   const startReview = useCallback(
     (sessionId: string, messageId: string) => {
@@ -65,6 +117,11 @@ export function useReasoningReview(activeSessionRef: RefObject<{ id: string } | 
     (message: ReasoningReviewHostMessage) => {
       if (message.type === "reasoningRuntime") {
         setRuntime(message.runtime);
+        return;
+      }
+
+      if (message.type === "reasoningReviewPreference") {
+        setPreference(message.preference);
         return;
       }
 
@@ -120,6 +177,21 @@ export function useReasoningReview(activeSessionRef: RefObject<{ id: string } | 
       next.delete(sessionId);
       return next;
     });
+    if (sessionId === undefined) submittedFeedbackKeysRef.current.clear();
+    else
+      for (const key of submittedFeedbackKeysRef.current)
+        if (key.startsWith(`${sessionId}:`)) submittedFeedbackKeysRef.current.delete(key);
+    setFeedback((previous) => {
+      if (sessionId === undefined) return new Map();
+      let changed = false;
+      const next = new Map(previous);
+      for (const key of previous.keys())
+        if (key.startsWith(`${sessionId}:`)) {
+          next.delete(key);
+          changed = true;
+        }
+      return changed ? next : previous;
+    });
   }, []);
 
   const handleSessionEvent = useCallback((event: AgentEvent) => {
@@ -141,16 +213,33 @@ export function useReasoningReview(activeSessionRef: RefObject<{ id: string } | 
       next.delete(deletedSessionId);
       return next;
     });
+    for (const key of submittedFeedbackKeysRef.current)
+      if (key.startsWith(`${deletedSessionId}:`)) submittedFeedbackKeysRef.current.delete(key);
+    setFeedback((previous) => {
+      let changed = false;
+      const next = new Map(previous);
+      for (const key of previous.keys())
+        if (key.startsWith(`${deletedSessionId}:`)) {
+          next.delete(key);
+          changed = true;
+        }
+      return changed ? next : previous;
+    });
   }, []);
 
   return {
     runtime,
+    preference,
     summaries,
+    feedback,
     pending,
     getSummary,
+    getFeedback,
     isReviewing,
     startReview,
     cancelReview,
+    submitFeedback,
+    updatePreference,
     handleHostMessage,
     handleSessionEvent,
     clearSessionState,

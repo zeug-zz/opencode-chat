@@ -22,6 +22,7 @@ const nonoProfileSource = readSource("../nono-profile-settings.ts");
 const afRuntimeSource = readSource("../vibefeld/af-runtime-contract.ts");
 const afExecutionSource = readSource("../vibefeld/af-execution-boundary.ts");
 const vibefeldRuntimeSource = readSource("../vibefeld/vibefeld-runtime.ts");
+const vibefeldActivationSource = readSource("../vibefeld/vibefeld-activation.ts");
 const claimControllerSource = readSource("../vibefeld/claim-projection-reasoning-review-controller.ts");
 const claimSeamSource = readSource("../vibefeld/claim-projection-seam.ts");
 const adversarialPrivateSources = [
@@ -43,6 +44,19 @@ const bridgeIntegrationTokens = [
   "approvedOperations",
   "customTools",
 ] as const;
+
+const assertNoWidenedVibefeldAuthority = (source: string): void => {
+  expect(source).not.toMatch(
+    /(?:vibefeld|\baf\b)[\s\S]{0,120}(?:pluginSources|mcpOverlay|customTools|agentOverlay|runAf|invokeAf|af(?:Argv|Executable|Workspace|Environment))/iu,
+  );
+  expect(source).not.toMatch(
+    /(?:pluginSources|mcpOverlay|customTools|agentOverlay|runAf|invokeAf|af(?:Argv|Executable|Workspace|Environment))[\s\S]{0,120}(?:vibefeld|\baf\b)/iu,
+  );
+  expect(source).not.toMatch(/(?:vibefeld|\baf\b)[\w.-]*(?:response[- ]gate|adversarial|child[- ]model)/iu);
+  expect(source).not.toMatch(
+    /(?:vibefeld|\baf\b)[\s\S]{0,120}(?:unsandboxed|un-sandboxed)[\s\S]{0,80}(?:retry|fallback)/iu,
+  );
+};
 
 describe("Vibefeld runtime bridge security negatives", () => {
   it("keeps adversarial modules out of activation and the ordinary host routes", () => {
@@ -77,6 +91,30 @@ describe("Vibefeld runtime bridge security negatives", () => {
     expect(agentSource).not.toMatch(/(?:vibefeld|adversarial|prover|verifier|customTools)/iu);
   });
 
+  it("fails closed on a deliberately widened activation fixture", () => {
+    const widenedFixture = `
+      const extensionDescriptor = {
+        vibefeld: {
+          pluginSources: ["vibefeld-plugin"],
+          argv: ["--workspace", "/repo"],
+          afExecutable: "/usr/local/bin/af",
+          afEnvironment: { AF_PROFILE: "broad" },
+          providerExecutable: "/provider/af",
+          nono: "/usr/bin/nono",
+          profile: "broad",
+          runtimeGrants: ["repository"],
+          nestedSandbox: true,
+          unsandboxedRetry: true,
+        },
+      };
+    `;
+
+    expect(() => assertNoWidenedVibefeldAuthority(widenedFixture)).toThrow();
+    for (const source of [extensionSource, agentSource, launchConfigSource, protocolSource]) {
+      assertNoWidenedVibefeldAuthority(source);
+    }
+  });
+
   it("keeps adversarial review out of AF, Chat sandbox, configuration, and nono profile authority", () => {
     for (const source of [
       extensionSource,
@@ -89,7 +127,13 @@ describe("Vibefeld runtime bridge security negatives", () => {
       expect(source).not.toMatch(/adversarial-review|vibefeld-prover|vibefeld-verifier/iu);
     }
 
-    expect(extensionSource).not.toMatch(/(?:\baf\b|proofWorkspace|approvedOperations|createProofWorkspace)/iu);
+    // The extension may reach AF only through the constrained host-owned
+    // runtime resolution module, which the bridge test below pins. The bridge
+    // module, proof storage, and every broader authority token stay out.
+    expect(extensionSource).not.toMatch(/(?:proofWorkspace|approvedOperations|createProofWorkspace)/u);
+    expect(extensionSource).not.toMatch(
+      /(?:af-discovery|af-compatibility|af-direct-policy|af-execution-boundary|vibefeld-runtime)/u,
+    );
     expect(sandboxPolicySource).not.toMatch(/(?:prover|verifier|\baf\b|proof)/iu);
     expect(nonoProfileSource).not.toMatch(/(?:prover|verifier|\baf\b|proof)/iu);
     expect(packageSource).not.toMatch(/(?:adversarial-review|vibefeld-prover|vibefeld-verifier)/iu);
@@ -97,14 +141,43 @@ describe("Vibefeld runtime bridge security negatives", () => {
 
   it("keeps the host bridge out of OpenCode plugin, MCP, and custom-tool configuration", () => {
     for (const token of bridgeIntegrationTokens) {
-      expect(extensionSource, `extension integration contains ${token}`).not.toContain(token);
       expect(agentSource, `agent integration contains ${token}`).not.toContain(token);
       expect(launchConfigSource, `launch configuration contains ${token}`).not.toContain(token);
     }
 
+    // The extension host may reach AF only through the two constrained,
+    // host-private modules: the runtime resolution seam and the activation
+    // composition. The bridge module, bridge class, proof storage, and every
+    // authority token stay out of the extension source itself.
+    for (const token of bridgeIntegrationTokens.filter(
+      (value) => value !== "createVibefeld" && value !== "af-runtime",
+    )) {
+      expect(extensionSource, `extension integration contains ${token}`).not.toContain(token);
+    }
+    expect(extensionSource).toContain('from "./vibefeld/af-runtime-resolution"');
+    expect(extensionSource).toContain('from "./vibefeld/vibefeld-activation"');
+    expect(extensionSource).not.toMatch(
+      /from "\.\/vibefeld\/(?:af-discovery|af-compatibility|af-direct-policy|af-execution-boundary|vibefeld-runtime)"/u,
+    );
+    expect(extensionSource).not.toContain("ProofWorkspaceStore");
+
     expect(launchConfigSource).toMatch(/pluginSources\?:/);
     expect(launchConfigSource).toMatch(/mcpOverlay\?:/);
     expect(launchConfigSource).not.toMatch(/(?:\baf\b|vibefeld|proofWorkspace|customTool)/iu);
+  });
+
+  it("permits only the constrained activation composition wiring", () => {
+    expect(vibefeldActivationSource).not.toMatch(/from ["']vscode["']/u);
+    expect(vibefeldActivationSource).not.toMatch(/node:child_process|node:net|node:http|node:https/u);
+    expect(vibefeldActivationSource).not.toMatch(/\b(?:spawn|execFile|fetch)\s*\(/u);
+    expect(vibefeldActivationSource).not.toContain("createAfOutputParsers");
+    expect(vibefeldActivationSource).not.toContain("af-output-schema");
+    expect(vibefeldActivationSource).toContain("createProductionAfOutputParsers");
+    expect(vibefeldActivationSource).toContain("globalStoragePath");
+    expect(vibefeldActivationSource).toContain("createVibefeldRuntimeBridge");
+    expect(vibefeldActivationSource).not.toMatch(/\.preflight\(|\.allocate\(/u);
+    expect(vibefeldActivationSource).not.toMatch(/pluginSources|mcpOverlay|customTools|agentOverlay/u);
+    expect(vibefeldActivationSource).not.toMatch(/configuration\.update|profile.*(?:create|promote|broaden)/iu);
   });
 
   it("keeps Scout, Write, and the only delegated worker free of bridge authority", () => {
@@ -135,10 +208,20 @@ describe("Vibefeld runtime bridge security negatives", () => {
   });
 
   it("keeps claim projection host-private and out of model-visible authority routes", () => {
-    for (const source of [extensionSource, chatViewSource, agentSource, launchConfigSource, protocolSource]) {
+    for (const source of [chatViewSource, agentSource, launchConfigSource, protocolSource]) {
       expect(source).not.toMatch(/ClaimProjection|claim_projection|fixture-claim-projection/u);
       expect(source).not.toMatch(/(?:adversarial|child model|response gate|automatic route)/iu);
     }
+
+    // Activation may reach claim projection only through the constrained,
+    // host-private dynamic selection: no fixture seam, fixture adapter, or
+    // model-visible route is added.
+    expect(extensionSource).not.toMatch(
+      /fixture-claim-projection|createFixtureOnly|fixtureClaimProjection|claim-projection-seam/u,
+    );
+    expect(extensionSource).toContain("ClaimProjectionReasoningReviewController");
+    expect(extensionSource).toContain("createCurrentVibefeldClaimProjectionSeam");
+    expect(extensionSource).not.toMatch(/(?:adversarial|child model|response gate|automatic route)/iu);
 
     expect(claimControllerSource).toContain("compileClaimGraph(sourceText)");
     expect(claimControllerSource).toContain("this.seam.getCapability()");
@@ -218,9 +301,20 @@ describe("Vibefeld runtime bridge security negatives", () => {
 
   it("keeps ordinary activation dormant and retains the unavailable manual controller", async () => {
     expect(extensionSource).toContain("import { UnavailableReasoningReviewController }");
-    expect(extensionSource).toContain("const reasoningReviewController = new UnavailableReasoningReviewController();");
+    expect(extensionSource).toContain("selectReasoningReviewController(vibefeldActivation)");
     expect(extensionSource).toContain("reasoningReviewController,");
-    expect(extensionSource).not.toMatch(/new\s+VibefeldRuntimeBridge|\.preflight\(\)|\.allocate\(\)/u);
+    expect(extensionSource).not.toMatch(/new\s+VibefeldRuntimeBridge|\.allocate\(\)/u);
+    // Exactly one bounded activation preflight; no other module may preflight.
+    expect(extensionSource.match(/\.preflight\(\)/gu) ?? []).toHaveLength(1);
+    for (const source of [
+      chatViewSource,
+      vibefeldActivationSource,
+      vibefeldRuntimeSource,
+      claimControllerSource,
+      claimSeamSource,
+    ]) {
+      expect(source).not.toMatch(/\.preflight\(/u);
+    }
     expect(chatViewSource).not.toMatch(/new\s+VibefeldRuntimeBridge|import[^\n]*vibefeld-runtime/u);
 
     const controller = new UnavailableReasoningReviewController();

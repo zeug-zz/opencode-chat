@@ -2,11 +2,19 @@
  * extension.ts (activate / deactivate) のユニットテスト。
  * ChatViewProvider と OpenCodeAgent をモックし、起動・停止の振る舞いを検証する。
  */
+import { readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenCodePaths, resolveRuntimeCachePaths } from "../chat-sandbox-policy";
 import { classifyConnectError } from "../connect-error";
+import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-projection-reasoning-review-controller";
+import {
+  DORMANT_REASONING_REVIEW_RUNTIME,
+  deriveReasoningReviewRuntime,
+  PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME,
+  RuntimeReportingReasoningReviewController,
+} from "../vibefeld/runtime-reporting-reasoning-review-controller";
 import { UnavailableReasoningReviewController } from "../vibefeld/unavailable-reasoning-review-controller";
 
 // --- モックの準備 ---
@@ -67,6 +75,61 @@ const mockAbandonLocalInstaller = vi.hoisted(() => vi.fn().mockResolvedValue(und
 const mockCheckForPrivateReleaseUpdates = vi.hoisted(() => vi.fn());
 let mockUpdaterUx = false;
 let adversarialControllerImported = false;
+let mockVibefeldActivation = false;
+let mockVibefeldComposition: unknown;
+const mockVibefeldActivationOptions: unknown[] = [];
+const mockTeardownVibefeldActivation = vi.fn().mockResolvedValue(undefined);
+const mockResolveAfRuntime = vi.hoisted(() => vi.fn());
+
+type MockVibefeldBridge = {
+  preflight: ReturnType<typeof vi.fn>;
+  getState: ReturnType<typeof vi.fn>;
+  run: ReturnType<typeof vi.fn>;
+  teardown: ReturnType<typeof vi.fn>;
+};
+
+/** Fake composed activation; the bridge never spawns anything, only spies. */
+function composedVibefeldActivation(preflight: ReturnType<typeof vi.fn>) {
+  const bridge: MockVibefeldBridge = {
+    preflight,
+    getState: vi.fn(() => "ready"),
+    run: vi.fn(),
+    teardown: vi.fn().mockResolvedValue({ state: "unavailable", structuralStatus: null }),
+  };
+  return { composition: { state: "composed", bridge, proofStore: {} }, bridge };
+}
+
+/** The wrapper injected into ChatViewProvider; that getRuntime() is what the host publishes. */
+function injectedReviewController(): RuntimeReportingReasoningReviewController {
+  const options = mockChatViewProviderOptions.at(-1) as
+    | { reasoningReviewController?: RuntimeReportingReasoningReviewController }
+    | undefined;
+  if (!options?.reasoningReviewController) throw new Error("no reasoning-review controller was injected");
+  return options.reasoningReviewController;
+}
+
+type InjectedQualificationWiring = {
+  qualificationRecorder?: { record?: unknown; currentEvaluation?: unknown };
+  automaticRouting?: {
+    enabled?: boolean;
+    evaluation?: unknown;
+    evaluationProvider?: () => unknown;
+    router?: unknown;
+  };
+};
+
+function injectedQualificationWiring(): InjectedQualificationWiring {
+  const options = mockChatViewProviderOptions.at(-1) as InjectedQualificationWiring | undefined;
+  if (!options) throw new Error("no ChatViewProvider options were injected");
+  return options;
+}
+
+/** The host-private delegate selected behind the reporting wrapper. */
+function reviewDelegate(controller: RuntimeReportingReasoningReviewController): unknown {
+  return (controller as unknown as { delegate: unknown }).delegate;
+}
+
+const readSource = (relativePath: string): string => readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -179,6 +242,12 @@ describe("extension", () => {
     mockChatViewProviderOptions.length = 0;
     mockChatViewProviderInstance = undefined;
     adversarialControllerImported = false;
+    mockVibefeldActivation = false;
+    mockVibefeldComposition = undefined;
+    mockVibefeldActivationOptions.length = 0;
+    mockTeardownVibefeldActivation.mockClear();
+    mockResolveAfRuntime.mockReset();
+    mockResolveAfRuntime.mockResolvedValue({ state: "dormant", reason: "missing-af" });
     mockLoadBundledResearchResources.mockResolvedValue({ resources: [], diagnostics: [] });
     mockDetectMemoryProvider.mockResolvedValue({
       id: "none",
@@ -284,6 +353,20 @@ describe("extension", () => {
     vi.doMock("../vibefeld/unavailable-reasoning-review-controller", () => ({
       UnavailableReasoningReviewController,
     }));
+    vi.doMock("../vibefeld/claim-projection-reasoning-review-controller", () => ({
+      ClaimProjectionReasoningReviewController,
+    }));
+    vi.doMock("../vibefeld/runtime-reporting-reasoning-review-controller", () => ({
+      DORMANT_REASONING_REVIEW_RUNTIME,
+      deriveReasoningReviewRuntime,
+      PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME,
+      RuntimeReportingReasoningReviewController,
+    }));
+    // Production runtime resolution reads real host state; the default suite
+    // injects a dormant resolution so no AF or nono process is ever attempted.
+    vi.doMock("../vibefeld/af-runtime-resolution", () => ({
+      resolveAfRuntime: mockResolveAfRuntime,
+    }));
     vi.doMock("../bundled-research-resources", () => ({
       loadBundledResearchResources: mockLoadBundledResearchResources,
     }));
@@ -293,6 +376,15 @@ describe("extension", () => {
         checkForPrivateReleaseUpdates: mockCheckForPrivateReleaseUpdates,
         downloadAndValidatePrivateRelease: mockDownloadAndValidate,
         abandonLocalInstaller: mockAbandonLocalInstaller,
+      }));
+    }
+    if (mockVibefeldActivation) {
+      vi.doMock("../vibefeld/vibefeld-activation", () => ({
+        createVibefeldActivation: (options: unknown) => {
+          mockVibefeldActivationOptions.push(options);
+          return mockVibefeldComposition ?? { state: "dormant" as const, reason: "missing-policy" as const };
+        },
+        teardownVibefeldActivation: mockTeardownVibefeldActivation,
       }));
     }
 
@@ -315,7 +407,7 @@ describe("extension", () => {
 
       expect(adversarialControllerImported).toBe(false);
       expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
-        reasoningReviewController: expect.any(UnavailableReasoningReviewController),
+        reasoningReviewController: expect.any(RuntimeReportingReasoningReviewController),
       });
       expect(mockAgentLaunchConfigurations.at(-1)).not.toMatchObject({
         af: expect.anything(),
@@ -373,18 +465,31 @@ describe("extension", () => {
       expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
     });
 
-    it("injects the host-owned unavailable reasoning-review controller", async () => {
+    it("injects the unavailable fallback behind the bounded dormant runtime status", async () => {
       const ext = await importExtension();
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
 
       const launchConfiguration = latestLaunchConfiguration() as Record<string, unknown>;
-      expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
-        reasoningReviewController: expect.any(UnavailableReasoningReviewController),
+      const controller = injectedReviewController();
+      expect(controller).toBeInstanceOf(RuntimeReportingReasoningReviewController);
+      expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+      await expect(controller.getRuntime()).resolves.toEqual({
+        state: "unavailable",
+        reason: "runtime-unavailable",
       });
-      expect(mockChatViewProviderOptions.at(-1)).toHaveProperty(
-        "reasoningReviewController",
-        expect.any(UnavailableReasoningReviewController),
-      );
+      // The manual fallback summary is unchanged by the reporting wrapper.
+      await expect(
+        controller.review({ sessionId: "session-1", messageId: "message-1", sourceText: "unreviewed answer" }),
+      ).resolves.toEqual({
+        reviewedMessageId: "message-1",
+        status: "unavailable",
+        invocation: "manual",
+        conclusion: "This response was not reviewed because no reasoning-review runtime is available.",
+        assumptions: [],
+        evidenceStatus: "not_assessed",
+        openChallenges: [],
+        interpretiveBoundary: "Manual review is unavailable; this fallback does not assess the original response.",
+      });
       expect(launchConfiguration).not.toHaveProperty("af");
       expect(launchConfiguration).not.toHaveProperty("vibefeld");
       expect(launchConfiguration).not.toHaveProperty("proofWorkspace");
@@ -392,6 +497,20 @@ describe("extension", () => {
       expect(launchConfiguration).not.toHaveProperty("customTools");
       expect(launchConfiguration).not.toHaveProperty("agentOverlay");
       expect(mockUpdateLaunchConfiguration).not.toHaveBeenCalled();
+    });
+
+    it("injects the host-private qualification recorder with a dynamic evaluation provider", async () => {
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      const wiring = injectedQualificationWiring();
+      expect(typeof wiring.qualificationRecorder?.record).toBe("function");
+      expect(typeof wiring.qualificationRecorder?.currentEvaluation).toBe("function");
+      expect(typeof wiring.automaticRouting?.evaluationProvider).toBe("function");
+      // A fresh recorder has no cases: nothing is reported before the
+      // existing 100-case minimum, so automatic routing stays inert.
+      expect(wiring.automaticRouting?.evaluationProvider?.()).toBeUndefined();
+      expect(wiring.automaticRouting?.evaluation).toBeUndefined();
     });
 
     it("preserves a resolved nono backend through activation and reconnect", async () => {
@@ -1494,6 +1613,361 @@ describe("extension", () => {
       await provider.resolveWebviewView({}, {}, {});
       expect(mockAgentLaunchConfigurations).toHaveLength(1);
       expect(mockConnect).toHaveBeenCalledTimes(1);
+    });
+
+    it("constructs the host-private activation composition from extension global storage", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+      mockVibefeldActivation = true;
+      const ext = await importExtension();
+      await ext.activate(updaterContext(new Map()) as never);
+      const provider = vi.mocked(vscode.window.registerWebviewViewProvider).mock.calls.at(-1)?.[1] as {
+        resolveWebviewView: (view: unknown, context: unknown, token: unknown) => Promise<void>;
+      };
+
+      await provider.resolveWebviewView({}, {}, {});
+
+      expect(mockVibefeldActivationOptions).toHaveLength(1);
+      expect(mockVibefeldActivationOptions[0]).toMatchObject({
+        globalStoragePath: "/global",
+        repositoryPath: "/workspace/project",
+      });
+      const controller = injectedReviewController();
+      expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+      await expect(controller.getRuntime()).resolves.toEqual({
+        state: "unavailable",
+        reason: "runtime-unavailable",
+      });
+      expect(mockTeardownVibefeldActivation).not.toHaveBeenCalled();
+    });
+
+    it("keeps activation nonfatal when global storage is unavailable", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+      const ext = await importExtension();
+      const context = updaterContext(new Map());
+      delete (context as { globalStorageUri?: unknown }).globalStorageUri;
+      await ext.activate(context as never);
+      const provider = vi.mocked(vscode.window.registerWebviewViewProvider).mock.calls.at(-1)?.[1] as {
+        resolveWebviewView: (view: unknown, context: unknown, token: unknown) => Promise<void>;
+      };
+
+      await provider.resolveWebviewView({}, {}, {});
+
+      const controller = injectedReviewController();
+      expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+      await expect(controller.getRuntime()).resolves.toEqual({
+        state: "unavailable",
+        reason: "runtime-unavailable",
+      });
+      // A context that cannot compose never resolves the host runtime, so no
+      // AF or nono process is attempted from a storage-less activation.
+      expect(mockResolveAfRuntime).not.toHaveBeenCalled();
+    });
+
+    describe("Vibefeld controller selection", () => {
+      const registeredProvider = () =>
+        vi.mocked(vscode.window.registerWebviewViewProvider).mock.calls.at(-1)?.[1] as {
+          resolveWebviewView: (view: unknown, context: unknown, token: unknown) => Promise<void>;
+        };
+
+      const activateWithComposition = async () => {
+        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+        mockVibefeldActivation = true;
+        const ext = await importExtension();
+        await ext.activate(updaterContext(new Map()) as never);
+        await registeredProvider().resolveWebviewView({}, {}, {});
+      };
+
+      it("injects the claim-projection controller from a single ready preflight", async () => {
+        const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+        mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+        await activateWithComposition();
+
+        expect(preflight).toHaveBeenCalledTimes(1);
+        const controller = injectedReviewController();
+        expect(controller).toBeInstanceOf(RuntimeReportingReasoningReviewController);
+        expect(reviewDelegate(controller)).toBeInstanceOf(ClaimProjectionReasoningReviewController);
+        await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
+        // Only the bounded state is published: no compatibility metadata.
+        expect(Object.keys(await controller.getRuntime())).toEqual(["state"]);
+
+        // A manual review on the ready path reuses the wired controller and
+        // must not run discovery or another preflight.
+        await expect(
+          controller.review({
+            sessionId: "session-1",
+            messageId: "message-1",
+            sourceText: "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.",
+          }),
+        ).resolves.toMatchObject({ status: "unavailable" });
+        await controller.getRuntime();
+        await controller.getRuntime();
+        expect(preflight).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([
+        [
+          "an unavailable runtime",
+          { state: "unavailable", reason: "missing-executable", structuralStatus: null },
+          { state: "unavailable", reason: "missing-executable" },
+        ],
+        [
+          "an incompatible runtime",
+          { state: "incompatible", reason: "runtime-mismatch", structuralStatus: null },
+          { state: "incompatible", reason: "runtime-mismatch" },
+        ],
+        [
+          "a policy-unavailable runtime",
+          { state: "unavailable", reason: "policy-unavailable", structuralStatus: null },
+          { state: "unavailable", reason: "policy-unavailable" },
+        ],
+        [
+          "a failed preflight result",
+          { state: "unavailable", reason: "preflight-failed", structuralStatus: null },
+          { state: "unavailable", reason: "preflight-failed" },
+        ],
+      ])(
+        "keeps the unavailable controller and publishes the bounded status for %s",
+        async (_name, preflightResult, expectedRuntime) => {
+          const preflight = vi.fn().mockResolvedValue(preflightResult);
+          mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+          await activateWithComposition();
+
+          expect(preflight).toHaveBeenCalledTimes(1);
+          const controller = injectedReviewController();
+          expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+          const runtime = await controller.getRuntime();
+          expect(runtime).toEqual(expectedRuntime);
+          expect(Object.keys(runtime).sort()).toEqual(["reason", "state"]);
+          // Status reads never run discovery or another preflight.
+          await controller.getRuntime();
+          expect(preflight).toHaveBeenCalledTimes(1);
+        },
+      );
+
+      it("keeps activation nonfatal and bounded when the preflight rejects", async () => {
+        const preflight = vi.fn().mockRejectedValue(new Error("raw preflight detail for /private/review-root"));
+        mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+        await expect(activateWithComposition()).resolves.toBeUndefined();
+
+        expect(preflight).toHaveBeenCalledTimes(1);
+        const controller = injectedReviewController();
+        expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+        const runtime = await controller.getRuntime();
+        expect(runtime).toEqual({ state: "unavailable", reason: "preflight-failed" });
+        expect(JSON.stringify(runtime)).not.toContain("raw preflight detail");
+        expect(JSON.stringify(runtime)).not.toContain("/private/review-root");
+        expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(
+          expect.stringContaining("raw preflight detail"),
+        );
+        expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
+          expect.stringContaining("raw preflight detail"),
+        );
+      });
+
+      it("preflights at most once per activation across repeated view resolves", async () => {
+        const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+        mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+        await activateWithComposition();
+        await registeredProvider().resolveWebviewView({}, {}, {});
+        await registeredProvider().resolveWebviewView({}, {}, {});
+
+        const controller = injectedReviewController();
+        await controller.getRuntime();
+        await controller.getRuntime();
+
+        expect(preflight).toHaveBeenCalledTimes(1);
+      });
+
+      it("never preflights or inspects a dormant composition and publishes the dormant status", async () => {
+        // The decoy bridge proves dormancy short-circuits before any touch.
+        const preflight = vi.fn();
+        const getState = vi.fn();
+        const run = vi.fn();
+        const teardown = vi.fn();
+        mockVibefeldComposition = {
+          state: "dormant",
+          reason: "missing-policy",
+          bridge: { preflight, getState, run, teardown },
+        };
+
+        await activateWithComposition();
+
+        expect(preflight).not.toHaveBeenCalled();
+        expect(getState).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        expect(teardown).not.toHaveBeenCalled();
+        const controller = injectedReviewController();
+        expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+        await expect(controller.getRuntime()).resolves.toEqual({
+          state: "unavailable",
+          reason: "runtime-unavailable",
+        });
+        // Dormancy performs no launch or reconnect side effect.
+        expect(mockUpdateLaunchConfiguration).not.toHaveBeenCalled();
+        expect(mockStopForReconnect).not.toHaveBeenCalled();
+      });
+
+      it("passes the resolved executable and direct adapter into the composition only when ready", async () => {
+        const resolveExecutable = () => "/usr/local/bin/af";
+        const policy = {
+          platform: "darwin",
+          readiness: { state: "ready", execution: "direct" },
+          launch: vi.fn(),
+          terminateAndReap: vi.fn(),
+        };
+        const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+        mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+        mockResolveAfRuntime.mockResolvedValue({
+          state: "ready",
+          resolveExecutable,
+          policy,
+        });
+
+        await activateWithComposition();
+
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+        expect(mockVibefeldActivationOptions.at(-1)).toMatchObject({
+          resolveExecutable,
+          policy,
+        });
+        expect(mockVibefeldActivationOptions.at(-1)).not.toHaveProperty("readOnlyRuntimeGrants");
+        expect(preflight).toHaveBeenCalledTimes(1);
+        await expect(injectedReviewController().getRuntime()).resolves.toEqual({ state: "available" });
+      });
+
+      it("keeps the composition dormant and bounded when runtime resolution is dormant", async () => {
+        mockResolveAfRuntime.mockResolvedValue({ state: "dormant", reason: "missing-af" });
+
+        await activateWithComposition();
+
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+        const options = mockVibefeldActivationOptions.at(-1) as Record<string, unknown>;
+        expect(options).not.toHaveProperty("resolveExecutable");
+        expect(options).not.toHaveProperty("policy");
+        expect(options).not.toHaveProperty("readOnlyRuntimeGrants");
+        const controller = injectedReviewController();
+        expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+        await expect(controller.getRuntime()).resolves.toEqual({
+          state: "unavailable",
+          reason: "runtime-unavailable",
+        });
+        // Status reads and repeated view resolves never re-resolve the runtime.
+        await controller.getRuntime();
+        await registeredProvider().resolveWebviewView({}, {}, {});
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+      });
+
+      it("resolves the runtime with host-owned seams only and no per-activation override", async () => {
+        await activateWithComposition();
+
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+        const options = mockResolveAfRuntime.mock.calls.at(-1)?.[0];
+        expect(options ?? {}).toEqual({});
+      });
+
+      it("keeps the single bridge preflight in activation and out of message paths", () => {
+        const extensionSource = readSource("../extension.ts");
+        const chatViewSource = readSource("../chat-view-provider.ts");
+        const activationSource = readSource("../vibefeld/vibefeld-activation.ts");
+        const runtimeSource = readSource("../vibefeld/vibefeld-runtime.ts");
+        const claimControllerSource = readSource("../vibefeld/claim-projection-reasoning-review-controller.ts");
+        const claimSeamSource = readSource("../vibefeld/current-vibefeld-claim-projection.ts");
+        const runtimeReportingSource = readSource("../vibefeld/runtime-reporting-reasoning-review-controller.ts");
+
+        expect(extensionSource.match(/\.preflight\(\)/gu) ?? []).toHaveLength(1);
+        for (const source of [
+          chatViewSource,
+          activationSource,
+          runtimeSource,
+          claimControllerSource,
+          claimSeamSource,
+          runtimeReportingSource,
+        ]) {
+          expect(source).not.toMatch(/\.preflight\(/u);
+        }
+        // The reporting wrapper can only echo its fixed status: no discovery,
+        // process launch, or filesystem access.
+        expect(runtimeReportingSource).not.toMatch(/\b(?:discover|spawn|execFile|fork)\s*\(/u);
+        expect(runtimeReportingSource).not.toMatch(/node:child_process|node:fs/u);
+        // No per-message discovery or preflight may live in the message path.
+        expect(chatViewSource).not.toMatch(
+          /preflight|discoverAf|createVibefeldActivation|vibefeld-activation|vibefeld-runtime/u,
+        );
+      });
+
+      it("keeps fixture parsers and fixture-shaped evidence out of every production caller", () => {
+        const extensionSource = readSource("../extension.ts");
+        const activationSource = readSource("../vibefeld/vibefeld-activation.ts");
+        const runtimeSource = readSource("../vibefeld/vibefeld-runtime.ts");
+
+        for (const source of [extensionSource, activationSource, runtimeSource]) {
+          expect(source).not.toContain("af-output-schema");
+          expect(source).not.toContain("createAfOutputParsers");
+          expect(source).not.toMatch(/parseAf(?:Version|Schema|Init|Status)Output/u);
+        }
+        for (const source of [activationSource, runtimeSource]) {
+          expect(source).toContain("options.parsers ?? createProductionAfOutputParsers()");
+        }
+        expect(extensionSource).not.toMatch(/AfOutputParsers|af-parser-mode|af-live-output/u);
+      });
+    });
+
+    describe("reasoning review preference seam", () => {
+      type InjectedPreferenceSeam = {
+        read: () => { userEnabled: boolean; workspaceOptOut: boolean };
+        setUserEnabled: (value: boolean) => Promise<void>;
+        setWorkspaceOptOut: (value: boolean) => Promise<void>;
+      };
+
+      function injectedPreferenceSeam(): InjectedPreferenceSeam {
+        const options = mockChatViewProviderOptions.at(-1) as
+          | { reasoningReviewPreference?: InjectedPreferenceSeam }
+          | undefined;
+        if (!options?.reasoningReviewPreference) throw new Error("no reasoning-review preference seam was injected");
+        return options.reasoningReviewPreference;
+      }
+
+      it("reads the Global preference and workspace opt-out at workspace scope with gated defaults", async () => {
+        const ext = await importExtension();
+        await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+        const seam = injectedPreferenceSeam();
+        expect(seam.read()).toEqual({ userEnabled: true, workspaceOptOut: false });
+        expect(vscode.workspace.getConfiguration).toHaveBeenCalledWith(
+          "opencode-chat",
+          expect.objectContaining({ fsPath: "/workspace/project" }),
+        );
+      });
+
+      it("writes only the intended key and target for each preference control", async () => {
+        const ext = await importExtension();
+        await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+        const seam = injectedPreferenceSeam();
+        mockNonoProfileUpdate.mockClear();
+
+        await seam.setUserEnabled(false);
+
+        expect(mockNonoProfileUpdate).toHaveBeenCalledTimes(1);
+        expect(mockNonoProfileUpdate).toHaveBeenCalledWith(
+          "vibefeld.enabled",
+          false,
+          vscode.ConfigurationTarget.Global,
+        );
+
+        mockNonoProfileUpdate.mockClear();
+        await seam.setWorkspaceOptOut(true);
+
+        expect(mockNonoProfileUpdate).toHaveBeenCalledTimes(1);
+        expect(mockNonoProfileUpdate).toHaveBeenCalledWith(
+          "vibefeld.workspaceOptOut",
+          true,
+          vscode.ConfigurationTarget.Workspace,
+        );
+      });
     });
 
     it("defers the no-workspace warning until Chat is opened", async () => {

@@ -65,6 +65,10 @@ export const en = {
   "review.routingReason.evidenceDependent": "Evidence-dependent response",
   "review.routingReason.multiStepArgument": "Multi-step argument",
   "review.routingReason.highImpactRecommendation": "High-impact recommendation",
+  "review.feedback.label": "Feedback",
+  "review.feedback.correct": "Correct",
+  "review.feedback.unfoundedChallenge": "Unfounded challenge",
+  "review.feedback.recorded": "Feedback recorded",
 
   // MessagesArea
   "checkpoint.revertTitle": "Revert to this point",
@@ -155,6 +159,15 @@ export const en = {
   "config.sandboxManaged": "Chat sandbox settings are managed and cannot be changed.",
   "config.sandboxApplying": "Applying sandbox settings…",
   "config.sandboxError": (error: string) => `Sandbox error: ${error}`,
+
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Reasoning review",
+  "config.reasoningReviewEnable": "Enable reasoning review",
+  "config.reasoningReviewWorkspaceOptOut": "Opt out in this workspace",
+  "config.reasoningReviewDescription":
+    "Reviews responses on this host when the reasoning-review runtime is available. The workspace opt-out overrides the global preference for this workspace.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Active in this workspace" : "Inactive in this workspace",
 
   // Language setting
   "config.language": "Language",

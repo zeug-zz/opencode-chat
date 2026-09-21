@@ -1,10 +1,24 @@
 import { type AfResultClassification, classifyAfRuntimeResult } from "./af-runtime-contract";
 
+/**
+ * Fixture-schema parser test double.
+ *
+ * This module parses only the synthetic `af-runtime-fixture-1` envelope used by
+ * tests. It is an explicit test double and never production runtime evidence:
+ * the production path selects live parsers by an explicit mode. The exported
+ * `AF_FIXTURE_*` constants identify that test double; they are not a production
+ * pin, and parsing behavior is unchanged.
+ */
+
 const MAX_OUTPUT_BYTES = 32_768;
 const MAX_TEXT_LENGTH = 256;
-const EXPECTED_FIXTURE_SCHEMA = "af-runtime-fixture-1" as const;
-const EXPECTED_WORKSPACE_FORMAT = "1.0" as const;
-const EXPECTED_RUNTIME = {
+
+/** Fixture test-double schema marker; never production evidence. */
+export const AF_FIXTURE_SCHEMA_VERSION = "af-runtime-fixture-1" as const;
+/** Fixture test-double workspace format; never production evidence. */
+export const AF_FIXTURE_WORKSPACE_FORMAT = "1.0" as const;
+/** Fixture test-double runtime identity; never production evidence. */
+export const AF_FIXTURE_RUNTIME_FACTS = {
   executableName: "af",
   version: "0.1.7",
   commit: "5a37413",
@@ -21,16 +35,18 @@ export type AfOutputExecution = Readonly<{
   cancelled?: boolean;
 }>;
 
+/** Fixture test-double version facts; never production evidence. */
 export type AfVersionFacts = Readonly<{
-  fixtureSchema: typeof EXPECTED_FIXTURE_SCHEMA;
-  runtime: typeof EXPECTED_RUNTIME;
+  fixtureSchema: typeof AF_FIXTURE_SCHEMA_VERSION;
+  runtime: typeof AF_FIXTURE_RUNTIME_FACTS;
   operatingSystem: "darwin" | "linux";
   architecture: "arm64" | "x64" | "arm" | "ia32";
 }>;
 
+/** Fixture test-double schema facts; never production evidence. */
 export type AfSchemaFacts = Readonly<{
-  fixtureSchema: typeof EXPECTED_FIXTURE_SCHEMA;
-  workspaceFormat: typeof EXPECTED_WORKSPACE_FORMAT;
+  fixtureSchema: typeof AF_FIXTURE_SCHEMA_VERSION;
+  workspaceFormat: typeof AF_FIXTURE_WORKSPACE_FORMAT;
   schemaKeys: readonly [
     "inference_types",
     "node_types",
@@ -41,17 +57,19 @@ export type AfSchemaFacts = Readonly<{
   ];
 }>;
 
+/** Fixture test-double init facts; never production evidence. */
 export type AfInitFacts = Readonly<{
-  fixtureSchema: typeof EXPECTED_FIXTURE_SCHEMA;
-  workspaceFormat: typeof EXPECTED_WORKSPACE_FORMAT;
+  fixtureSchema: typeof AF_FIXTURE_SCHEMA_VERSION;
+  workspaceFormat: typeof AF_FIXTURE_WORKSPACE_FORMAT;
   entryCount: number;
   directoryCount: number;
   fileCount: number;
 }>;
 
+/** Fixture test-double status facts; never production evidence. */
 export type AfStatusFacts = Readonly<{
-  fixtureSchema: typeof EXPECTED_FIXTURE_SCHEMA;
-  workspaceFormat: typeof EXPECTED_WORKSPACE_FORMAT;
+  fixtureSchema: typeof AF_FIXTURE_SCHEMA_VERSION;
+  workspaceFormat: typeof AF_FIXTURE_WORKSPACE_FORMAT;
   rootState: "pending" | "available" | "resolved" | "refuted";
   rootResolution: "unresolved" | "conditional" | "accepted" | "refuted";
   statistics: Readonly<{
@@ -122,21 +140,21 @@ const parseJson = (stdout: string, execution: AfOutputExecution): AfOutputResult
   }
 };
 
-const fixtureHeader = (value: Record<string, unknown>): boolean => value.fixtureSchema === EXPECTED_FIXTURE_SCHEMA;
+const fixtureHeader = (value: Record<string, unknown>): boolean => value.fixtureSchema === AF_FIXTURE_SCHEMA_VERSION;
 
 const normalizeRuntime = (value: unknown): AfVersionFacts["runtime"] | undefined => {
   if (!isRecord(value)) return undefined;
   const buildDate = value.buildDate ?? value.build_date;
   const goVersion = value.goVersion ?? value.go_version;
   if (
-    value.executableName !== EXPECTED_RUNTIME.executableName ||
-    value.version !== EXPECTED_RUNTIME.version ||
-    value.commit !== EXPECTED_RUNTIME.commit ||
-    buildDate !== EXPECTED_RUNTIME.buildDate ||
-    goVersion !== EXPECTED_RUNTIME.goVersion
+    value.executableName !== AF_FIXTURE_RUNTIME_FACTS.executableName ||
+    value.version !== AF_FIXTURE_RUNTIME_FACTS.version ||
+    value.commit !== AF_FIXTURE_RUNTIME_FACTS.commit ||
+    buildDate !== AF_FIXTURE_RUNTIME_FACTS.buildDate ||
+    goVersion !== AF_FIXTURE_RUNTIME_FACTS.goVersion
   )
     return undefined;
-  return EXPECTED_RUNTIME;
+  return AF_FIXTURE_RUNTIME_FACTS;
 };
 
 const normalizePlatform = (value: unknown): Pick<AfVersionFacts, "operatingSystem" | "architecture"> | undefined => {
@@ -162,7 +180,11 @@ export function parseAfVersionOutput(
   if (exitFailure) return exitFailure;
   if (!fixtureHeader(parsed.facts) || !runtime || !platform || !Array.isArray(parsed.facts.argv))
     return failure("unknown");
-  return { ok: true, facts: { fixtureSchema: EXPECTED_FIXTURE_SCHEMA, runtime, ...platform }, structuralStatus: null };
+  return {
+    ok: true,
+    facts: { fixtureSchema: AF_FIXTURE_SCHEMA_VERSION, runtime, ...platform },
+    structuralStatus: null,
+  };
 }
 
 export function parseAfSchemaOutput(stdout: string, execution: AfOutputExecution = {}): AfOutputResult<AfSchemaFacts> {
@@ -181,14 +203,14 @@ export function parseAfSchemaOutput(stdout: string, execution: AfOutputExecution
   ] as const;
   if (
     !fixtureHeader(parsed.facts) ||
-    parsed.facts.workspaceFormat !== EXPECTED_WORKSPACE_FORMAT ||
+    parsed.facts.workspaceFormat !== AF_FIXTURE_WORKSPACE_FORMAT ||
     !isRecord(schema) ||
     !keys.every((key) => Array.isArray(schema[key]))
   )
     return failure("unknown");
   return {
     ok: true,
-    facts: { fixtureSchema: EXPECTED_FIXTURE_SCHEMA, workspaceFormat: EXPECTED_WORKSPACE_FORMAT, schemaKeys: keys },
+    facts: { fixtureSchema: AF_FIXTURE_SCHEMA_VERSION, workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT, schemaKeys: keys },
     structuralStatus: null,
   };
 }
@@ -203,7 +225,7 @@ export function parseAfInitOutput(stdout: string, execution: AfOutputExecution =
   if (
     !fixtureHeader(parsed.facts) ||
     !isRecord(workspace) ||
-    workspace.format !== EXPECTED_WORKSPACE_FORMAT ||
+    workspace.format !== AF_FIXTURE_WORKSPACE_FORMAT ||
     !Array.isArray(entries)
   )
     return failure("unknown");
@@ -218,8 +240,8 @@ export function parseAfInitOutput(stdout: string, execution: AfOutputExecution =
   return {
     ok: true,
     facts: {
-      fixtureSchema: EXPECTED_FIXTURE_SCHEMA,
-      workspaceFormat: EXPECTED_WORKSPACE_FORMAT,
+      fixtureSchema: AF_FIXTURE_SCHEMA_VERSION,
+      workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT,
       entryCount: entries.length,
       directoryCount,
       fileCount,
@@ -242,7 +264,7 @@ export function parseAfStatusOutput(stdout: string, execution: AfOutputExecution
   if (
     !fixtureHeader(parsed.facts) ||
     !isRecord(status) ||
-    status.workspaceFormat !== EXPECTED_WORKSPACE_FORMAT ||
+    status.workspaceFormat !== AF_FIXTURE_WORKSPACE_FORMAT ||
     !isRecord(root) ||
     !isRecord(statistics) ||
     !isRecord(jobs) ||
@@ -266,8 +288,8 @@ export function parseAfStatusOutput(stdout: string, execution: AfOutputExecution
   return {
     ok: true,
     facts: {
-      fixtureSchema: EXPECTED_FIXTURE_SCHEMA,
-      workspaceFormat: EXPECTED_WORKSPACE_FORMAT,
+      fixtureSchema: AF_FIXTURE_SCHEMA_VERSION,
+      workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT,
       rootState: root.state as AfStatusFacts["rootState"],
       rootResolution: root.resolution as AfStatusFacts["rootResolution"],
       statistics: {

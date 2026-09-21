@@ -1,0 +1,27 @@
+{
+  "statistics": {
+    "total_nodes": 1,
+    "epistemic_state": { "pending": 1 },
+    "taint_state": { "unresolved": 1 },
+    "total_challenges": 0,
+    "open_challenges": 0
+  },
+  "jobs": { "prover_jobs": 0, "verifier_jobs": 1 },
+  "nodes": [
+    {
+      "id": "1",
+      "type": "claim",
+      "statement": "All primes greater than 2 are odd",
+      "inference": "assumption",
+      "workflow_state": "available",
+      "epistemic_state": "pending",
+      "taint_state": "unresolved",
+      "created": "2026-09-21T07:20:40.871224Z",
+      "content_hash": "cfedf56f083914648d5727cb1f99c0b44177b07d8a93fa95792915e6c0fdd9c2",
+      "support_current": false,
+      "support_cause": "NOT_VALIDATED",
+      "support_node": "1"
+    }
+  ],
+  "challenges": []
+}

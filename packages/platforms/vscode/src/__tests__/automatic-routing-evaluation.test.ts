@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AUTOMATIC_ROUTING_EVALUATION_TARGETS,
+  AUTOMATIC_ROUTING_EVALUATION_VERSION,
   measureAutomaticRoutingFixture,
   validateAutomaticRoutingEvaluation,
 } from "../vibefeld/automatic-routing-evaluation";
@@ -20,8 +21,16 @@ describe("automatic-routing evaluation", () => {
   it("qualifies exactly at every fixed target", () => {
     const result = validateAutomaticRoutingEvaluation(evidence());
     expect(result).toEqual({ ok: true, value: evidence() });
+    expect(evidence().version).toBe(AUTOMATIC_ROUTING_EVALUATION_VERSION);
     expect(AUTOMATIC_ROUTING_EVALUATION_TARGETS.minimumCaseCount).toBe(100);
   });
+
+  it.each(["automatic-routing-evaluation-2", "automatic-routing-evaluation-10", "automatic-routing-evaluation-999"])(
+    "rejects a stale or unsupported version: %s",
+    (version) => {
+      expect(validateAutomaticRoutingEvaluation(evidence({ version }))).toEqual({ ok: false, code: "stale-version" });
+    },
+  );
 
   it.each([
     ["case count", { caseCount: 99 }],

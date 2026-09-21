@@ -38,7 +38,31 @@ import {
   checkForPrivateReleaseUpdates,
   downloadAndValidatePrivateRelease,
 } from "./private-release-updater";
+import { resolveAfRuntime } from "./vibefeld/af-runtime-resolution";
+import { resolveAutomaticRoutingActivation } from "./vibefeld/automatic-routing-activation";
+import { selectAutomaticRouting } from "./vibefeld/automatic-routing-policy";
+import { ClaimProjectionReasoningReviewController } from "./vibefeld/claim-projection-reasoning-review-controller";
+import { createCurrentVibefeldClaimProjectionSeam } from "./vibefeld/current-vibefeld-claim-projection";
+import { QualificationRecorder } from "./vibefeld/qualification-recorder";
+import { createQualificationFileStore } from "./vibefeld/qualification-store";
+import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
+import {
+  DORMANT_REASONING_REVIEW_RUNTIME,
+  deriveReasoningReviewRuntime,
+  PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME,
+  RuntimeReportingReasoningReviewController,
+} from "./vibefeld/runtime-reporting-reasoning-review-controller";
 import { UnavailableReasoningReviewController } from "./vibefeld/unavailable-reasoning-review-controller";
+import {
+  createVibefeldActivation,
+  teardownVibefeldActivation,
+  type VibefeldActivationComposition,
+} from "./vibefeld/vibefeld-activation";
+import {
+  readVibefeldPreference,
+  updateVibefeldEnabled,
+  updateVibefeldWorkspaceOptOut,
+} from "./vibefeld/vibefeld-settings";
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent!: OpenCodeAgent;
@@ -522,8 +546,59 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
 
   const memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus);
 
+  // Host-private runtime resolution. Discovery runs once here and the
+  // composition stays dormant unless the resolution is ready, so no executable
+  // resolver or direct-execution adapter is ever supplied to a dormant host.
+  //
+  // A context without extension global storage cannot compose at all, so the
+  // host resolution is skipped there rather than running a bounded process for
+  // a composition that stays dormant.
+  const globalStoragePath = context.globalStorageUri?.fsPath ?? "";
+  const afRuntimeResolution = globalStoragePath ? await resolveAfRuntime() : undefined;
+
+  // Host-private activation composition. Construction is dormant and free of
+  // side effects; preflight and controller selection are separate steps. A
+  // lightweight host-test context may omit global storage, which keeps the
+  // composition dormant instead of failing activation.
+  const vibefeldActivation = createVibefeldActivation({
+    globalStoragePath,
+    repositoryPath: workspaceFolder,
+    ...(afRuntimeResolution?.state === "ready"
+      ? {
+          resolveExecutable: afRuntimeResolution.resolveExecutable,
+          policy: afRuntimeResolution.policy,
+        }
+      : {}),
+  });
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      void teardownVibefeldActivation(vibefeldActivation).catch(() => undefined);
+    }),
+  );
+
   const platformServices = new VscodePlatformServices();
-  const reasoningReviewController = new UnavailableReasoningReviewController();
+  // Dynamic selection: the composition above is constructed once and this is
+  // the only bridge preflight of the extension activation. Ordinary messages,
+  // session switches, and later view resolves reuse the injected controller.
+  const reasoningReviewController = await selectReasoningReviewController(vibefeldActivation);
+  const reasoningReviewPreference = {
+    read: () => readVibefeldPreference(workspaceUri),
+    setUserEnabled: (value: boolean) => updateVibefeldEnabled(value, workspaceUri),
+    setWorkspaceOptOut: (value: boolean) => updateVibefeldWorkspaceOptOut(value, workspaceUri),
+  };
+  const automaticRouting = resolveAutomaticRoutingActivation({
+    preference: reasoningReviewPreference.read(),
+    runtime: await reasoningReviewController.getRuntime(),
+    // Qualification stays unpublished until the host-private aggregate
+    // recorder reaches the existing case minimum; the recorder is read at
+    // selection time through the bounded evaluation provider below.
+    evaluation: undefined,
+  });
+  // Host-private aggregate live capture. Retention is beneath VS Code's global
+  // storage only; contexts without that path remain in-memory and inert.
+  const qualificationRecorder = new QualificationRecorder(
+    globalStoragePath ? createQualificationFileStore({ globalStoragePath }) : undefined,
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("opencode-chat.selectNonoProfile", () => selectNonoProfile(workspaceUri)),
@@ -536,6 +611,18 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     memoryProviderStatus,
     memoryRetentionStatus,
     reasoningReviewController,
+    // The 6.1 fail-closed resolver stays in place: the recorder only ever
+    // contributes an aggregate that the existing validator reports qualified.
+    automaticRouting: {
+      ...automaticRouting,
+      evaluationProvider: () => qualificationRecorder.currentEvaluation(),
+      router: selectAutomaticRouting,
+    },
+    qualificationRecorder,
+    // Availability-gated preference seam: the user toggle writes the Global
+    // target and the workspace opt-out writes the Workspace target for this
+    // workspace. Reads and writes stay within the two bounded boolean keys.
+    reasoningReviewPreference,
     bundledResources: bundledResourceMetadata,
     bundledCommandNames: bundledCommands.map((resource) => resource.name),
     setChatSandboxSettings: async (settings: ChatSandboxSettings) => {
@@ -653,6 +740,40 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   // Those errors are caught by ChatViewProvider.handleWebviewMessage and
   // logged. The webview shows an error surface rather than hanging silently.
   return chatViewProvider;
+}
+
+/**
+ * Runs the one bounded activation preflight and selects the review controller.
+ * A dormant composition is never inspected. A composed bridge is preflighted
+ * exactly once; only a `ready` result selects the claim-projection controller.
+ * Any preflight or construction failure is nonfatal and bounded: no raw error
+ * or host path escapes, and the dormant unavailable controller stays injected.
+ * The published runtime status is fixed from this single outcome, so later
+ * status reads never re-preflight, discover, or spawn.
+ */
+async function selectReasoningReviewController(
+  composition: VibefeldActivationComposition,
+): Promise<IReasoningReviewController> {
+  if (composition.state !== "composed") {
+    return new RuntimeReportingReasoningReviewController(
+      new UnavailableReasoningReviewController(),
+      DORMANT_REASONING_REVIEW_RUNTIME,
+    );
+  }
+  let runtime = PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME;
+  try {
+    const preflight = await composition.bridge.preflight();
+    runtime = deriveReasoningReviewRuntime(preflight);
+    if (preflight.state === "ready") {
+      return new RuntimeReportingReasoningReviewController(
+        new ClaimProjectionReasoningReviewController(createCurrentVibefeldClaimProjectionSeam(composition.bridge)),
+        runtime,
+      );
+    }
+  } catch {
+    // A rejected preflight is nonfatal; the bounded failure status stays.
+  }
+  return new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), runtime);
 }
 
 class LazyChatViewProvider implements vscode.WebviewViewProvider {

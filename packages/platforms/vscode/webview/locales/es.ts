@@ -65,6 +65,10 @@ export const es: LocaleSchema = {
   "review.routingReason.evidenceDependent": "Respuesta dependiente de evidencia",
   "review.routingReason.multiStepArgument": "Argumento de varios pasos",
   "review.routingReason.highImpactRecommendation": "Recomendación de alto impacto",
+  "review.feedback.label": "Comentarios",
+  "review.feedback.correct": "Correcto",
+  "review.feedback.unfoundedChallenge": "Objeción infundada",
+  "review.feedback.recorded": "Comentarios registrados",
 
   // MessagesArea
   "checkpoint.revertTitle": "Revertir a este punto",
@@ -165,6 +169,15 @@ export const es: LocaleSchema = {
   "config.sandboxManaged": "La configuración de aislamiento de Chat está administrada y no se puede cambiar.",
   "config.sandboxApplying": "Aplicando configuración de aislamiento…",
   "config.sandboxError": (error: string) => `Error de aislamiento: ${error}`,
+
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Revisión de razonamiento",
+  "config.reasoningReviewEnable": "Habilitar la revisión de razonamiento",
+  "config.reasoningReviewWorkspaceOptOut": "Excluir en este espacio de trabajo",
+  "config.reasoningReviewDescription":
+    "Revisa las respuestas en este host cuando el entorno de revisión de razonamiento está disponible. La exclusión del espacio de trabajo anula la preferencia global en este espacio de trabajo.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Activa en este espacio de trabajo" : "Inactiva en este espacio de trabajo",
 
   // Language setting
   "config.language": "Idioma",

@@ -105,6 +105,26 @@ export type UIToHostMessage =
   // --- Reasoning review ---
   | { type: "requestReasoningReview"; sessionId: string; messageId: string }
   | { type: "cancelReasoningReview"; sessionId: string; messageId: string }
+  | {
+      type: "setReasoningReviewPreference";
+      /**
+       * Bounded preference patch. Only the present keys are written: the user
+       * toggle writes the Global preference and the workspace opt-out writes
+       * the Workspace target. No runtime, executable, or path data is carried.
+       */
+      preference: { userEnabled?: boolean; workspaceOptOut?: boolean };
+    }
+  | {
+      type: "setReasoningReviewFeedback";
+      /**
+       * Bounded local review-card feedback. Only these booleans are carried:
+       * no prompt, source packet, review text, response text, or path data.
+       */
+      sessionId: string;
+      messageId: string;
+      correct: boolean;
+      falseChallenge?: boolean;
+    }
 
   // --- Shell (via agent) ---
   | {
@@ -258,6 +278,14 @@ export type HostToUIMessage =
 
   // --- Reasoning review ---
   | { type: "reasoningRuntime"; runtime: ReasoningReviewRuntime }
+  | {
+      type: "reasoningReviewPreference";
+      /**
+       * Host-resolved bounded preference. `effective` is the composed
+       * `userEnabled && !workspaceOptOut && runtime available` state.
+       */
+      preference: { userEnabled: boolean; workspaceOptOut: boolean; effective: boolean };
+    }
   | {
       type: "reasoningReview";
       sessionId: string;

@@ -61,3 +61,35 @@
   margin-top: 7px;
   color: var(--vscode-descriptionForeground);
 }
+
+.feedback {
+  margin: 7px 0 0;
+  border: 0;
+  border-top: 1px solid var(--vscode-panel-border);
+  padding: 6px 0 0;
+}
+
+.feedback legend {
+  padding: 0 4px 0 0;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+}
+
+.feedbackActions {
+  display: flex;
+  gap: 6px;
+}
+
+.feedbackActions button {
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.feedbackActions button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
