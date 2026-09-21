@@ -27,6 +27,7 @@ import { useMessages } from "./hooks/useMessages";
 import { usePermissions } from "./hooks/usePermissions";
 import { useProviders } from "./hooks/useProviders";
 import { useQuestions } from "./hooks/useQuestions";
+import { useReasoningReview } from "./hooks/useReasoningReview";
 import { useSession } from "./hooks/useSession";
 import { useSoundNotification } from "./hooks/useSoundNotification";
 import { LocaleProvider } from "./locales";
@@ -75,6 +76,27 @@ export function App() {
   const locale = useLocale();
   const fileChanges = useFileChanges(activeSessionRef);
   const sound = useSoundNotification(activeSessionRef);
+  const review = useReasoningReview(activeSessionRef);
+  const {
+    runtime: reasoningReviewRuntime,
+    summaries: reasoningReviewSummaries,
+    getSummary: getReasoningReviewSummary,
+    handleHostMessage: handleReasoningReviewHostMessage,
+    handleSessionEvent: handleReasoningReviewSessionEvent,
+    clearSessionState: clearReasoningReviewSessionState,
+  } = review;
+  const handleRequestReasoningReview = useCallback(
+    (messageId: string) => {
+      if (session.activeSession) review.startReview(session.activeSession.id, messageId);
+    },
+    [review.startReview, session.activeSession],
+  );
+  const handleCancelReasoningReview = useCallback(
+    (messageId: string) => {
+      if (session.activeSession) review.cancelReview(session.activeSession.id, messageId);
+    },
+    [review.cancelReview, session.activeSession],
+  );
   const [showAllThinking, setShowAllThinking] = useState(() => getPersistedState()?.showAllThinking ?? false);
   const handleShowAllThinkingChange = useCallback((value: boolean) => {
     setShowAllThinking(value);
@@ -175,6 +197,7 @@ export function App() {
   const handleEvent = useCallback(
     (event: AgentEvent) => {
       session.handleSessionEvent(event);
+      handleReasoningReviewSessionEvent(event);
       msg.handleMessageEvent(event);
       perm.handlePermissionEvent(event);
       quest.handleQuestionEvent(event);
@@ -308,6 +331,7 @@ export function App() {
             setQueuedPromptCount(0);
           }
           if (changedNonNullSession) {
+            clearReasoningReviewSessionState(previousSessionId);
             msg.clearSessionState();
             fileChanges.clearDiffs();
             perm.clearPermissions();
@@ -325,6 +349,7 @@ export function App() {
             postMessage({ type: "getSessionTodos", sessionId: data.session.id });
             postMessage({ type: "getChildSessions", sessionId: data.session.id });
           } else {
+            clearReasoningReviewSessionState(previousSessionId);
             msg.clearSessionState();
             fileChanges.clearDiffs();
             perm.clearPermissions();
@@ -441,6 +466,10 @@ export function App() {
         case "chatSandboxStatus":
           setChatSandboxStatus(data.status);
           break;
+        case "reasoningRuntime":
+        case "reasoningReview":
+          handleReasoningReviewHostMessage(data);
+          break;
       }
     };
     window.addEventListener("message", handler);
@@ -466,6 +495,9 @@ export function App() {
     perm.clearPermissions,
     quest.clearQuestions,
     session.clearSessionState,
+    handleReasoningReviewSessionEvent,
+    clearReasoningReviewSessionState,
+    handleReasoningReviewHostMessage,
   ]);
 
   // Cross-cutting action handlers (span multiple hooks)
@@ -710,6 +742,12 @@ export function App() {
     childSessions,
     onNavigateToChild: handleNavigateToChild,
     onNavigateToParent: handleNavigateToParent,
+    reasoningReviewRuntime,
+    reasoningReviewSummaries,
+    getReasoningReviewSummary,
+    isReasoningReviewing: review.isReviewing,
+    onRequestReasoningReview: handleRequestReasoningReview,
+    onCancelReasoningReview: handleCancelReasoningReview,
     chatSandboxStatus,
     onChatSandboxSettingsChange: handleChatSandboxSettingsChange,
   };

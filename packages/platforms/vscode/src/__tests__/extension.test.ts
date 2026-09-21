@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenCodePaths, resolveRuntimeCachePaths } from "../chat-sandbox-policy";
 import { classifyConnectError } from "../connect-error";
+import { UnavailableReasoningReviewController } from "../vibefeld/unavailable-reasoning-review-controller";
 
 // --- モックの準備 ---
 
@@ -65,6 +66,7 @@ const mockDownloadAndValidate = vi.hoisted(() => vi.fn());
 const mockAbandonLocalInstaller = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockCheckForPrivateReleaseUpdates = vi.hoisted(() => vi.fn());
 let mockUpdaterUx = false;
+let adversarialControllerImported = false;
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -176,6 +178,7 @@ describe("extension", () => {
     mockPublishedSandboxStatuses.length = 0;
     mockChatViewProviderOptions.length = 0;
     mockChatViewProviderInstance = undefined;
+    adversarialControllerImported = false;
     mockLoadBundledResearchResources.mockResolvedValue({ resources: [], diagnostics: [] });
     mockDetectMemoryProvider.mockResolvedValue({
       id: "none",
@@ -278,6 +281,9 @@ describe("extension", () => {
     vi.doMock("../chat-view-provider", () => ({
       ChatViewProvider: createMockChatViewProviderClass(),
     }));
+    vi.doMock("../vibefeld/unavailable-reasoning-review-controller", () => ({
+      UnavailableReasoningReviewController,
+    }));
     vi.doMock("../bundled-research-resources", () => ({
       loadBundledResearchResources: mockLoadBundledResearchResources,
     }));
@@ -298,6 +304,26 @@ describe("extension", () => {
   // ============================================================
 
   describe("activate() - normal", () => {
+    it("does not import or construct an adversarial controller during activation", async () => {
+      vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => {
+        adversarialControllerImported = true;
+        throw new Error("adversarial controller must remain dormant");
+      });
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(adversarialControllerImported).toBe(false);
+      expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
+        reasoningReviewController: expect.any(UnavailableReasoningReviewController),
+      });
+      expect(mockAgentLaunchConfigurations.at(-1)).not.toMatchObject({
+        af: expect.anything(),
+        vibefeld: expect.anything(),
+        proofWorkspace: expect.anything(),
+      });
+    });
+
     it("offers the native default and custom profiles without blocking activation", async () => {
       mockDiscoverNonoProfiles.mockResolvedValue(["opencode-local"]);
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
@@ -345,6 +371,27 @@ describe("extension", () => {
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
 
       expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    });
+
+    it("injects the host-owned unavailable reasoning-review controller", async () => {
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      const launchConfiguration = latestLaunchConfiguration() as Record<string, unknown>;
+      expect(mockChatViewProviderOptions.at(-1)).toMatchObject({
+        reasoningReviewController: expect.any(UnavailableReasoningReviewController),
+      });
+      expect(mockChatViewProviderOptions.at(-1)).toHaveProperty(
+        "reasoningReviewController",
+        expect.any(UnavailableReasoningReviewController),
+      );
+      expect(launchConfiguration).not.toHaveProperty("af");
+      expect(launchConfiguration).not.toHaveProperty("vibefeld");
+      expect(launchConfiguration).not.toHaveProperty("proofWorkspace");
+      expect(launchConfiguration).not.toHaveProperty("approvedOperations");
+      expect(launchConfiguration).not.toHaveProperty("customTools");
+      expect(launchConfiguration).not.toHaveProperty("agentOverlay");
+      expect(mockUpdateLaunchConfiguration).not.toHaveBeenCalled();
     });
 
     it("preserves a resolved nono backend through activation and reconnect", async () => {
@@ -1416,6 +1463,23 @@ describe("extension", () => {
       expect(mockAgentLaunchConfigurations).toHaveLength(0);
       expect(mockConnect).not.toHaveBeenCalled();
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith("opencode-chat.checkForUpdates", expect.anything());
+    });
+
+    it("keeps Vibefeld claim projection dormant during ordinary activation", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+      const ext = await importExtension();
+
+      await ext.activate(updaterContext(new Map()) as never);
+
+      expect(mockAgentLaunchConfigurations).toHaveLength(0);
+      expect(mockConnect).not.toHaveBeenCalled();
+      expect(mockResolveNonoBackend).not.toHaveBeenCalled();
+      expect(mockDiscoverNonoProfiles).not.toHaveBeenCalled();
+      expect(mockChatViewProviderOptions).toHaveLength(0);
+      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalledWith(
+        "opencode-chat.chatView",
+        expect.anything(),
+      );
     });
 
     it("initializes Chat exactly once when the registered view is opened", async () => {

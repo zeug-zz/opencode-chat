@@ -14,11 +14,23 @@ import type {
   IPlatformServices,
   MemoryProviderStatus,
   MemoryRetentionStatus,
+  ReasoningReviewSummary,
   UIToHostMessage,
 } from "@opencode-chat/core";
 import { DEFAULT_MEMORY_RETENTION_POLICY } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
+import { type AutomaticRoutingBinding, createAutomaticRoutingLifecycle } from "./vibefeld/automatic-routing-lifecycle";
+import type {
+  AutomaticRoutingEvaluation,
+  AutomaticRoutingPolicyDecision,
+  AutomaticRoutingPolicyInput,
+  AutomaticRoutingRequestClass,
+  AutomaticRoutingStructuralSignals,
+  AutomaticRoutingWorkMode,
+} from "./vibefeld/automatic-routing-policy";
+import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
+import { buildReasoningReviewSourcePacket } from "./vibefeld/reasoning-review-source-packet";
 import { resolveTabInputFile } from "./vscode-platform-services";
 
 type NormalPrompt = Extract<UIToHostMessage, { type: "sendMessage" }>;
@@ -28,6 +40,29 @@ type PromptQueueState = {
   waitingForBusy: boolean;
   pending: NormalPrompt[];
 };
+
+type InFlightReasoningReview = {
+  sessionId: string;
+  messageId: string;
+  token: number;
+};
+
+/** Host-private metadata retained for the next post-response routing pass. */
+type LatestAutomaticRoutingMetadata = Readonly<{
+  sessionId: string;
+  generation: number;
+  workMode: AutomaticRoutingWorkMode | "unsupported";
+  requestClass: AutomaticRoutingRequestClass;
+  signals: AutomaticRoutingStructuralSignals;
+}>;
+
+export type AutomaticRoutingRouter = (input: AutomaticRoutingPolicyInput) => AutomaticRoutingPolicyDecision;
+
+export type AutomaticRoutingOptions = Readonly<{
+  enabled: boolean;
+  evaluation?: AutomaticRoutingEvaluation;
+  router?: AutomaticRoutingRouter;
+}>;
 
 const MEMORY_RETENTION_PERMISSION = "hindsight_ingest_document";
 export const MEMORY_RETENTION_CONFIRMATION_TTL_MS = 30_000;
@@ -63,10 +98,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly chatSystemPrompt: string | null;
   private readonly writeSystemPrompt: string | null;
   private readonly setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
+  private readonly reasoningReviewController?: IReasoningReviewController;
+  private readonly automaticRouting?: AutomaticRoutingOptions;
+  private readonly automaticRoutingLifecycle = createAutomaticRoutingLifecycle();
+  private latestAutomaticRoutingMetadata: LatestAutomaticRoutingMetadata | undefined;
   private readonly chatMcpPrefs?: ChatMcpPrefsStore;
   private readonly bundledResources: readonly BundledResourceMetadata[];
   private readonly bundledCommandNames: ReadonlySet<string>;
   private readonly promptQueues = new Map<string, PromptQueueState>();
+  private readonly inFlightReasoningReviews = new Map<string, InFlightReasoningReview>();
+  private readonly inFlightAutomaticReviews = new Map<
+    string,
+    Readonly<{ attemptId: string; binding: AutomaticRoutingBinding }>
+  >();
+  private reasoningReviewToken = 0;
   private readonly retentionPermissions = new Map<
     string,
     { sessionId: string; validPayload: boolean; expiresAt: number }
@@ -79,6 +124,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.retentionPermissions.delete(permissionId);
       this.invalidatedRetentionPermissions.add(permissionId);
       setTimeout(() => this.invalidatedRetentionPermissions.delete(permissionId), MEMORY_RETENTION_CONFIRMATION_TTL_MS);
+    }
+  }
+
+  private reasoningReviewKey(sessionId: string, messageId: string): string {
+    return `${sessionId}\u0000${messageId}`;
+  }
+
+  private invalidateReasoningReview(sessionId: string, messageId: string, cancelUnderlying: boolean): void {
+    const key = this.reasoningReviewKey(sessionId, messageId);
+    if (!this.inFlightReasoningReviews.delete(key)) return;
+    if (cancelUnderlying) this.reasoningReviewController?.cancel(sessionId, messageId);
+  }
+
+  private invalidateAllReasoningReviews(cancelUnderlying: boolean): void {
+    const reviews = [...this.inFlightReasoningReviews.values()];
+    this.inFlightReasoningReviews.clear();
+    const automaticReviews = [...this.inFlightAutomaticReviews.values()];
+    this.inFlightAutomaticReviews.clear();
+    if (!cancelUnderlying) return;
+    for (const review of reviews) this.reasoningReviewController?.cancel(review.sessionId, review.messageId);
+    for (const review of automaticReviews) {
+      this.automaticRoutingLifecycle.cancel(review.attemptId, review.binding);
+      this.reasoningReviewController?.cancel(review.binding.sessionId, review.binding.messageId);
     }
   }
 
@@ -102,6 +170,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
       memoryProviderStatus?: MemoryProviderStatus;
       memoryRetentionStatus?: MemoryRetentionStatus;
+      reasoningReviewController?: IReasoningReviewController;
+      automaticRouting?: AutomaticRoutingOptions;
       chatMcpPrefs?: ChatMcpPrefsStore;
       bundledCommandNames?: readonly string[];
       bundledResources?: readonly BundledResourceMetadata[];
@@ -120,6 +190,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       policy: { ...DEFAULT_MEMORY_RETENTION_POLICY },
       state: "unavailable",
     };
+    this.reasoningReviewController = options?.reasoningReviewController;
+    this.automaticRouting = options?.automaticRouting;
     this.chatMcpPrefs = options?.chatMcpPrefs;
     this.bundledResources = options?.bundledResources ?? [];
     this.bundledCommandNames = new Set(options?.bundledCommandNames ?? []);
@@ -172,8 +244,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (event.type === "session.status") {
         this.handleSessionStatus(event.properties.sessionID, event.properties.status.type);
       } else if (event.type === "session.deleted") {
+        this.clearAutomaticRoutingMetadata(event.properties.info.id);
         this.clearPromptQueue(event.properties.info.id);
         this.clearRetentionPermissions(event.properties.info.id);
+        this.invalidateReasoningReviewsForSession(event.properties.info.id, true);
+        if (this.activeSession?.id === event.properties.info.id) {
+          this.invalidateAutomaticRoutingReviewsForSession(event.properties.info.id);
+        }
       } else if (event.type === "session.error") {
         this.clearRetentionPermissions(event.properties.sessionID);
       }
@@ -222,6 +299,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           locale: vscode.env.language,
           paths,
         });
+        if (this.reasoningReviewController) {
+          try {
+            const runtime = await this.reasoningReviewController.getRuntime();
+            this.postMessage({ type: "reasoningRuntime", runtime });
+          } catch {
+            // An optional review runtime must not block ordinary initialization.
+          }
+        }
         this.postMessage({ type: "bundledResources", resources: [...this.bundledResources] });
         this.postMcpPrefs();
         await this.refresh(undefined, paths);
@@ -266,6 +351,68 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.dispatchPrompt(prompt, state);
         break;
       }
+      case "requestReasoningReview": {
+        const controller = this.reasoningReviewController;
+        if (!controller || this.activeSession?.id !== message.sessionId) break;
+
+        const key = this.reasoningReviewKey(message.sessionId, message.messageId);
+        this.invalidateReasoningReview(message.sessionId, message.messageId, true);
+        const review = {
+          sessionId: message.sessionId,
+          messageId: message.messageId,
+          token: ++this.reasoningReviewToken,
+        } satisfies InFlightReasoningReview;
+        this.inFlightReasoningReviews.set(key, review);
+        const manualBinding = {
+          sessionId: message.sessionId,
+          messageId: message.messageId,
+          generation: this.sessionOperationGeneration,
+        };
+        this.automaticRoutingLifecycle.beginManual(manualBinding);
+        try {
+          const messages = await this.agent.getMessages(message.sessionId);
+          if (
+            this.inFlightReasoningReviews.get(key)?.token !== review.token ||
+            this.activeSession?.id !== message.sessionId
+          ) {
+            break;
+          }
+          const targetMessage = messages.find(
+            (candidate) =>
+              candidate.info.id === message.messageId &&
+              candidate.info.sessionID === message.sessionId &&
+              candidate.info.role === "assistant" &&
+              candidate.info.time.completed !== undefined,
+          );
+          if (!targetMessage) break;
+
+          const summary = await controller.review({
+            sessionId: message.sessionId,
+            messageId: message.messageId,
+            sourceText: buildReasoningReviewSourcePacket(targetMessage),
+          });
+          if (
+            this.inFlightReasoningReviews.get(key)?.token !== review.token ||
+            this.activeSession?.id !== review.sessionId ||
+            summary.reviewedMessageId !== message.messageId
+          ) {
+            break;
+          }
+          this.postMessage({ type: "reasoningReview", sessionId: message.sessionId, summary });
+        } finally {
+          this.automaticRoutingLifecycle.endManual(manualBinding);
+          if (this.inFlightReasoningReviews.get(key)?.token === review.token) {
+            this.inFlightReasoningReviews.delete(key);
+          }
+        }
+        break;
+      }
+      case "cancelReasoningReview": {
+        if (this.activeSession?.id !== message.sessionId) break;
+        this.invalidateReasoningReview(message.sessionId, message.messageId, false);
+        this.reasoningReviewController?.cancel(message.sessionId, message.messageId);
+        break;
+      }
       case "createSession": {
         const operationGeneration = ++this.sessionOperationGeneration;
         const listRequestGeneration = ++this.sessionListRequestGeneration;
@@ -297,7 +444,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "selectSession": {
+        this.clearAutomaticRoutingMetadata();
+        this.invalidateAllReasoningReviews(true);
+        this.automaticRoutingLifecycle.invalidateSession(message.sessionId);
         const operationGeneration = ++this.sessionOperationGeneration;
+        this.automaticRoutingLifecycle.invalidateGeneration(message.sessionId, operationGeneration);
         ++this.sessionListRequestGeneration;
         const session = await this.agent.getSession(message.sessionId);
         if (operationGeneration !== this.sessionOperationGeneration || !session) break;
@@ -305,7 +456,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "deleteSession": {
+        this.clearAutomaticRoutingMetadata(message.sessionId);
         this.clearPromptQueue(message.sessionId);
+        this.invalidateReasoningReviewsForSession(message.sessionId, true);
+        this.invalidateAutomaticRoutingReviewsForSession(message.sessionId);
         const deletesActiveSession = this.activeSession?.id === message.sessionId;
         const operationGeneration = deletesActiveSession
           ? ++this.sessionOperationGeneration
@@ -713,6 +867,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return false;
     }
 
+    if (this.activeSession?.id !== session?.id) {
+      this.clearAutomaticRoutingMetadata();
+      this.invalidateAllReasoningReviews(true);
+      this.automaticRoutingLifecycle.invalidateSession(session?.id ?? "");
+    }
     this.activeSession = session;
     this.postMessage({ type: "activeSession", session });
     if (!session) return true;
@@ -777,6 +936,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     if (state.pending.length === 0) {
       state.active = false;
+      const metadata = this.latestAutomaticRoutingMetadata;
+      if (metadata?.sessionId === sessionId && metadata.generation === this.sessionOperationGeneration) {
+        void this.routeAutomaticReviewAfterIdle(metadata);
+      }
       return;
     }
     state.active = true;
@@ -784,6 +947,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const prompt = state.pending.shift();
     if (!prompt) return;
     this.postQueuedPromptCount(sessionId, state.pending.length);
+    const metadata = this.latestAutomaticRoutingMetadata;
+    if (metadata?.sessionId === sessionId && metadata.generation === this.sessionOperationGeneration) {
+      void this.routeAutomaticReviewAfterIdle(metadata);
+    }
     void this.dispatchPrompt(prompt, state).catch((err) => {
       console.error("[OpenCode] Error handling message 'sendMessage':", err);
     });
@@ -794,8 +961,125 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postQueuedPromptCount(sessionId, 0);
   }
 
+  private invalidateReasoningReviewsForSession(sessionId: string, cancelUnderlying: boolean): void {
+    const reviews = [...this.inFlightReasoningReviews.values()].filter((review) => review.sessionId === sessionId);
+    for (const review of reviews) this.invalidateReasoningReview(review.sessionId, review.messageId, cancelUnderlying);
+  }
+
+  private invalidateAutomaticRoutingReviewsForSession(sessionId: string): void {
+    for (const [key, review] of this.inFlightAutomaticReviews) {
+      if (review.binding.sessionId !== sessionId) continue;
+      this.inFlightAutomaticReviews.delete(key);
+      this.automaticRoutingLifecycle.cancel(review.attemptId, review.binding);
+      this.reasoningReviewController?.cancel(review.binding.sessionId, review.binding.messageId);
+    }
+  }
+
+  private clearAutomaticRoutingMetadata(sessionId?: string): void {
+    if (sessionId !== undefined && this.latestAutomaticRoutingMetadata?.sessionId !== sessionId) return;
+    this.latestAutomaticRoutingMetadata = undefined;
+  }
+
+  private async routeAutomaticReviewAfterIdle(metadata: LatestAutomaticRoutingMetadata): Promise<void> {
+    const options = this.automaticRouting;
+    const controller = this.reasoningReviewController;
+    if (!options?.router || !options.evaluation || !controller) return;
+    if (this.activeSession?.id !== metadata.sessionId || this.sessionOperationGeneration !== metadata.generation)
+      return;
+
+    let runtime: Awaited<ReturnType<IReasoningReviewController["getRuntime"]>>;
+    try {
+      runtime = await controller.getRuntime();
+    } catch {
+      return;
+    }
+    if (this.activeSession?.id !== metadata.sessionId || this.sessionOperationGeneration !== metadata.generation)
+      return;
+
+    let messages: Awaited<ReturnType<IAgent["getMessages"]>>;
+    try {
+      messages = await this.agent.getMessages(metadata.sessionId);
+    } catch {
+      return;
+    }
+    if (this.activeSession?.id !== metadata.sessionId || this.sessionOperationGeneration !== metadata.generation)
+      return;
+    const targetMessage = [...messages]
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.info.sessionID === metadata.sessionId &&
+          candidate.info.role === "assistant" &&
+          candidate.info.time.completed !== undefined,
+      );
+    if (!targetMessage) return;
+
+    let selection: AutomaticRoutingPolicyDecision;
+    try {
+      selection = options.router({
+        enabled: options.enabled,
+        runtime: runtime.state,
+        evaluation: options.evaluation,
+        workMode: metadata.workMode,
+        requestClass: metadata.requestClass,
+        response: {
+          sessionId: targetMessage.info.sessionID,
+          activeSessionId: metadata.sessionId,
+          role: targetMessage.info.role,
+          completion: "completed",
+        },
+        signals: metadata.signals,
+      });
+    } catch {
+      return;
+    }
+    if (!selection.selected) return;
+
+    const binding = {
+      sessionId: metadata.sessionId,
+      messageId: targetMessage.info.id,
+      generation: metadata.generation,
+    };
+    const started = this.automaticRoutingLifecycle.start({ binding, selection });
+    if (started.kind !== "started") return;
+    const automaticKey = this.reasoningReviewKey(binding.sessionId, binding.messageId);
+    this.inFlightAutomaticReviews.set(automaticKey, { attemptId: started.attemptId, binding });
+
+    try {
+      const summary = await controller.review({
+        sessionId: binding.sessionId,
+        messageId: binding.messageId,
+        sourceText: buildReasoningReviewSourcePacket(targetMessage),
+      });
+      if (this.activeSession?.id !== binding.sessionId || this.sessionOperationGeneration !== binding.generation) {
+        this.automaticRoutingLifecycle.cancel(started.attemptId, binding);
+        this.inFlightAutomaticReviews.delete(automaticKey);
+        return;
+      }
+      const automaticSummary: ReasoningReviewSummary = {
+        ...summary,
+        invocation: "automatic",
+        routing: { reasonCode: started.reasonCode, summary: started.summary },
+      };
+      if (this.automaticRoutingLifecycle.complete(started.attemptId, binding, automaticSummary).kind !== "completed") {
+        this.inFlightAutomaticReviews.delete(automaticKey);
+        return;
+      }
+      this.inFlightAutomaticReviews.delete(automaticKey);
+      this.postMessage({ type: "reasoningReview", sessionId: binding.sessionId, summary: automaticSummary });
+    } catch {
+      this.automaticRoutingLifecycle.cancel(started.attemptId, binding);
+      this.inFlightAutomaticReviews.delete(automaticKey);
+    }
+  }
+
   private async dispatchPrompt(prompt: NormalPrompt, state: PromptQueueState): Promise<void> {
     try {
+      this.latestAutomaticRoutingMetadata = classifyAutomaticRoutingPrompt(
+        prompt.sessionId,
+        this.sessionOperationGeneration,
+        prompt,
+      );
       await this.agent.sendMessage(prompt.sessionId, prompt.text, {
         model: prompt.model,
         files: prompt.files,
@@ -808,6 +1092,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
     } catch (err) {
       if (this.promptQueues.get(prompt.sessionId) === state) {
+        this.clearAutomaticRoutingMetadata(prompt.sessionId);
         state.active = false;
         state.waitingForBusy = false;
         state.pending.unshift(prompt);
@@ -872,4 +1157,46 @@ function sanitizeMcpPrefs(value: Record<string, boolean>): ChatMcpPrefs {
     if (typeof enabled === "boolean") prefs[server] = enabled;
   }
   return prefs;
+}
+
+function classifyAutomaticRoutingPrompt(
+  sessionId: string,
+  generation: number,
+  prompt: NormalPrompt,
+): LatestAutomaticRoutingMetadata | undefined {
+  if (sessionId.length === 0 || sessionId.length > 256 || !Number.isSafeInteger(generation) || generation < 0) return;
+
+  // Classification is intentionally transient: the prompt is inspected here,
+  // but only this small allowlisted result is retained on the host.
+  const text = prompt.text.toLocaleLowerCase();
+  const requestClass: AutomaticRoutingRequestClass =
+    prompt.primaryAgent !== "scout"
+      ? "unsupported"
+      : /\btranslate|translation\b/u.test(text)
+        ? "translation"
+        : /\blookup|search|find|what\s+is\b/u.test(text)
+          ? "lookup"
+          : /\bpoem|story|creative|brainstorm\b/u.test(text)
+            ? "creative"
+            : /\bcode|coding|implement|debug|program\b/u.test(text)
+              ? "coding"
+              : /\bshell|terminal|command|run\b/u.test(text)
+                ? "shell"
+                : /\brecommend|recommendation|should\s+i\b/u.test(text)
+                  ? "recommendation"
+                  : /\bevidence|source|citation|cite\b/u.test(text)
+                    ? "evidence"
+                    : "argument";
+
+  return {
+    sessionId,
+    generation,
+    workMode: prompt.primaryAgent === "scout" ? "scout" : "unsupported",
+    requestClass,
+    signals: {
+      evidenceDependent: /\bevidence|source|citation|cite\b/u.test(text),
+      multiStepArgument: /\bwhy|compare|analy[sz]|trade-?off|step[- ]by[- ]step\b/u.test(text),
+      highImpactRecommendation: /\brecommend|recommendation|should\s+i\b/u.test(text),
+    },
+  };
 }

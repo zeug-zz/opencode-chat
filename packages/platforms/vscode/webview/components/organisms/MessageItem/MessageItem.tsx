@@ -15,6 +15,7 @@ import { ChevronRightIcon, EditIcon, InfoCircleIcon, SpinnerIcon } from "../../a
 import { ShellResultView } from "../../molecules/ShellResultView";
 import { TextPartView } from "../../molecules/TextPartView";
 import { QuestionView } from "../QuestionView";
+import { ReasoningReviewCard } from "../ReasoningReviewCard";
 import { isTaskToolPart, type SubtaskPart, SubtaskPartView } from "../SubtaskPartView";
 import { ToolPartView } from "../ToolPartView";
 import styles from "./MessageItem.module.css";
@@ -74,11 +75,23 @@ export function getCopyableAssistantMarkdownSource(
 
 function MessageItemInner({ message, activeSessionId, showAllThinking = false, questions, onEditAndResend }: Props) {
   const t = useLocale();
-  const { isShellMessage, childSessions, onNavigateToChild } = useAppContext();
+  const {
+    isShellMessage,
+    childSessions,
+    onNavigateToChild,
+    isReasoningReviewing = () => false,
+    getReasoningReviewSummary = () => undefined,
+    reasoningReviewRuntime = null,
+    onRequestReasoningReview = () => {},
+    onCancelReasoningReview = () => {},
+  } = useAppContext();
   const { info, parts } = message;
   const isUser = info.role === "user";
   const isShellUser = isUser && isShellMessage(info.id);
   const isShell = !isUser && isShellMessage(info.id);
+  const isCompletedAssistant = !isUser && !isShell && info.time.completed !== undefined;
+  const isReviewing = isReasoningReviewing(activeSessionId, info.id);
+  const reviewSummary = getReasoningReviewSummary(activeSessionId, info.id);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const editRef = useRef<HTMLTextAreaElement>(null);
@@ -273,6 +286,22 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
             >
               <span dangerouslySetInnerHTML={{ __html: copied ? CHECK_ICON : COPY_ICON }} />
             </button>
+          )}
+          {isCompletedAssistant && (
+            <div className={styles.reviewActions}>
+              <ActionButton
+                variant="ghost"
+                size="sm"
+                aria-label={isReviewing ? t["message.cancelReview"] : t["message.reviewArgument"]}
+                aria-busy={isReviewing}
+                onClick={() => (isReviewing ? onCancelReasoningReview(info.id) : onRequestReasoningReview(info.id))}
+              >
+                {isReviewing ? t["message.cancelReview"] : t["message.reviewArgument"]}
+              </ActionButton>
+            </div>
+          )}
+          {isCompletedAssistant && (isReviewing || reviewSummary) && (
+            <ReasoningReviewCard summary={reviewSummary} isReviewing={isReviewing} runtime={reasoningReviewRuntime} />
           )}
         </div>
       )}

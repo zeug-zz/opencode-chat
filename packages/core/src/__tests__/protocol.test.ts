@@ -6,6 +6,9 @@ import type {
   MemoryProviderDescriptor,
   MemoryProviderState,
   MemoryProviderStatus,
+  ReasoningReviewRuntime,
+  ReasoningReviewSummary,
+  UIToHostMessage,
 } from "..";
 
 const states: MemoryProviderState[] = ["unavailable", "configured", "available", "partial", "blocked", "error"];
@@ -141,5 +144,120 @@ describe("memory provider contract", () => {
       requiresNetwork: true,
       requiresLocalRuntime: false,
     });
+  });
+});
+
+describe("reasoning review protocol", () => {
+  const runtime: ReasoningReviewRuntime = {
+    state: "unavailable",
+    reason: "No compatible review runtime is available",
+  };
+  const summary: ReasoningReviewSummary = {
+    reviewedMessageId: "message-1",
+    status: "unavailable",
+    invocation: "manual",
+    conclusion: "Review is unavailable.",
+    assumptions: [],
+    evidenceStatus: "not_assessed",
+    openChallenges: [],
+  };
+
+  it("serializes every UI-to-host review discriminant with only its association", () => {
+    const messages: UIToHostMessage[] = [
+      { type: "requestReasoningReview", sessionId: "session-1", messageId: "message-1" },
+      { type: "cancelReasoningReview", sessionId: "session-1", messageId: "message-1" },
+    ];
+
+    expect(messages.map((message) => JSON.parse(JSON.stringify(message)))).toEqual(messages);
+    expect(messages).toEqual([
+      { type: "requestReasoningReview", sessionId: "session-1", messageId: "message-1" },
+      { type: "cancelReasoningReview", sessionId: "session-1", messageId: "message-1" },
+    ]);
+    expect(messages.every((message) => Object.keys(message).sort().join(",") === "messageId,sessionId,type")).toBe(
+      true,
+    );
+  });
+
+  it("serializes every host-to-UI review discriminant with the required association", () => {
+    const messages: HostToUIMessage[] = [
+      { type: "reasoningRuntime", runtime },
+      { type: "reasoningReview", sessionId: "session-1", summary },
+    ];
+
+    expect(messages.map((message) => JSON.parse(JSON.stringify(message)))).toEqual(messages);
+    expect(messages).toEqual([
+      { type: "reasoningRuntime", runtime },
+      { type: "reasoningReview", sessionId: "session-1", summary },
+    ]);
+    expect(messages.map((message) => Object.keys(message).sort())).toEqual([
+      ["runtime", "type"],
+      ["sessionId", "summary", "type"],
+    ]);
+  });
+
+  it("carries bounded automatic routing metadata without requiring it for manual summaries", () => {
+    const automaticSummary: ReasoningReviewSummary = {
+      ...summary,
+      invocation: "automatic",
+      status: "conditional",
+      conclusion: "The response depends on supporting evidence.",
+      routing: {
+        reasonCode: "evidence_dependent",
+        summary: "Evidence-dependent response",
+      },
+    };
+    const automaticMessage: HostToUIMessage = {
+      type: "reasoningReview",
+      sessionId: "session-1",
+      summary: automaticSummary,
+    };
+
+    expect(JSON.parse(JSON.stringify(automaticMessage))).toEqual(automaticMessage);
+    expect(automaticMessage.summary.invocation).toBe("automatic");
+    expect(automaticMessage.summary.routing).toEqual({
+      reasonCode: "evidence_dependent",
+      summary: "Evidence-dependent response",
+    });
+    expect(summary).not.toHaveProperty("routing");
+  });
+
+  it("keeps provider-private fields and source content out of the public messages", () => {
+    const forbiddenFields = [
+      "afNodeId",
+      "executablePath",
+      "workspacePath",
+      "command",
+      "flags",
+      "ledger",
+      "prompt",
+      "reasoningTrace",
+      "sourcePacket",
+    ];
+    const forbiddenContent = "private-provider-ledger-and-source-packet-content";
+    const publicMessages: HostToUIMessage[] = [
+      {
+        type: "reasoningRuntime",
+        runtime: { state: "available", reason: "Ready for a manual review" },
+      },
+      {
+        type: "reasoningReview",
+        sessionId: "session-1",
+        summary: {
+          ...summary,
+          status: "structurally_checked",
+          conclusion: "The recorded structure is consistent.",
+          assumptions: ["The stated premise holds"],
+          openChallenges: [],
+          artifactHandle: "opaque-provider-artifact",
+        },
+      },
+    ];
+    const serialized = JSON.stringify(publicMessages);
+
+    expect(serialized).not.toContain(forbiddenContent);
+    for (const field of forbiddenFields) {
+      expect(serialized).not.toMatch(new RegExp(`\\"${field}\\"`));
+    }
+    expect(serialized).toContain("opaque-provider-artifact");
   });
 });

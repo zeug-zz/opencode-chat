@@ -38,6 +38,7 @@ import {
   checkForPrivateReleaseUpdates,
   downloadAndValidatePrivateRelease,
 } from "./private-release-updater";
+import { UnavailableReasoningReviewController } from "./vibefeld/unavailable-reasoning-review-controller";
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent!: OpenCodeAgent;
@@ -522,6 +523,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   const memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus);
 
   const platformServices = new VscodePlatformServices();
+  const reasoningReviewController = new UnavailableReasoningReviewController();
 
   context.subscriptions.push(
     vscode.commands.registerCommand("opencode-chat.selectNonoProfile", () => selectNonoProfile(workspaceUri)),
@@ -533,6 +535,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     chatMcpPrefs,
     memoryProviderStatus,
     memoryRetentionStatus,
+    reasoningReviewController,
     bundledResources: bundledResourceMetadata,
     bundledCommandNames: bundledCommands.map((resource) => resource.name),
     setChatSandboxSettings: async (settings: ChatSandboxSettings) => {

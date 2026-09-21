@@ -135,6 +135,11 @@
   pointer-events: none;
 }
 
+.reviewActions {
+  display: flex;
+  margin-top: 6px;
+}
+
 /* --- Markdown in messages --- */
 
 .content :global(.markdown) code {

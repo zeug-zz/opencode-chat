@@ -23,7 +23,14 @@ import * as fs from "node:fs/promises";
 import type { IAgent, IPlatformServices, MemoryProviderStatus } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "../chat-mcp-prefs";
+import type { AutomaticRoutingOptions } from "../chat-view-provider";
 import { ChatViewProvider, MEMORY_RETENTION_CONFIRMATION_TTL_MS } from "../chat-view-provider";
+import type { AutomaticRoutingEvaluation } from "../vibefeld/automatic-routing-evaluation";
+import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-projection-reasoning-review-controller";
+import { createClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
+import { createFixtureOnlyClaimProjectionSeam } from "../vibefeld/fixture-claim-projection-seam";
+import type { IReasoningReviewController } from "../vibefeld/reasoning-review-controller";
+import { UnavailableReasoningReviewController } from "../vibefeld/unavailable-reasoning-review-controller";
 
 // --- Helper: IAgent のモック ---
 
@@ -166,6 +173,8 @@ function setupProvider(
   bundledCommandNames?: string[],
   memoryProviderStatus?: MemoryProviderStatus,
   memoryRetentionStatus?: import("@opencode-chat/core").MemoryRetentionStatus,
+  reasoningReviewController?: IReasoningReviewController,
+  automaticRouting?: AutomaticRoutingOptions,
 ) {
   const extensionUri = { fsPath: "/ext" };
   const ps = mockPlatformServices ?? createMockPlatformServices();
@@ -176,6 +185,8 @@ function setupProvider(
     bundledCommandNames,
     memoryProviderStatus,
     memoryRetentionStatus,
+    reasoningReviewController,
+    automaticRouting,
   });
   const mock = createMockWebviewView();
   provider.resolveWebviewView(
@@ -184,6 +195,70 @@ function setupProvider(
     { isCancellationRequested: false, onCancellationRequested: vi.fn() } as never,
   );
   return { provider, platformServices: ps, ...mock };
+}
+
+function qualifiedAutomaticEvaluation(): AutomaticRoutingEvaluation {
+  return {
+    version: "automatic-routing-evaluation-1",
+    corpusId: "fixture",
+    caseCount: 100,
+    p95LatencyMs: 1,
+    expectedCalibrationError: 0,
+    falseChallengeRate: 0,
+    qualified: true,
+  };
+}
+
+function selectedAutomaticRouter() {
+  return vi.fn().mockReturnValue({
+    selected: true,
+    reasonCode: "multi_step_argument" as const,
+    summary: "Multi-step argument" as const,
+  });
+}
+
+function automaticSummary(messageId: string) {
+  return {
+    reviewedMessageId: messageId,
+    status: "structurally_checked" as const,
+    invocation: "manual" as const,
+    conclusion: "checked",
+    assumptions: [],
+    evidenceStatus: "source_recorded" as const,
+    openChallenges: [],
+  };
+}
+
+async function selectAutomaticFixture(
+  agent: ReturnType<typeof createMockAgent>,
+  sendMessage: (message: unknown) => Promise<void>,
+  eventCallback: (event: unknown) => void,
+): Promise<void> {
+  agent.getSession.mockResolvedValue({ id: "session-a" });
+  agent.getMessages.mockResolvedValue([
+    {
+      info: {
+        id: "automatic-message",
+        sessionID: "session-a",
+        role: "assistant" as const,
+        time: { created: 1, completed: 2 },
+      },
+      parts: [
+        { type: "text" as const, text: "visible response" },
+        { type: "reasoning" as const, text: "private reasoning" },
+      ],
+    },
+  ]);
+  await sendMessage({ type: "selectSession", sessionId: "session-a" });
+  await sendMessage({
+    type: "sendMessage",
+    sessionId: "session-a",
+    text: "why compare these options provider-secret",
+    primaryAgent: "scout",
+  });
+  eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+  eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "idle" } } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("ChatViewProvider", () => {
@@ -274,6 +349,1028 @@ describe("ChatViewProvider", () => {
       setupProvider(mockAgent);
 
       expect(vscode.window.tabGroups.onDidChangeTabs).toHaveBeenCalled();
+    });
+  });
+
+  describe("reasoning review routing", () => {
+    it("automatically reviews the completed response after idle without changing delivery", async () => {
+      const completedMessage = {
+        info: {
+          id: "automatic-message",
+          sessionID: "session-a",
+          role: "assistant" as const,
+          time: { created: 1, completed: 2 },
+        },
+        parts: [{ type: "text" as const, text: "visible response" }],
+      };
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([completedMessage]);
+      const review = vi.fn().mockResolvedValue({
+        reviewedMessageId: "automatic-message",
+        status: "structurally_checked" as const,
+        invocation: "manual" as const,
+        conclusion: "checked",
+        assumptions: [],
+        evidenceStatus: "source_recorded" as const,
+        openChallenges: [],
+      });
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review,
+        cancel: vi.fn(),
+      };
+      const router = vi.fn().mockReturnValue({
+        selected: true,
+        reasonCode: "multi_step_argument" as const,
+        summary: "Multi-step argument" as const,
+      });
+      const evaluation = {
+        version: "automatic-routing-evaluation-1",
+        corpusId: "fixture",
+        caseCount: 100,
+        p95LatencyMs: 1,
+        expectedCalibrationError: 0,
+        falseChallengeRate: 0,
+        qualified: true,
+      } satisfies AutomaticRoutingEvaluation;
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation, router },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "session-a",
+        text: "why compare these options",
+        primaryAgent: "scout",
+      });
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "idle" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(review).toHaveBeenCalledTimes(1);
+      expect(review).toHaveBeenCalledWith({
+        sessionId: "session-a",
+        messageId: "automatic-message",
+        sourceText: "visible response",
+      });
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReview",
+        sessionId: "session-a",
+        summary: expect.objectContaining({
+          reviewedMessageId: "automatic-message",
+          invocation: "automatic",
+          routing: { reasonCode: "multi_step_argument", summary: "Multi-step argument" },
+        }),
+      });
+      const posted = JSON.stringify(
+        postMessage.mock.calls.filter(([message]) => (message as { type?: string }).type === "reasoningReview"),
+      );
+      expect(posted).not.toContain("why compare these options");
+      expect(posted).not.toContain("visible response");
+      expect(posted).not.toContain("provider-secret");
+    });
+
+    it.each([
+      { label: "unavailable runtime", runtime: "unavailable" as const },
+      { label: "incompatible runtime", runtime: "incompatible" as const },
+    ])("does not route when the runtime is $label", async ({ runtime }) => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: runtime }),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const router = vi.fn().mockReturnValue({ selected: false, reason: "runtime_unavailable" as const });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation: qualifiedAutomaticEvaluation(), router },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+
+      expect(controller.review).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it.each([
+      { label: "disabled routing", options: { enabled: false, evaluation: qualifiedAutomaticEvaluation() } },
+      {
+        label: "missing evaluation",
+        options: {
+          enabled: true,
+          router: vi.fn().mockReturnValue({ selected: false, reason: "evaluation_unqualified" as const }),
+        },
+      },
+      {
+        label: "unqualified evaluation",
+        options: { enabled: true, evaluation: { ...qualifiedAutomaticEvaluation(), caseCount: 99, qualified: false } },
+      },
+    ])("does not route with $label", async ({ options }) => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const router =
+        options.router ?? vi.fn().mockReturnValue({ selected: false, reason: "evaluation_unqualified" as const });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { ...options, router } as AutomaticRoutingOptions,
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+
+      expect(controller.review).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("fails closed for a malformed or throwing router without diagnostics or raw data", async () => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const router = vi.fn().mockImplementation(() => {
+        throw new Error("provider-secret /private/project prompt=hidden");
+      });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation: qualifiedAutomaticEvaluation(), router },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+
+      expect(controller.review).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+      expect(JSON.stringify(postMessage.mock.calls)).not.toContain("provider-secret");
+      expect(diagnostic).not.toHaveBeenCalledWith(expect.stringContaining("provider-secret"));
+    });
+
+    it("rejects a malformed router decision without publishing a guessed rationale", async () => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const router = vi.fn().mockReturnValue({ selected: true, reasonCode: "not-allowlisted" });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation: qualifiedAutomaticEvaluation(), router },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+
+      expect(controller.review).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("cancels an automatic review on session switch and ignores its stale result", async () => {
+      const pending = deferred<Awaited<ReturnType<IReasoningReviewController["review"]>>>();
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn().mockReturnValue(pending.promise),
+        cancel: vi.fn(),
+      };
+      mockAgent.getSession.mockImplementation(async (sessionId: string) => ({ id: sessionId }));
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation: qualifiedAutomaticEvaluation(), router: selectedAutomaticRouter() },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+      await vi.waitFor(() => expect(controller.review).toHaveBeenCalledTimes(1));
+      await sendMessage({ type: "selectSession", sessionId: "session-b" });
+      pending.resolve(automaticSummary("automatic-message"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(controller.cancel).toHaveBeenCalledWith("session-a", "automatic-message");
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("cancels an automatic review when its session is deleted", async () => {
+      const pending = deferred<Awaited<ReturnType<IReasoningReviewController["review"]>>>();
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn().mockReturnValue(pending.promise),
+        cancel: vi.fn(),
+      };
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation: qualifiedAutomaticEvaluation(), router: selectedAutomaticRouter() },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+      await vi.waitFor(() => expect(controller.review).toHaveBeenCalledTimes(1));
+      await sendMessage({ type: "deleteSession", sessionId: "session-a" });
+      pending.resolve(automaticSummary("automatic-message"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(controller.cancel).toHaveBeenCalledWith("session-a", "automatic-message");
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("does not publish when the automatic controller fails", async () => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn().mockRejectedValue(new Error("provider-secret")),
+        cancel: vi.fn(),
+      };
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation: qualifiedAutomaticEvaluation(), router: selectedAutomaticRouter() },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await selectAutomaticFixture(mockAgent, sendMessage, eventCallback);
+
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+      expect(diagnostic).not.toHaveBeenCalledWith(expect.stringContaining("provider-secret"));
+    });
+
+    it("does not automatically review when a manual review is already in flight", async () => {
+      const completedMessage = {
+        info: {
+          id: "manual-message",
+          sessionID: "session-a",
+          role: "assistant" as const,
+          time: { created: 1, completed: 2 },
+        },
+        parts: [{ type: "text" as const, text: "visible response" }],
+      };
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([completedMessage]);
+      const pendingReview = deferred<Awaited<ReturnType<IReasoningReviewController["review"]>>>();
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" as const }),
+        review: vi.fn().mockReturnValue(pendingReview.promise),
+        cancel: vi.fn(),
+      };
+      const router = vi.fn().mockReturnValue({
+        selected: true,
+        reasonCode: "multi_step_argument" as const,
+        summary: "Multi-step argument" as const,
+      });
+      const evaluation = {
+        version: "automatic-routing-evaluation-1",
+        corpusId: "fixture",
+        caseCount: 100,
+        p95LatencyMs: 1,
+        expectedCalibrationError: 0,
+        falseChallengeRate: 0,
+        qualified: true,
+      } satisfies AutomaticRoutingEvaluation;
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        { enabled: true, evaluation, router },
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      const manualRequest = sendMessage({
+        type: "requestReasoningReview",
+        sessionId: "session-a",
+        messageId: "manual-message",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "session-a",
+        text: "why compare these options",
+        primaryAgent: "scout",
+      });
+      eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(controller.review).toHaveBeenCalledTimes(1);
+      pendingReview.resolve({
+        reviewedMessageId: "manual-message",
+        status: "unavailable",
+        invocation: "manual",
+        conclusion: "not reviewed",
+        assumptions: [],
+        evidenceStatus: "not_assessed",
+        openChallenges: [],
+      });
+      await manualRequest;
+    });
+
+    it("accepts optional routing dependencies without activating automatic requests", async () => {
+      const router = vi.fn();
+      const evaluation = {
+        version: "automatic-routing-evaluation-1",
+        corpusId: "fixture",
+        caseCount: 100,
+        p95LatencyMs: 1,
+        expectedCalibrationError: 0,
+        falseChallengeRate: 0,
+        qualified: true,
+      } satisfies AutomaticRoutingEvaluation;
+      const { provider, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          enabled: true,
+          evaluation,
+          router,
+        },
+      );
+      const privateProvider = provider as unknown as { automaticRouting?: AutomaticRoutingOptions };
+
+      expect(privateProvider.automaticRouting).toEqual({ enabled: true, evaluation, router });
+      await sendMessage({ type: "sendMessage", sessionId: "session-a", text: "private prompt", primaryAgent: "scout" });
+      expect(router).not.toHaveBeenCalled();
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "session-a",
+        "private prompt",
+        expect.objectContaining({ primaryAgent: "scout" }),
+      );
+    });
+
+    it("keeps the default routing path unqualified and retains only bounded prompt metadata", async () => {
+      const { provider, sendMessage } = setupProvider(mockAgent);
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "session-a",
+        text: "do not retain this private prompt",
+        primaryAgent: "scout",
+      });
+
+      const privateProvider = provider as unknown as {
+        automaticRouting?: AutomaticRoutingOptions;
+        latestAutomaticRoutingMetadata?: Record<string, unknown>;
+      };
+      expect(privateProvider.automaticRouting).toBeUndefined();
+      expect(privateProvider.latestAutomaticRoutingMetadata).toEqual({
+        sessionId: "session-a",
+        generation: 0,
+        workMode: "scout",
+        requestClass: "argument",
+        signals: {
+          evidenceDependent: false,
+          multiStepArgument: false,
+          highImpactRecommendation: false,
+        },
+      });
+      expect(JSON.stringify(privateProvider.latestAutomaticRoutingMetadata)).not.toContain("do not retain");
+    });
+
+    it("routes a review request with its session and message association", async () => {
+      const completedMessage = {
+        info: {
+          id: "message-1",
+          sessionID: "session-a",
+          role: "assistant" as const,
+          time: { created: 1, completed: 2 },
+        },
+        parts: [
+          { id: "text-1", sessionID: "session-a", messageID: "message-1", type: "text" as const, text: "visible" },
+          {
+            id: "reasoning-1",
+            sessionID: "session-a",
+            messageID: "message-1",
+            type: "reasoning" as const,
+            text: "private reasoning",
+          },
+        ],
+      };
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([completedMessage]);
+      const summary = {
+        reviewedMessageId: "message-1",
+        status: "unavailable" as const,
+        invocation: "manual" as const,
+        conclusion: "Not reviewed.",
+        assumptions: [],
+        evidenceStatus: "not_assessed" as const,
+        openChallenges: [],
+      };
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockResolvedValue(summary),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      postMessage.mockClear();
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+
+      expect(controller.review).toHaveBeenCalledWith({
+        sessionId: "session-a",
+        messageId: "message-1",
+        sourceText: "visible",
+      });
+      expect(postMessage).toHaveBeenCalledWith({ type: "reasoningReview", sessionId: "session-a", summary });
+      expect(JSON.stringify(postMessage.mock.calls)).not.toContain("private reasoning");
+    });
+
+    it("publishes a calibrated concrete-controller result through the existing protocol", async () => {
+      const source = "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.";
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: {
+            id: "message-1",
+            sessionID: "session-a",
+            role: "assistant" as const,
+            time: { created: 1, completed: 2 },
+          },
+          parts: [{ type: "text" as const, text: source }],
+        },
+      ]);
+      const controller = new ClaimProjectionReasoningReviewController(
+        createFixtureOnlyClaimProjectionSeam({
+          fixtureId: "claim-fixture",
+          fixtureVersion: "v1",
+          claimCapability: true,
+          outcome: { status: "structurally_checked" },
+        }),
+      );
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      postMessage.mockClear();
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReview",
+        sessionId: "session-a",
+        summary: expect.objectContaining({ reviewedMessageId: "message-1", status: "structurally_checked" }),
+      });
+      expect(JSON.stringify(postMessage.mock.calls)).not.toContain("claim-1");
+    });
+
+    it.each([
+      {
+        label: "inactive session",
+        request: { sessionId: "session-b", messageId: "message-1" },
+        messages: [],
+      },
+      {
+        label: "unknown message",
+        request: { sessionId: "session-a", messageId: "unknown" },
+        messages: [],
+      },
+      {
+        label: "user message",
+        request: { sessionId: "session-a", messageId: "message-1" },
+        messages: [
+          {
+            info: { id: "message-1", sessionID: "session-a", role: "user" as const, time: { created: 1 } },
+            parts: [],
+          },
+        ],
+      },
+      {
+        label: "incomplete assistant message",
+        request: { sessionId: "session-a", messageId: "message-1" },
+        messages: [
+          {
+            info: { id: "message-1", sessionID: "session-a", role: "assistant" as const, time: { created: 1 } },
+            parts: [],
+          },
+        ],
+      },
+      {
+        label: "cross-session message association",
+        request: { sessionId: "session-a", messageId: "message-1" },
+        messages: [
+          {
+            info: {
+              id: "message-1",
+              sessionID: "session-b",
+              role: "assistant" as const,
+              time: { created: 1, completed: 2 },
+            },
+            parts: [],
+          },
+        ],
+      },
+    ])("does not invoke the controller or publish target data for an $label", async ({ request, messages }) => {
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue(messages);
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      postMessage.mockClear();
+      await sendMessage({ type: "requestReasoningReview", ...request });
+
+      expect(controller.review).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "messages" }));
+    });
+
+    it("rejects a request after selecting an unknown session without publishing review data", async () => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      mockAgent.getSession.mockResolvedValue(null);
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "unknown-session" });
+      postMessage.mockClear();
+      await sendMessage({
+        type: "requestReasoningReview",
+        sessionId: "unknown-session",
+        messageId: "message-1",
+      });
+
+      expect(controller.review).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("rejects a result for a different message before handling it", async () => {
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: {
+            id: "message-1",
+            sessionID: "session-a",
+            role: "assistant" as const,
+            time: { created: 1, completed: 2 },
+          },
+          parts: [],
+        },
+      ]);
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockResolvedValue({ reviewedMessageId: "message-2" }),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      postMessage.mockClear();
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+
+      expect(controller.review).toHaveBeenCalledTimes(1);
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("uses the unavailable fallback without side effects and keeps ordinary events forwarding", async () => {
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: {
+            id: "message-1",
+            sessionID: "session-a",
+            role: "assistant" as const,
+            time: { created: 1, completed: 2 },
+          },
+          parts: [{ type: "text" as const, text: "visible source" }],
+        },
+      ]);
+      const controller = new UnavailableReasoningReviewController();
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      postMessage.mockClear();
+      await sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReview",
+        sessionId: "session-a",
+        summary: expect.objectContaining({
+          reviewedMessageId: "message-1",
+          status: "unavailable",
+          invocation: "manual",
+        }),
+      });
+      expect(JSON.stringify(postMessage.mock.calls)).not.toContain("visible source");
+      expect(mockAgent.sendMessage).not.toHaveBeenCalled();
+      expect(mockAgent.deleteSession).not.toHaveBeenCalled();
+      expect(mockAgent.updateConfig).not.toHaveBeenCalled();
+      expect(mockAgent.getToolIds).not.toHaveBeenCalled();
+      expect(mockAgent.connectMcp).not.toHaveBeenCalled();
+      expect(mockAgent.disconnectMcp).not.toHaveBeenCalled();
+      expect(mockAgent.replyPermission).not.toHaveBeenCalled();
+      expect(mockAgent.executeShell).not.toHaveBeenCalled();
+
+      const eventCallback = mockAgent.onEvent.mock.calls[0][0] as (event: unknown) => void;
+      const event = { type: "session.updated", properties: { id: "session-a" } };
+      eventCallback(event);
+      expect(postMessage).toHaveBeenCalledWith({ type: "event", event });
+    });
+
+    it("routes review cancellation with its session and message association", async () => {
+      mockAgent.getSession.mockResolvedValue({ id: "session-b" });
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-b" });
+      await sendMessage({ type: "cancelReasoningReview", sessionId: "session-b", messageId: "message-2" });
+
+      expect(controller.cancel).toHaveBeenCalledWith("session-b", "message-2");
+    });
+
+    it("does not cancel a review from an inactive session", async () => {
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const { sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "cancelReasoningReview", sessionId: "session-b", messageId: "message-2" });
+
+      expect(controller.cancel).not.toHaveBeenCalled();
+    });
+
+    it("ignores a completion after explicit cancellation", async () => {
+      const review = deferred<{ reviewedMessageId: string }>();
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: { id: "message-1", sessionID: "session-a", role: "assistant" as const, time: { completed: 2 } },
+          parts: [],
+        },
+      ]);
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockReturnValue(review.promise),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      const request = sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      await sendMessage({ type: "cancelReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      review.resolve({ reviewedMessageId: "message-1" });
+      await request;
+
+      expect(controller.cancel).toHaveBeenCalledWith("session-a", "message-1");
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("keeps a late concrete-controller result unpublished when the delegate ignores cancellation", async () => {
+      const projection = deferred<{ status: "structurally_checked" }>();
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: { id: "message-1", sessionID: "session-a", role: "assistant" as const, time: { completed: 2 } },
+          parts: [
+            { type: "text" as const, text: "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion." },
+          ],
+        },
+      ]);
+      const project = vi.fn(() => projection.promise);
+      const seam = createClaimProjectionSeam({
+        capability: { supported: true, operation: "claim_projection" },
+        project,
+      });
+      const controller = new ClaimProjectionReasoningReviewController(seam);
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      postMessage.mockClear();
+      const request = sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      await vi.waitFor(() => expect(project).toHaveBeenCalledTimes(1));
+      await sendMessage({ type: "cancelReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      projection.resolve({ status: "structurally_checked" });
+      await request;
+
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("publishes only the newer concrete-controller result for the same message", async () => {
+      const firstProjection = deferred<{ status: "structurally_checked" }>();
+      const secondProjection = deferred<{ status: "unresolved" }>();
+      const projections = [firstProjection, secondProjection];
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: { id: "message-1", sessionID: "session-a", role: "assistant" as const, time: { completed: 2 } },
+          parts: [
+            { type: "text" as const, text: "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion." },
+          ],
+        },
+      ]);
+      const project = vi.fn(() => {
+        const projection = projections.shift();
+        if (!projection) throw new Error("unexpected projection");
+        return projection.promise;
+      });
+      const seam = createClaimProjectionSeam({
+        capability: { supported: true, operation: "claim_projection" },
+        project,
+      });
+      const controller = new ClaimProjectionReasoningReviewController(seam);
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      postMessage.mockClear();
+      const firstRequest = sendMessage({
+        type: "requestReasoningReview",
+        sessionId: "session-a",
+        messageId: "message-1",
+      });
+      await vi.waitFor(() => expect(project).toHaveBeenCalledTimes(1));
+      const secondRequest = sendMessage({
+        type: "requestReasoningReview",
+        sessionId: "session-a",
+        messageId: "message-1",
+      });
+      await vi.waitFor(() => expect(project).toHaveBeenCalledTimes(2));
+
+      firstProjection.resolve({ status: "structurally_checked" });
+      secondProjection.resolve({ status: "unresolved" });
+      await Promise.all([firstRequest, secondRequest]);
+      await vi.waitFor(() =>
+        expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" })),
+      );
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReview",
+        sessionId: "session-a",
+        summary: expect.objectContaining({ reviewedMessageId: "message-1", status: "unresolved" }),
+      });
+    });
+
+    it("ignores a completion after navigating to another session", async () => {
+      const review = deferred<{ reviewedMessageId: string }>();
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: { id: "message-1", sessionID: "session-a", role: "assistant" as const, time: { completed: 2 } },
+          parts: [],
+        },
+      ]);
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockReturnValue(review.promise),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      const request = sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      await vi.waitFor(() => expect(controller.review).toHaveBeenCalledTimes(1));
+      mockAgent.getSession.mockResolvedValue({ id: "session-b" });
+      await sendMessage({ type: "selectSession", sessionId: "session-b" });
+      review.resolve({ reviewedMessageId: "message-1" });
+      await request;
+
+      expect(controller.cancel).toHaveBeenCalledWith("session-a", "message-1");
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+    });
+
+    it("ignores a completion after deleting its session", async () => {
+      const review = deferred<{ reviewedMessageId: string }>();
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([
+        {
+          info: { id: "message-1", sessionID: "session-a", role: "assistant" as const, time: { completed: 2 } },
+          parts: [],
+        },
+      ]);
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn(),
+        review: vi.fn().mockReturnValue(review.promise),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      const request = sendMessage({ type: "requestReasoningReview", sessionId: "session-a", messageId: "message-1" });
+      await vi.waitFor(() => expect(controller.review).toHaveBeenCalledTimes(1));
+      await sendMessage({ type: "deleteSession", sessionId: "session-a" });
+      review.resolve({ reviewedMessageId: "message-1" });
+      await request;
+
+      expect(controller.cancel).toHaveBeenCalledWith("session-a", "message-1");
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
     });
   });
 
@@ -456,6 +1553,38 @@ describe("ChatViewProvider", () => {
   // ============================================================
 
   describe("ready", () => {
+    it("publishes the injected review runtime and keeps initialization alive when lookup fails", async () => {
+      const runtime = { state: "available" as const };
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue(runtime),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "reasoningRuntime", runtime });
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "init" }));
+
+      postMessage.mockClear();
+      controller.getRuntime = vi.fn().mockRejectedValue(new Error("private provider failure"));
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningRuntime" }));
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "init" }));
+    });
+
     it("should send init, sessions, activeSession, providers, and activeEditor", async () => {
       const sessions = [{ id: "s1" }, { id: "s2" }];
       mockAgent.listSessions.mockResolvedValue(sessions);

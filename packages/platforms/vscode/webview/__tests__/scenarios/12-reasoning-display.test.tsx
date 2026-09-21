@@ -2,7 +2,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPersistedState } from "../../vscode-api";
-import { createMessage, createSession } from "../factories";
+import { createMessage, createSession, createTextPart } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
 /** Reasoning パートを持つメッセージを表示するセットアップ */
@@ -10,7 +10,7 @@ async function setupWithReasoningPart(partOverrides: Record<string, unknown> = {
   renderApp();
   await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
 
-  const msg = createMessage({ id: "m1", sessionID: "s1", role: "assistant" });
+  const msg = createMessage({ id: "m1", sessionID: "s1", role: "assistant", time: { created: 1, completed: 2 } });
   const reasoningPart = {
     id: "rp1",
     type: "reasoning",
@@ -23,7 +23,7 @@ async function setupWithReasoningPart(partOverrides: Record<string, unknown> = {
   await sendExtMessage({
     type: "messages",
     sessionId: "s1",
-    messages: [{ info: msg, parts: [reasoningPart as any] }],
+    messages: [{ info: msg, parts: [reasoningPart as any, createTextPart("Response", { messageID: "m1" })] }],
   });
 }
 
@@ -139,6 +139,50 @@ describe("思考表示（ReasoningPartView）", () => {
           expect(screen.queryByText("Step 1: analyze the problem")).not.toBeInTheDocument();
         });
       });
+    });
+  });
+
+  context("推論レビューの自動選択理由", () => {
+    it("自動レビューの応答後ラベルと理由を表示すること", async () => {
+      await setupWithReasoningPart();
+      await sendExtMessage({
+        type: "reasoningReview",
+        sessionId: "s1",
+        summary: {
+          reviewedMessageId: "m1",
+          status: "conditional",
+          invocation: "automatic",
+          conclusion: "A bounded automatic conclusion",
+          assumptions: [],
+          evidenceStatus: "source_recorded",
+          openChallenges: [],
+          routing: { reasonCode: "multi_step_argument", summary: "Multi-step argument" },
+        },
+      });
+
+      expect(screen.getByText("Automatic post-response review")).toBeInTheDocument();
+      expect(screen.getByText("Multi-step argument")).toBeInTheDocument();
+    });
+
+    it("手動レビューでは自動選択理由を表示しないこと", async () => {
+      await setupWithReasoningPart();
+      await sendExtMessage({
+        type: "reasoningReview",
+        sessionId: "s1",
+        summary: {
+          reviewedMessageId: "m1",
+          status: "conditional",
+          invocation: "manual",
+          conclusion: "A bounded manual conclusion",
+          assumptions: [],
+          evidenceStatus: "source_recorded",
+          openChallenges: [],
+        },
+      });
+
+      expect(screen.getByText("A bounded manual conclusion")).toBeInTheDocument();
+      expect(screen.queryByText("Automatic post-response review")).not.toBeInTheDocument();
+      expect(screen.queryByText("Selection reason")).not.toBeInTheDocument();
     });
   });
 });

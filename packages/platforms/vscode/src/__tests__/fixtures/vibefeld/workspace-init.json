@@ -1,0 +1,34 @@
+{
+  "fixtureSchema": "af-runtime-fixture-1",
+  "argv": [
+    "af",
+    "init",
+    "--conjecture",
+    "<fixture-conjecture>",
+    "--author",
+    "<fixture-author>",
+    "--dir",
+    "<fixture-workspace>"
+  ],
+  "workspace": {
+    "format": "1.0",
+    "root": "fixture-workspace",
+    "entries": [
+      { "path": ".gitignore", "kind": "file", "contentShape": "ignore-rules" },
+      { "path": "assumptions", "kind": "directory" },
+      { "path": "defs", "kind": "directory" },
+      { "path": "externals", "kind": "directory" },
+      { "path": "ledger", "kind": "directory" },
+      { "path": "lemmas", "kind": "directory" },
+      { "path": "locks", "kind": "directory" },
+      { "path": "meta.json", "kind": "file", "contentShape": { "version": "1.0" } },
+      { "path": "nodes", "kind": "directory" }
+    ],
+    "metadata": {
+      "format": "1.0",
+      "metaFile": "meta.json",
+      "ledgerEventTypes": ["proof_initialized", "node_created"]
+    }
+  },
+  "exitCode": 0
+}

@@ -30,6 +30,7 @@ import type {
   SkillInfo,
   TodoItem,
 } from "./domain";
+import type { ReasoningReviewRuntime, ReasoningReviewSummary } from "./reasoning-review";
 
 // ============================================================
 // UI -> Host
@@ -100,6 +101,10 @@ export type UIToHostMessage =
       system?: string;
     }
   | { type: "abort"; sessionId: string }
+
+  // --- Reasoning review ---
+  | { type: "requestReasoningReview"; sessionId: string; messageId: string }
+  | { type: "cancelReasoningReview"; sessionId: string; messageId: string }
 
   // --- Shell (via agent) ---
   | {
@@ -249,4 +254,12 @@ export type HostToUIMessage =
   | { type: "mcpPrefs"; prefs: Record<string, boolean>; locked: string[] }
 
   // --- Chat sandbox ---
-  | { type: "chatSandboxStatus"; status: ChatSandboxStatus };
+  | { type: "chatSandboxStatus"; status: ChatSandboxStatus }
+
+  // --- Reasoning review ---
+  | { type: "reasoningRuntime"; runtime: ReasoningReviewRuntime }
+  | {
+      type: "reasoningReview";
+      sessionId: string;
+      summary: ReasoningReviewSummary;
+    };

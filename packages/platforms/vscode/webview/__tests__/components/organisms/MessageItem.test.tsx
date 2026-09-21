@@ -159,6 +159,106 @@ describe("MessageItem", () => {
       const { container } = render(<MessageItem {...defaultProps} message={assistantMsg} />, { wrapper });
       expect(container.querySelector(".root")).toBeInTheDocument();
     });
+
+    it("完了済み assistant にのみ Review argument を表示すること", () => {
+      const review = vi.fn();
+      const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+      const reviewWrapper = createContextWrapper({
+        isReasoningReviewing: () => false,
+        onRequestReasoningReview: review,
+      });
+
+      const { rerender } = render(<MessageItem {...defaultProps} message={completed} />, { wrapper: reviewWrapper });
+      const button = screen.getByRole("button", { name: "Review argument" });
+      expect(button).toHaveAttribute("aria-label", "Review argument");
+      expect(button).toHaveAttribute("aria-busy", "false");
+      fireEvent.click(button);
+      expect(review).toHaveBeenCalledWith(completed.info.id);
+
+      rerender(<MessageItem {...defaultProps} message={assistantMsg} />);
+      expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
+    });
+
+    it("shows a localized cancel action while reviewing", () => {
+      const cancel = vi.fn();
+      const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+      render(<MessageItem {...defaultProps} message={completed} />, {
+        wrapper: createContextWrapper({ isReasoningReviewing: () => true, onCancelReasoningReview: cancel }),
+      });
+
+      const button = screen.getByRole("button", { name: "Cancel review" });
+      expect(button).toHaveAttribute("aria-label", "Cancel review");
+      expect(button).toHaveAttribute("aria-busy", "true");
+      fireEvent.click(button);
+      expect(cancel).toHaveBeenCalledWith(completed.info.id);
+    });
+
+    it("renders a review card only below the matching completed assistant message", () => {
+      const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+      const other = { ...completed, info: { ...completed.info, id: "assistant-2" } };
+      const summary = {
+        reviewedMessageId: completed.info.id,
+        status: "unavailable" as const,
+        invocation: "manual" as const,
+        conclusion: "Not reviewed before delivery",
+        assumptions: [],
+        evidenceStatus: "not_assessed" as const,
+        openChallenges: [],
+      };
+      render(
+        <>
+          <MessageItem {...defaultProps} message={completed} />
+          <MessageItem {...defaultProps} message={other} />
+        </>,
+        {
+          wrapper: createContextWrapper({
+            getReasoningReviewSummary: (sessionId, messageId) =>
+              sessionId === "session-1" && messageId === completed.info.id ? summary : undefined,
+          }),
+        },
+      );
+      expect(screen.getByText("Not reviewed before delivery")).toBeInTheDocument();
+      expect(screen.getAllByText("Reasoning review")).toHaveLength(1);
+    });
+
+    it("keeps the review card independent from the streamed reasoning view", () => {
+      const completed = {
+        ...assistantMsg,
+        info: { ...assistantMsg.info, time: { created: 1, completed: 2 } },
+        parts: [
+          {
+            id: "reasoning-1",
+            type: "reasoning" as const,
+            text: "A private chain of thought",
+            sessionID: "session-1",
+            messageID: assistantMsg.info.id,
+            time: { created: 1, end: 2 },
+          },
+        ],
+      };
+      const summary = {
+        reviewedMessageId: completed.info.id,
+        status: "conditional" as const,
+        invocation: "manual" as const,
+        conclusion: "A bounded review conclusion",
+        assumptions: [],
+        evidenceStatus: "not_assessed" as const,
+        openChallenges: [],
+      };
+
+      const { container } = render(<MessageItem {...defaultProps} message={completed} showAllThinking />, {
+        wrapper: createContextWrapper({
+          getReasoningReviewSummary: () => summary,
+        }),
+      });
+
+      const reasoningView = container.querySelector(".reasoningPart");
+      const reviewCard = screen.getByRole("region", { name: "Reasoning review" });
+      expect(reasoningView).toBeInTheDocument();
+      expect(reasoningView).toHaveTextContent("A private chain of thought");
+      expect(reasoningView).not.toContainElement(reviewCard);
+      expect(reviewCard).toHaveTextContent("A bounded review conclusion");
+    });
   });
 
   describe("ReasoningPartView の全体表示", () => {
