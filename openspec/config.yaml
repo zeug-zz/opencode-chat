@@ -6,26 +6,49 @@ context: |
   SHOULD statements are implementation guidance and may be optimized by stronger builders when they do not conflict with MUST requirements.
   If SHOULD guidance conflicts with a MUST constraint, the MUST constraint wins.
 
+  KISS applies to all planning. The smallest change that satisfies the stated
+  requirement is the default; larger designs need an explicit reason. Every
+  capability, requirement, and task must trace to a stated need; untraceable
+  items are removed, not deferred. Do not invent risks, edge cases, fallbacks,
+  or migration work that no accepted requirement names. Prefer deleting a rule
+  or task over adding one. Non-goals are binding and must not reappear as
+  requirements or tasks.
+
 rules:
   proposal:
-    - MUST include scope, non-goals, risks, fallback, and compatibility impact.
+    - MUST include scope and non-goals.
+    - MUST include risks, fallback, and compatibility impact only when the change has a failure, migration, or compatibility surface.
+    - MUST list the smallest capability set; each capability needs a one-line justification.
+    - MUST NOT include speculative risks or hypothetical edge cases not tied to the objective.
+    - SHOULD cap the proposal at three capabilities unless the objective requires more.
     - SHOULD keep rollout and sequencing guidance concise.
 
   design:
     - MUST preserve existing architecture boundaries unless explicitly scoped otherwise.
-    - MUST document key trade-offs, migration concerns, and rollback path.
+    - MUST record the simplest alternative considered and why it is insufficient.
+    - MUST document migration concerns and rollback path only when the change has a migration or rollback surface.
+    - MUST NOT add architecture, abstractions, or migration work no requirement needs.
     - SHOULD prefer additive integration over broad rewrites.
 
   specs:
     - MUST define requirements and scenarios with explicit acceptance outcomes.
+    - MUST create one spec file per capability and no more; merge overlapping capabilities.
+    - SHOULD keep each requirement scenario set minimal and outcome-focused.
     - SHOULD keep non-normative implementation guidance separate from requirements.
 
   tasks:
     - MUST be dependency-ordered and verifiable.
     - MUST include verification steps per task.
+    - MUST trace every task to a requirement; drop untraceable tasks instead of deferring them.
     - MUST NOT include destructive git actions.
     - MUST NOT include auto-commit or auto-push steps.
     - SHOULD split risky changes into smaller builder-safe steps.
+    - SHOULD prefer the smallest task set that verifies the requirement.
+
+operations:
+  apply:
+    guidance:
+      - Reject edits not traceable to a task or requirement; do not expand scope.
 
 # Project context (optional)
 # This is shown to AI when creating artifacts.
