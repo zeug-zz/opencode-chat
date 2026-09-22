@@ -1,4 +1,4 @@
-import type { QuestionRequest } from "@opencode-chat/core";
+import type { QuestionRequest, ReasoningReviewRuntime } from "@opencode-chat/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { act, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -165,6 +165,7 @@ describe("MessageItem", () => {
       const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
       const reviewWrapper = createContextWrapper({
         isReasoningReviewing: () => false,
+        reasoningReviewRuntime: { state: "available" },
         onRequestReasoningReview: review,
       });
 
@@ -172,6 +173,8 @@ describe("MessageItem", () => {
       const button = screen.getByRole("button", { name: "Review argument" });
       expect(button).toHaveAttribute("aria-label", "Review argument");
       expect(button).toHaveAttribute("aria-busy", "false");
+      // aria-expanded はサマリー済みのトグル状態にのみ付与する。
+      expect(button).not.toHaveAttribute("aria-expanded");
       fireEvent.click(button);
       expect(review).toHaveBeenCalledWith(completed.info.id);
 
@@ -179,18 +182,166 @@ describe("MessageItem", () => {
       expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
     });
 
+    // review runtime が available でない場合、開始操作は描画されずリクエストも送られない。
+    it.each([
+      ["absent", undefined],
+      ["null", null],
+      ["unavailable", { state: "unavailable" }],
+      ["checking", { state: "checking" }],
+      ["incompatible", { state: "incompatible" }],
+    ] as Array<[string, ReasoningReviewRuntime | null | undefined]>)(
+      "%s runtime の完了済み assistant では Review argument を表示せずリクエストも送らないこと",
+      (_label, runtime) => {
+        const review = vi.fn();
+        const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+        render(<MessageItem {...defaultProps} message={completed} />, {
+          wrapper: createContextWrapper({
+            isReasoningReviewing: () => false,
+            reasoningReviewRuntime: runtime,
+            onRequestReasoningReview: review,
+          }),
+        });
+
+        expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Cancel review" })).not.toBeInTheDocument();
+        expect(review).not.toHaveBeenCalled();
+      },
+    );
+
     it("shows a localized cancel action while reviewing", () => {
       const cancel = vi.fn();
       const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
       render(<MessageItem {...defaultProps} message={completed} />, {
-        wrapper: createContextWrapper({ isReasoningReviewing: () => true, onCancelReasoningReview: cancel }),
+        wrapper: createContextWrapper({
+          isReasoningReviewing: () => true,
+          // 実行中は runtime が available でなくてもキャンセル操作を維持する。
+          reasoningReviewRuntime: { state: "unavailable" },
+          onCancelReasoningReview: cancel,
+        }),
       });
 
       const button = screen.getByRole("button", { name: "Cancel review" });
       expect(button).toHaveAttribute("aria-label", "Cancel review");
       expect(button).toHaveAttribute("aria-busy", "true");
+      // 実行中のキャンセル操作に aria-expanded は付与しない。
+      expect(button).not.toHaveAttribute("aria-expanded");
       fireEvent.click(button);
       expect(cancel).toHaveBeenCalledWith(completed.info.id);
+    });
+
+    // サマリー済みの完了レビューは、再リクエストせずカードの表示/非表示を切り替える。
+    it("完了済みレビューを再リクエストせずに折りたたみと再表示を切り替えること", () => {
+      const review = vi.fn();
+      const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+      const summary = {
+        reviewedMessageId: completed.info.id,
+        status: "conditional" as const,
+        invocation: "manual" as const,
+        conclusion: "A bounded review conclusion",
+        assumptions: [],
+        evidenceStatus: "not_assessed" as const,
+        openChallenges: [],
+      };
+      render(<MessageItem {...defaultProps} message={completed} />, {
+        wrapper: createContextWrapper({
+          isReasoningReviewing: () => false,
+          reasoningReviewRuntime: { state: "available" },
+          getReasoningReviewSummary: () => summary,
+          onRequestReasoningReview: review,
+        }),
+      });
+
+      expect(screen.getByRole("region", { name: "Reasoning review" })).toHaveTextContent("A bounded review conclusion");
+      const hideButton = screen.getByRole("button", { name: "Hide review" });
+      expect(hideButton).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.click(hideButton);
+      expect(screen.queryByRole("region", { name: "Reasoning review" })).not.toBeInTheDocument();
+      expect(screen.queryByText("A bounded review conclusion")).not.toBeInTheDocument();
+      expect(review).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith({
+        type: "requestReasoningReview",
+        sessionId: "session-1",
+        messageId: completed.info.id,
+      });
+
+      const showButton = screen.getByRole("button", { name: "Show review" });
+      expect(showButton).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(showButton);
+      expect(screen.getByRole("region", { name: "Reasoning review" })).toHaveTextContent("A bounded review conclusion");
+      expect(review).not.toHaveBeenCalled();
+    });
+
+    // 実行中はサマリーの有無にかかわらず既存のキャンセル操作を維持し、トグルを提供しない。
+    it("レビュー実行中はサマリーがあってもトグルを提供しないこと", () => {
+      const cancel = vi.fn();
+      const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+      const summary = {
+        reviewedMessageId: completed.info.id,
+        status: "conditional" as const,
+        invocation: "manual" as const,
+        conclusion: "A bounded review conclusion",
+        assumptions: [],
+        evidenceStatus: "not_assessed" as const,
+        openChallenges: [],
+      };
+      render(<MessageItem {...defaultProps} message={completed} />, {
+        wrapper: createContextWrapper({
+          isReasoningReviewing: () => true,
+          reasoningReviewRuntime: { state: "available" },
+          getReasoningReviewSummary: () => summary,
+          onCancelReasoningReview: cancel,
+        }),
+      });
+
+      const button = screen.getByRole("button", { name: "Cancel review" });
+      expect(button).toHaveAttribute("aria-busy", "true");
+      expect(button).not.toHaveAttribute("aria-expanded");
+      expect(screen.queryByRole("button", { name: "Hide review" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Show review" })).not.toBeInTheDocument();
+      // 実行中は isReviewing が優先され、カードは表示される。
+      expect(screen.getByRole("region", { name: "Reasoning review" })).toBeInTheDocument();
+      fireEvent.click(button);
+      expect(cancel).toHaveBeenCalledWith(completed.info.id);
+    });
+
+    // 折りたたみ後に開始した新しいレビューはカードを開き、完了したサマリーも開いた状態で表示する。
+    it("折りたたみ後に開始した新しいレビューのサマリーを開いた状態で表示すること", () => {
+      const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+      const summary = {
+        reviewedMessageId: completed.info.id,
+        status: "conditional" as const,
+        invocation: "manual" as const,
+        conclusion: "An earlier review conclusion",
+        assumptions: [],
+        evidenceStatus: "not_assessed" as const,
+        openChallenges: [],
+      };
+      let reviewing = false;
+      let currentSummary: typeof summary | undefined = summary;
+      const reviewWrapper = createContextWrapper({
+        isReasoningReviewing: () => reviewing,
+        reasoningReviewRuntime: { state: "available" },
+        getReasoningReviewSummary: () => currentSummary,
+      });
+
+      const { rerender } = render(<MessageItem {...defaultProps} message={completed} />, { wrapper: reviewWrapper });
+      fireEvent.click(screen.getByRole("button", { name: "Hide review" }));
+      expect(screen.queryByRole("region", { name: "Reasoning review" })).not.toBeInTheDocument();
+
+      // サマリーが消えて新しいレビューが実行中になるとカードを再び開く。
+      reviewing = true;
+      currentSummary = undefined;
+      rerender(<MessageItem {...defaultProps} message={{ ...completed, parts: [...completed.parts] }} />);
+      expect(screen.getByRole("region", { name: "Reasoning review" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Hide review" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Show review" })).not.toBeInTheDocument();
+
+      // 完了した新しいサマリーは折りたたまずに表示する。
+      reviewing = false;
+      currentSummary = { ...summary, conclusion: "A fresh review conclusion" };
+      rerender(<MessageItem {...defaultProps} message={completed} />);
+      expect(screen.getByRole("region", { name: "Reasoning review" })).toHaveTextContent("A fresh review conclusion");
     });
 
     it("renders a review card only below the matching completed assistant message", () => {

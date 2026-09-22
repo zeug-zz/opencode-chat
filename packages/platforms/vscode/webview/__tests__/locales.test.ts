@@ -13,6 +13,8 @@ const dictionaries = { en, ja, "zh-cn": zhCn, ko, "zh-tw": zhTw, es, "pt-br": pt
 const reviewKeys = [
   "message.reviewArgument",
   "message.cancelReview",
+  "message.showReview",
+  "message.hideReview",
   "review.card.title",
   "review.status.unavailable",
   "review.status.reviewing",

@@ -15,6 +15,7 @@ import type {
   ChatSandboxSettings,
   ChatSandboxStatus,
   MemoryProviderStatus,
+  ReasoningReviewRuntime,
 } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import { type BundledResource, loadBundledResearchResources } from "./bundled-research-resources";
@@ -743,11 +744,26 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
 }
 
 /**
+ * Bounded runtime status for a ready runtime whose bridge reports no supported
+ * claim operation. Availability is never published from compatibility or
+ * direct-execution readiness alone.
+ */
+const CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME: ReasoningReviewRuntime = {
+  state: "unavailable",
+  reason: "claim-capability-unavailable",
+};
+
+/**
  * Runs the one bounded activation preflight and selects the review controller.
  * A dormant composition is never inspected. A composed bridge is preflighted
- * exactly once; only a `ready` result selects the claim-projection controller.
- * Any preflight or construction failure is nonfatal and bounded: no raw error
- * or host path escapes, and the dormant unavailable controller stays injected.
+ * exactly once, and the claim seam is then constructed once from the settled
+ * preflight without touching the bridge. Only a ready preflight whose seam
+ * reports an explicitly supported claim operation selects the claim-projection
+ * controller; a ready runtime without that capability keeps the unavailable
+ * controller and publishes the bounded `claim-capability-unavailable` status,
+ * so `available` is never published without a supported claim operation. Any
+ * preflight or construction failure is nonfatal and bounded: no raw error or
+ * host path escapes, and the dormant unavailable controller stays injected.
  * The published runtime status is fixed from this single outcome, so later
  * status reads never re-preflight, discover, or spawn.
  */
@@ -760,16 +776,29 @@ async function selectReasoningReviewController(
       DORMANT_REASONING_REVIEW_RUNTIME,
     );
   }
-  let runtime = PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME;
+  const runtime = PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME;
   try {
     const preflight = await composition.bridge.preflight();
-    runtime = deriveReasoningReviewRuntime(preflight);
-    if (preflight.state === "ready") {
+    if (preflight.state !== "ready") {
       return new RuntimeReportingReasoningReviewController(
-        new ClaimProjectionReasoningReviewController(createCurrentVibefeldClaimProjectionSeam(composition.bridge)),
-        runtime,
+        new UnavailableReasoningReviewController(),
+        deriveReasoningReviewRuntime(preflight),
       );
     }
+    // Capability discovery is side-effect-free: it never preflights, spawns,
+    // or allocates a proof workspace, so the preflight above stays the only
+    // bridge interaction of the activation.
+    const seam = createCurrentVibefeldClaimProjectionSeam(composition.bridge);
+    if (!seam.getCapability().supported) {
+      return new RuntimeReportingReasoningReviewController(
+        new UnavailableReasoningReviewController(),
+        CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME,
+      );
+    }
+    return new RuntimeReportingReasoningReviewController(
+      new ClaimProjectionReasoningReviewController(seam),
+      deriveReasoningReviewRuntime(preflight),
+    );
   } catch {
     // A rejected preflight is nonfatal; the bounded failure status stays.
   }

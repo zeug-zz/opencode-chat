@@ -39,6 +39,8 @@ export const zhCn: LocaleSchema = {
   "message.copyMarkdown": "复制 Markdown",
   "message.reviewArgument": "审查论证",
   "message.cancelReview": "取消审查",
+  "message.showReview": "显示审查",
+  "message.hideReview": "隐藏审查",
   "review.card.title": "推理审查",
   "review.status.unavailable": "不可用",
   "review.status.reviewing": "审查中",

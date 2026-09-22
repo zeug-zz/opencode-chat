@@ -39,6 +39,8 @@ export const ptBr: LocaleSchema = {
   "message.copyMarkdown": "Copiar Markdown",
   "message.reviewArgument": "Revisar argumento",
   "message.cancelReview": "Cancelar revisão",
+  "message.showReview": "Mostrar revisão",
+  "message.hideReview": "Ocultar revisão",
   "review.card.title": "Revisão do raciocínio",
   "review.status.unavailable": "Indisponível",
   "review.status.reviewing": "Revisando",

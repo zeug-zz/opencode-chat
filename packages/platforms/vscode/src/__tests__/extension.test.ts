@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenCodePaths, resolveRuntimeCachePaths } from "../chat-sandbox-policy";
 import { classifyConnectError } from "../connect-error";
 import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-projection-reasoning-review-controller";
+import { createClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
 import {
   DORMANT_REASONING_REVIEW_RUNTIME,
   deriveReasoningReviewRuntime,
@@ -76,6 +77,7 @@ const mockCheckForPrivateReleaseUpdates = vi.hoisted(() => vi.fn());
 let mockUpdaterUx = false;
 let adversarialControllerImported = false;
 let mockVibefeldActivation = false;
+let mockSupportedClaimCapability = false;
 let mockVibefeldComposition: unknown;
 const mockVibefeldActivationOptions: unknown[] = [];
 const mockTeardownVibefeldActivation = vi.fn().mockResolvedValue(undefined);
@@ -243,6 +245,7 @@ describe("extension", () => {
     mockChatViewProviderInstance = undefined;
     adversarialControllerImported = false;
     mockVibefeldActivation = false;
+    mockSupportedClaimCapability = false;
     mockVibefeldComposition = undefined;
     mockVibefeldActivationOptions.length = 0;
     mockTeardownVibefeldActivation.mockClear();
@@ -362,6 +365,28 @@ describe("extension", () => {
       PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME,
       RuntimeReportingReasoningReviewController,
     }));
+    // The production claim seam is hard-coded unsupported. This test-only
+    // module double delegates to the real seam unless a test opts into a
+    // supported capability, so no fixture seam ever reaches production code.
+    vi.doMock("../vibefeld/current-vibefeld-claim-projection", async () => {
+      const actual = await vi.importActual<typeof import("../vibefeld/current-vibefeld-claim-projection")>(
+        "../vibefeld/current-vibefeld-claim-projection",
+      );
+      const createSupportedSeam = () =>
+        createClaimProjectionSeam({
+          capability: { supported: true, operation: "claim_projection" },
+          project: () => ({ status: "structurally_checked" as const }),
+        });
+      return {
+        ...actual,
+        createCurrentVibefeldClaimProjectionSeam: (
+          runtime: Parameters<typeof actual.createCurrentVibefeldClaimProjectionSeam>[0],
+        ) =>
+          mockSupportedClaimCapability
+            ? createSupportedSeam()
+            : actual.createCurrentVibefeldClaimProjectionSeam(runtime),
+      };
+    });
     // Production runtime resolution reads real host state; the default suite
     // injects a dormant resolution so no AF or nono process is ever attempted.
     vi.doMock("../vibefeld/af-runtime-resolution", () => ({
@@ -1677,7 +1702,43 @@ describe("extension", () => {
         await registeredProvider().resolveWebviewView({}, {}, {});
       };
 
-      it("injects the claim-projection controller from a single ready preflight", async () => {
+      it("keeps the unavailable controller and publishes the bounded capability status from a ready preflight", async () => {
+        const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+        mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+        await activateWithComposition();
+
+        expect(preflight).toHaveBeenCalledTimes(1);
+        const controller = injectedReviewController();
+        expect(controller).toBeInstanceOf(RuntimeReportingReasoningReviewController);
+        // The production seam reports no supported claim operation, so direct
+        // execution readiness alone must not publish availability.
+        expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+        const runtime = await controller.getRuntime();
+        expect(runtime).toEqual({ state: "unavailable", reason: "claim-capability-unavailable" });
+        // Only bounded status fields are published: no compatibility metadata.
+        expect(Object.keys(runtime).sort()).toEqual(["reason", "state"]);
+
+        // A manual review on this path must not compile a claim graph or run a
+        // claim operation; the bounded unavailable fallback answers instead.
+        await expect(
+          controller.review({
+            sessionId: "session-1",
+            messageId: "message-1",
+            sourceText: "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.",
+          }),
+        ).resolves.toMatchObject({
+          status: "unavailable",
+          invocation: "manual",
+          evidenceStatus: "not_assessed",
+        });
+        await controller.getRuntime();
+        await controller.getRuntime();
+        expect(preflight).toHaveBeenCalledTimes(1);
+      });
+
+      it("injects the claim-projection controller and publishes available when the claim capability is supported", async () => {
+        mockSupportedClaimCapability = true;
         const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
         mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
 
@@ -1690,18 +1751,32 @@ describe("extension", () => {
         await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
         // Only the bounded state is published: no compatibility metadata.
         expect(Object.keys(await controller.getRuntime())).toEqual(["state"]);
+        // The supported seam is reused: status reads never re-preflight.
+        await controller.getRuntime();
+        expect(preflight).toHaveBeenCalledTimes(1);
+      });
 
-        // A manual review on the ready path reuses the wired controller and
-        // must not run discovery or another preflight.
-        await expect(
-          controller.review({
-            sessionId: "session-1",
-            messageId: "message-1",
-            sourceText: "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.",
-          }),
-        ).resolves.toMatchObject({ status: "unavailable" });
-        await controller.getRuntime();
-        await controller.getRuntime();
+      it("keeps automatic routing, the effective preference, and qualification inert without the claim capability", async () => {
+        const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+        mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+        await activateWithComposition();
+
+        const controller = injectedReviewController();
+        await expect(controller.getRuntime()).resolves.toEqual({
+          state: "unavailable",
+          reason: "claim-capability-unavailable",
+        });
+
+        const wiring = injectedQualificationWiring();
+        // The stored preference defaults to enabled in this workspace, so
+        // availability is the only gate holding the effective state off.
+        expect(wiring.automaticRouting?.enabled).toBe(false);
+        expect(wiring.automaticRouting?.evaluation).toBeUndefined();
+        expect(wiring.automaticRouting?.evaluationProvider?.()).toBeUndefined();
+        // No qualification evidence is recorded while the capability is absent.
+        const recorder = wiring.qualificationRecorder as { currentEvaluation: () => unknown } | undefined;
+        expect(recorder?.currentEvaluation()).toBeUndefined();
         expect(preflight).toHaveBeenCalledTimes(1);
       });
 
@@ -1836,7 +1911,10 @@ describe("extension", () => {
         });
         expect(mockVibefeldActivationOptions.at(-1)).not.toHaveProperty("readOnlyRuntimeGrants");
         expect(preflight).toHaveBeenCalledTimes(1);
-        await expect(injectedReviewController().getRuntime()).resolves.toEqual({ state: "available" });
+        await expect(injectedReviewController().getRuntime()).resolves.toEqual({
+          state: "unavailable",
+          reason: "claim-capability-unavailable",
+        });
       });
 
       it("keeps the composition dormant and bounded when runtime resolution is dormant", async () => {

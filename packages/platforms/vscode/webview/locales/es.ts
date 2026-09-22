@@ -39,6 +39,8 @@ export const es: LocaleSchema = {
   "message.copyMarkdown": "Copiar Markdown",
   "message.reviewArgument": "Revisar argumento",
   "message.cancelReview": "Cancelar revisión",
+  "message.showReview": "Mostrar revisión",
+  "message.hideReview": "Ocultar revisión",
   "review.card.title": "Revisión del razonamiento",
   "review.status.unavailable": "No disponible",
   "review.status.reviewing": "Revisando",

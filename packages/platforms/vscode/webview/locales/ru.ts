@@ -39,6 +39,8 @@ export const ru: LocaleSchema = {
   "message.copyMarkdown": "Копировать Markdown",
   "message.reviewArgument": "Проверить аргумент",
   "message.cancelReview": "Отменить проверку",
+  "message.showReview": "Показать проверку",
+  "message.hideReview": "Скрыть проверку",
   "review.card.title": "Проверка рассуждения",
   "review.status.unavailable": "Недоступно",
   "review.status.reviewing": "Проверка",

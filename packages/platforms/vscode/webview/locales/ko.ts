@@ -39,6 +39,8 @@ export const ko: LocaleSchema = {
   "message.copyMarkdown": "마크다운 복사",
   "message.reviewArgument": "논증 검토",
   "message.cancelReview": "검토 취소",
+  "message.showReview": "검토 표시",
+  "message.hideReview": "검토 숨기기",
   "review.card.title": "추론 검토",
   "review.status.unavailable": "사용할 수 없음",
   "review.status.reviewing": "검토 중",

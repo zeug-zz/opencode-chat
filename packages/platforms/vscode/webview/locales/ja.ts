@@ -39,6 +39,8 @@ export const ja: LocaleSchema = {
   "message.copyMarkdown": "マークダウンをコピー",
   "message.reviewArgument": "論証をレビュー",
   "message.cancelReview": "レビューをキャンセル",
+  "message.showReview": "レビューを表示",
+  "message.hideReview": "レビューを非表示",
   "review.card.title": "推論レビュー",
   "review.status.unavailable": "利用不可",
   "review.status.reviewing": "レビュー中",

@@ -37,6 +37,8 @@ export const en = {
   "message.copyMarkdown": "Copy Markdown",
   "message.reviewArgument": "Review argument",
   "message.cancelReview": "Cancel review",
+  "message.showReview": "Show review",
+  "message.hideReview": "Hide review",
 
   // ReasoningReviewCard
   "review.card.title": "Reasoning review",

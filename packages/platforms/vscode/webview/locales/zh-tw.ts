@@ -39,6 +39,8 @@ export const zhTw: LocaleSchema = {
   "message.copyMarkdown": "複製 Markdown",
   "message.reviewArgument": "審查論證",
   "message.cancelReview": "取消審查",
+  "message.showReview": "顯示審查",
+  "message.hideReview": "隱藏審查",
   "review.card.title": "推理審查",
   "review.status.unavailable": "無法使用",
   "review.status.reviewing": "審查中",

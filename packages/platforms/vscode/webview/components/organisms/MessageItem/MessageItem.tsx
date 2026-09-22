@@ -102,12 +102,19 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
   // 連続クリックでも前のタイマーが残らないように ref で管理する。
   const [copied, setCopied] = useState(false);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 完了済みレビューカードの折りたたみ状態。レビュー実行中は isReviewing が優先される。
+  const [reviewCollapsed, setReviewCollapsed] = useState(false);
 
   useEffect(() => {
     return () => {
       if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
     };
   }, []);
+
+  // 新しいレビューが始まったら折りたたみを解除し、完了したサマリーを開いた状態で表示する。
+  useEffect(() => {
+    if (isReviewing) setReviewCollapsed(false);
+  }, [isReviewing]);
 
   // このメッセージに紐づく質問リクエストを取得する
   // QuestionRequest.tool.messageID でメッセージと紐付ける
@@ -173,6 +180,17 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
     },
     [handleEditSubmit],
   );
+
+  // サマリー済みで実行中でなければ、開始操作ではなく表示/非表示のトグルを出す。
+  const canToggleReview = reviewSummary !== undefined && !isReviewing;
+  // カードはレビュー実行中か、折りたたまれていないサマリーがあるときだけ表示する。
+  const reviewCardVisible = isCompletedAssistant && (isReviewing || (reviewSummary !== undefined && !reviewCollapsed));
+  let reviewActionLabel = t["message.reviewArgument"];
+  if (isReviewing) {
+    reviewActionLabel = t["message.cancelReview"];
+  } else if (canToggleReview) {
+    reviewActionLabel = reviewCollapsed ? t["message.showReview"] : t["message.hideReview"];
+  }
 
   return (
     <div className={`${styles.message} ${isUser ? styles.user : styles.assistant}`}>
@@ -290,20 +308,33 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
               <span dangerouslySetInnerHTML={{ __html: copied ? CHECK_ICON : COPY_ICON }} />
             </button>
           )}
-          {isCompletedAssistant && (
+          {/* 開始操作は完了済み assistant かつ runtime が available のときだけ出す。
+              実行中は runtime が available でなくても既存のキャンセル操作を維持し、
+              完了済みレビューは再リクエストせず表示/非表示を切り替える。 */}
+          {isCompletedAssistant && (isReviewing || reasoningReviewRuntime?.state === "available") && (
             <div className={styles.reviewActions}>
               <ActionButton
                 variant="ghost"
                 size="sm"
-                aria-label={isReviewing ? t["message.cancelReview"] : t["message.reviewArgument"]}
+                aria-label={reviewActionLabel}
                 aria-busy={isReviewing}
-                onClick={() => (isReviewing ? onCancelReasoningReview(info.id) : onRequestReasoningReview(info.id))}
+                aria-expanded={canToggleReview ? !reviewCollapsed : undefined}
+                onClick={() => {
+                  if (isReviewing) {
+                    onCancelReasoningReview(info.id);
+                  } else if (canToggleReview) {
+                    // トグルは既存サマリーの表示切替のみで、新しいレビューは要求しない。
+                    setReviewCollapsed((collapsed) => !collapsed);
+                  } else {
+                    onRequestReasoningReview(info.id);
+                  }
+                }}
               >
-                {isReviewing ? t["message.cancelReview"] : t["message.reviewArgument"]}
+                {reviewActionLabel}
               </ActionButton>
             </div>
           )}
-          {isCompletedAssistant && (isReviewing || reviewSummary) && (
+          {reviewCardVisible && (
             <ReasoningReviewCard
               summary={reviewSummary}
               isReviewing={isReviewing}

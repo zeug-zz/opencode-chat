@@ -8,9 +8,11 @@ SHALL not gain AF or claim-projection authority beyond the constrained activatio
 wiring. This phase SHALL not modify workspace files, OpenCode/AF configuration,
 nono profiles, user sandbox profiles, plugin sources, MCP configuration, or model
 permissions. After activation, the host MAY inject the claim-projection controller
-dynamically when the pinned runtime is compatible and direct execution is
-ready; when the runtime is dormant, ordinary activation behavior SHALL be
-exactly as before.
+dynamically only when the pinned runtime is compatible, direct execution is
+ready, and the bridge reports an explicitly supported claim operation; when the
+claim capability is absent, the host SHALL retain the unavailable controller
+and publish a bounded unavailable status, and when the runtime is dormant,
+ordinary activation behavior SHALL be exactly as before.
 
 #### Scenario: Ordinary activation does not request a review
 
@@ -35,8 +37,8 @@ exactly as before.
 - **AND** those files, settings, permissions, and existing Chat behavior SHALL be
   left unchanged
 
-#### Scenario: A ready runtime selects the projection controller
+#### Scenario: A ready runtime with a supported claim operation selects the projection controller
 
-- **WHEN** activation resolves a compatible runtime with direct execution ready
+- **WHEN** activation resolves a compatible runtime with direct execution ready and the bridge reports an explicitly supported claim operation
 - **THEN** the host MAY inject the claim-projection controller for manual review requests
-- **AND** a dormant runtime SHALL retain the unavailable controller with no projection attempt
+- **AND** a dormant runtime or a runtime without a supported claim operation SHALL retain the unavailable controller with no projection attempt

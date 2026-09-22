@@ -98,13 +98,19 @@ The host SHALL derive the live output parsers from sanitized real `af version --
 
 ### Requirement: Compose activation once in the extension host and publish runtime state
 
-`extension.ts` SHALL construct the runtime bridge and the proof store beneath `context.globalStorageUri`, SHALL preflight the bridge at most once per extension activation, and SHALL inject `ClaimProjectionReasoningReviewController` when the runtime is ready or `UnavailableReasoningReviewController` otherwise. The host SHALL publish the existing bounded runtime status so the review card distinguishes `unavailable`, `checking`, `incompatible`, and `available`. When the runtime is dormant, ordinary Chat, Write, Scout, worker, MCP, sandbox, and TUI behavior MUST remain unchanged, no per-message discovery or preflight may occur, and an activation failure MUST be nonfatal.
+`extension.ts` SHALL construct the runtime bridge and the proof store beneath `context.globalStorageUri`, SHALL preflight the bridge at most once per extension activation, and SHALL inject `ClaimProjectionReasoningReviewController` only when the runtime is ready and the bridge reports an explicitly supported claim operation. When direct execution is ready but the bridge reports no supported claim operation, the host SHALL inject `UnavailableReasoningReviewController` and publish the bounded `{ state: "unavailable", reason: "claim-capability-unavailable" }` status without compiling a claim graph or claiming availability. The host SHALL publish the existing bounded runtime status so the review card distinguishes `unavailable`, `checking`, `incompatible`, and `available`, and MUST NOT publish `available` without a supported claim operation. When the runtime is dormant, ordinary Chat, Write, Scout, worker, MCP, sandbox, and TUI behavior MUST remain unchanged, no per-message discovery or preflight may occur, and an activation failure MUST be nonfatal.
 
-#### Scenario: A ready runtime selects the claim-projection controller
+#### Scenario: A ready runtime with a supported claim capability selects the projection controller
 
-- **WHEN** discovery, the compatibility contract, direct execution readiness, and the storage preflight succeed during extension activation
+- **WHEN** discovery, the compatibility contract, direct execution readiness, the storage preflight, and an explicitly supported claim operation all succeed during extension activation
 - **THEN** the host SHALL inject `ClaimProjectionReasoningReviewController` and publish an available runtime status
 - **AND** manual review requests SHALL use the existing bounded source-packet and publication paths
+
+#### Scenario: A compatible runtime without claim projection stays review-unavailable
+
+- **WHEN** discovery, the compatibility contract, direct execution readiness, and the storage preflight succeed but the bridge reports no supported claim operation
+- **THEN** the host SHALL inject `UnavailableReasoningReviewController` and publish the bounded `{ state: "unavailable", reason: "claim-capability-unavailable" }` status
+- **AND** no claim graph SHALL compile, no claim operation SHALL run, no review affordance SHALL render, automatic routing SHALL stay inactive, and no qualification evidence SHALL be recorded
 
 #### Scenario: A dormant runtime keeps the unavailable controller
 
@@ -139,6 +145,28 @@ The reasoning-review preference SHALL be stored through VS Code configuration at
 - **WHEN** the control or runtime status renders under any supported locale
 - **THEN** it SHALL use translated keys and bounded text
 - **AND** no unlocalized key SHALL reach the user
+
+### Requirement: Gate the per-message review affordance on availability and toggle the review result
+
+The per-message review affordance SHALL render only for a completed assistant message while the review runtime is `available`. When the runtime is absent, `unavailable`, `checking`, or `incompatible`, the affordance MUST NOT render and MUST NOT be replaced by a non-functional control. When a completed review summary exists, the affordance SHALL toggle the result card open and closed instead of starting another review: it SHALL present a hide action while the card is open and a show action while the card is collapsed, SHALL NOT start, repeat, or refresh a review when toggled, and SHALL expose the expanded or collapsed state to assistive technology. While a review is in flight, the affordance SHALL remain the existing cancel action. Every label added for the toggle SHALL exist in every webview locale dictionary.
+
+#### Scenario: A dormant or incompatible runtime renders no affordance
+
+- **WHEN** a completed assistant message is displayed while the runtime is absent, `unavailable`, `checking`, or `incompatible`
+- **THEN** no per-message review affordance SHALL render
+- **AND** the host SHALL receive no review request from the message
+
+#### Scenario: A completed review toggles without another review
+
+- **WHEN** a review summary is displayed and the user activates the affordance
+- **THEN** the card SHALL collapse and the host SHALL receive no new review request
+- **AND** activating the affordance again SHALL expand the existing summary without starting, repeating, or refreshing the review
+
+#### Scenario: An in-flight review keeps the cancel action
+
+- **WHEN** a review is in flight for the message
+- **THEN** the affordance SHALL remain the existing cancel action
+- **AND** SHALL NOT offer the open/close toggle until the review completes or is cancelled
 
 ### Requirement: Enable automatic routing only from a validated qualified evaluation
 

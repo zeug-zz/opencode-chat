@@ -25,6 +25,7 @@ const vibefeldRuntimeSource = readSource("../vibefeld/vibefeld-runtime.ts");
 const vibefeldActivationSource = readSource("../vibefeld/vibefeld-activation.ts");
 const claimControllerSource = readSource("../vibefeld/claim-projection-reasoning-review-controller.ts");
 const claimSeamSource = readSource("../vibefeld/claim-projection-seam.ts");
+const currentClaimProjectionSource = readSource("../vibefeld/current-vibefeld-claim-projection.ts");
 const adversarialPrivateSources = [
   readSource("../vibefeld/adversarial-review-contract.ts"),
   readSource("../vibefeld/adversarial-review-validation.ts"),
@@ -228,6 +229,57 @@ describe("Vibefeld runtime bridge security negatives", () => {
     expect(claimControllerSource).not.toMatch(/(?:sendMessage|executeShell|connectMcp|spawn|fetch|writeFile)/u);
     expect(claimSeamSource).toContain("The only delegate input is a validated, host-private graph");
     expect(claimSeamSource).not.toMatch(/(?:argv|command|path|ledger|prompt|credential)/iu);
+  });
+
+  it("gates claim-projection selection on a supported claim operation before publishing availability", () => {
+    const selectionSource =
+      extensionSource.match(/async function selectReasoningReviewController[\s\S]*?\n\}/u)?.[0] ?? "";
+    expect(selectionSource).not.toBe("");
+
+    // The capability check precedes the only projection-controller
+    // construction, so a ready preflight alone can never select it.
+    const capabilityIndex = selectionSource.indexOf("seam.getCapability().supported");
+    const projectionIndex = selectionSource.indexOf("new ClaimProjectionReasoningReviewController(seam)");
+    expect(capabilityIndex).toBeGreaterThanOrEqual(0);
+    expect(projectionIndex).toBeGreaterThan(capabilityIndex);
+
+    // The unsupported branch keeps the bounded unavailable delegate and
+    // publishes the reviewed reason constant instead of deriving availability.
+    expect(selectionSource).toMatch(
+      /!seam\.getCapability\(\)\.supported[\s\S]{0,200}UnavailableReasoningReviewController[\s\S]{0,200}CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME/u,
+    );
+    // Availability is derived only on the supported branch beside the
+    // projection controller.
+    expect(selectionSource).toMatch(
+      /new ClaimProjectionReasoningReviewController\(seam\)[\s\S]{0,120}deriveReasoningReviewRuntime\(preflight\)/u,
+    );
+
+    // The published status stays the bounded two-field constant.
+    const capabilityStatus =
+      extensionSource.match(/const CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME[\s\S]*?\n\};/u)?.[0] ?? "";
+    expect(capabilityStatus).toContain("ReasoningReviewRuntime");
+    expect(capabilityStatus).toContain('state: "unavailable"');
+    expect(capabilityStatus).toContain('reason: "claim-capability-unavailable"');
+  });
+
+  it("keeps the fixture claim seam out of every production source and the current factory only", () => {
+    for (const source of [
+      extensionSource,
+      chatViewSource,
+      vibefeldActivationSource,
+      vibefeldRuntimeSource,
+      claimControllerSource,
+      claimSeamSource,
+      currentClaimProjectionSource,
+    ]) {
+      expect(source).not.toMatch(/fixture-claim-projection|createFixtureOnly|fixtureClaimProjection/u);
+    }
+
+    // The extension reaches claim projection only through the current factory,
+    // which composes the unsupported seam and never a fixture declaration.
+    expect(extensionSource).toContain("createCurrentVibefeldClaimProjectionSeam");
+    expect(currentClaimProjectionSource).toContain("createCurrentVibefeldClaimProjectionSeam");
+    expect(currentClaimProjectionSource).toContain("createUnsupportedClaimProjectionSeam()");
   });
 
   it("treats operation-shaped response text as bounded data and invokes no authority", async () => {

@@ -526,15 +526,15 @@ All six follow-on changes now exist under `openspec/changes/` with completed
 task ledgers and private implementations under
 `packages/platforms/vscode/src/vibefeld/`:
 
-| Change                            | Implemented capability                                           | Production state                |
-| --------------------------------- | ---------------------------------------------------------------- | ------------------------------- |
-| `add-vibefeld-review-scaffold`  | Neutral types, typed route, unavailable controller, review card  | Wired; always `unavailable`     |
-| `add-vibefeld-runtime-contract` | Pinned AF 0.1.7 evidence, validators, boundary requirements      | Non-executing                   |
-| `add-vibefeld-runtime-bridge`   | Proof store, policy seam, executor, compatibility bridge         | Not constructed in production   |
-| `add-vibefeld-claim-projection` | Claim graph, evidence separation, status mapping                 | Capability hard-coded unsupported |
-| `add-vibefeld-adversarial-review` | Prover/verifier contract, orchestration, mapper                | Default seam unsupported        |
-| `add-vibefeld-response-gate`    | Draft/review/release state machine, publication seam             | Fixture-only, not wired         |
-| `add-vibefeld-automatic-routing` | Policy, lifecycle, evaluation                                   | Dormant; no qualified corpus    |
+| Change                              | Implemented capability                                          | Production state                  |
+| ----------------------------------- | --------------------------------------------------------------- | --------------------------------- |
+| `add-vibefeld-review-scaffold`    | Neutral types, typed route, unavailable controller, review card | Wired; always`unavailable`      |
+| `add-vibefeld-runtime-contract`   | Pinned AF 0.1.7 evidence, validators, boundary requirements     | Non-executing                     |
+| `add-vibefeld-runtime-bridge`     | Proof store, policy seam, executor, compatibility bridge        | Not constructed in production     |
+| `add-vibefeld-claim-projection`   | Claim graph, evidence separation, status mapping                | Capability hard-coded unsupported |
+| `add-vibefeld-adversarial-review` | Prover/verifier contract, orchestration, mapper                 | Default seam unsupported          |
+| `add-vibefeld-response-gate`      | Draft/review/release state machine, publication seam            | Fixture-only, not wired           |
+| `add-vibefeld-automatic-routing`  | Policy, lifecycle, evaluation                                   | Dormant; no qualified corpus      |
 
 The repository therefore contains the full review pipeline as host-private,
 tested contracts. It does not contain an activation path. `extension.ts`
@@ -658,6 +658,30 @@ when it is not.
   active development, so version and commit bumps within the 0.1.x line with a
   valid `format` and field shape must not force dormancy.
 
+### Review Availability Correction (2026-09-22)
+
+- **Review availability is capability-gated.** A compatible AF runtime and direct
+  execution readiness are necessary but not sufficient: the review runtime is
+  published `available` only when the bridge reports an explicitly supported
+  claim operation. With the current bridge the claim seam stays unsupported, so
+  production review remains dormant `unavailable` (bounded reason
+  `claim-capability-unavailable`), automatic routing and qualification stay
+  inactive, and the per-message affordance does not render. Controller selection
+  runs through the claim-capability gate rather than the compatibility preflight
+  alone.
+- **The per-message affordance toggles; it never re-runs.** For a completed
+  review the button collapses and expands the stored summary (localized
+  `Hide review` / `Show review`) and exposes its expanded state to assistive
+  technology. Expanding sends no review request and starts no work. While a
+  review is in flight the button remains the existing cancel action. The prior
+  behavior — every activation of the button posting `requestReasoningReview`,
+  which incidentally re-ran the review — is retired.
+- **Production reviews remain unavailable until `add-vibefeld-claim-bridge`.**
+  AF 0.1.11 exposes no claim operation, so the capability gate keeps the
+  affordance hidden and the runtime dormant until a future change observes and
+  contracts a real claim operation. No parser loosening and no invented AF verb
+  is introduced.
+
 ### Activation Completion Criteria
 
 `add-vibefeld-activation` is complete only when: AF is discovered and pinned;
@@ -669,3 +693,5 @@ place; no response is claimed as gated; ordinary Chat, Write, Scout, MCP,
 sandbox, and the independent TUI are provably unchanged when AF is absent or
 the policy is unavailable; and the amended security-negative suite still fails
 closed on any broader authority.
+
+Next: add-vibefeld-claim-bridge (capture real af claim/refine/status verb shapes from 0.1.11, extend the fixed operation union, implement the projection seam over the real bridge) — then adversarial review whenever you want add-vibefeld-restricted-contexts.
