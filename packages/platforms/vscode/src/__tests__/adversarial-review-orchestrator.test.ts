@@ -78,6 +78,9 @@ describe("AdversarialReviewOrchestrator", () => {
 
     expect(result.ok).toBe(true);
     expect(calls).toEqual(["create:prover", "prover", "create:verifier", "verifier"]);
+    expect(reviewSeam.cancelContext).toHaveBeenCalledTimes(2);
+    expect(reviewSeam.cancelContext).toHaveBeenNthCalledWith(1, expect.objectContaining({ handle: "verifier-handle" }));
+    expect(reviewSeam.cancelContext).toHaveBeenNthCalledWith(2, expect.objectContaining({ handle: "prover-handle" }));
   });
 
   it("rejects reused context or provenance before verifier execution", async () => {

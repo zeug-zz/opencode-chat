@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import {
   DEFAULT_VIBEFELD_PREFERENCE,
+  readVibefeldAfPath,
   readVibefeldPreference,
   resolveEffectiveVibefeldEnabled,
   updateVibefeldEnabled,
   updateVibefeldWorkspaceOptOut,
+  VIBEFELD_AF_PATH_SETTING,
   VIBEFELD_CONFIGURATION,
   VIBEFELD_ENABLED_SETTING,
   VIBEFELD_WORKSPACE_OPT_OUT_SETTING,
@@ -39,10 +41,26 @@ describe("vibefeld-settings preference", () => {
     mockConfiguration();
   });
 
-  it("pins the configuration section and the two preference keys", () => {
+  it("pins the configuration section and the preference keys", () => {
     expect(VIBEFELD_CONFIGURATION).toBe("opencode-chat");
     expect(VIBEFELD_ENABLED_SETTING).toBe("vibefeld.enabled");
     expect(VIBEFELD_WORKSPACE_OPT_OUT_SETTING).toBe("vibefeld.workspaceOptOut");
+    expect(VIBEFELD_AF_PATH_SETTING).toBe("vibefeld.afPath");
+  });
+
+  it.each([
+    ["blank", "", undefined],
+    ["whitespace-only", "  \n\t", undefined],
+    ["non-string", 42, undefined],
+    ["absent", undefined, undefined],
+    ["over 4096 characters", "a".repeat(4_097), undefined],
+    ["valid", "  /host/bin/af  ", "/host/bin/af"],
+  ] as const)("reads the host AF path for %s", (_label, value, expected) => {
+    mockConfiguration({ global: { [VIBEFELD_AF_PATH_SETTING]: value } });
+
+    expect(readVibefeldAfPath()).toBe(expected);
+    expect(vscode.workspace.getConfiguration).toHaveBeenCalledTimes(1);
+    expect(vscode.workspace.getConfiguration).toHaveBeenCalledWith(VIBEFELD_CONFIGURATION, undefined);
   });
 
   it("defaults to enabled without a workspace opt-out when nothing is stored", () => {
@@ -204,7 +222,6 @@ describe("vibefeld-settings host-private boundary", () => {
   });
 
   it("performs no executable, profile, process, or file access", () => {
-    expect(source).not.toMatch(/\baf\b/i);
     expect(source).not.toMatch(/nono/i);
     expect(source).not.toMatch(/\bprocess\b/);
     expect(source).not.toMatch(/child_process|node:fs|node:os|node:path/);

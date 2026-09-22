@@ -10,6 +10,7 @@ import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk/v2"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HINDSIGHT_DISABLE_HOOKS_ENV, type HindsightCompanionIntegration } from "../hindsight-companion-integration";
 import { OpenCodeAgent } from "../opencode-agent";
+import { RESTRICTED_REVIEW_PROMPT } from "../restricted-review-overlay";
 
 const mockSandboxManager = vi.hoisted(() => ({
   isSupportedPlatform: vi.fn().mockReturnValue(true),
@@ -193,6 +194,12 @@ vi.mock("@opencode-ai/sdk/v2", () => ({
 describe("OpenCodeAgent", () => {
   let agent: OpenCodeAgent;
 
+  const restrictedReview = {
+    model: "host/provider",
+    prompt: RESTRICTED_REVIEW_PROMPT,
+    maxSteps: 4,
+  };
+
   beforeEach(() => {
     mockClient = createMockSdkClient();
     mockSandboxManager.isSupportedPlatform.mockReturnValue(true);
@@ -202,6 +209,31 @@ describe("OpenCodeAgent", () => {
     // createOpencodeClient のモック実装を更新
     vi.mocked(createOpencodeClient).mockReturnValue(mockClient as never);
     agent = new OpenCodeAgent();
+  });
+
+  describe("createRestrictedReviewProvider()", () => {
+    it("fails closed until a client, overlay, and well-formed host model exist", () => {
+      expect(agent.createRestrictedReviewProvider({ providerID: "host", modelID: "model" })).toBeUndefined();
+      const configured = new OpenCodeAgent({ ...integrationLaunchConfiguration, restrictedReview });
+      expect(configured.createRestrictedReviewProvider({ providerID: "host", modelID: "model" })).toBeUndefined();
+      expect(configured.createRestrictedReviewProvider({ providerID: " ", modelID: "model" })).toBeUndefined();
+    });
+
+    it("constructs a provider from the connected host client and binds its generation", async () => {
+      const configured = new OpenCodeAgent({ ...integrationLaunchConfiguration, restrictedReview });
+      await configured.connect();
+      const provider = configured.createRestrictedReviewProvider({ providerID: "host", modelID: "model" });
+      expect(provider).toBeDefined();
+
+      configured.updateLaunchConfiguration({
+        ...integrationLaunchConfiguration,
+        restrictedReview: { ...restrictedReview, maxSteps: 5 },
+      });
+      expect(await provider?.checkReadiness()).toBe(false);
+      expect(mockClient.config.get).not.toHaveBeenCalled();
+      expect(configured.createRestrictedReviewProvider({ providerID: "host", modelID: "model" })).toBeDefined();
+      configured.disconnect();
+    });
   });
 
   afterEach(() => {

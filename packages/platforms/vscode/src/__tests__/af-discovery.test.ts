@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { AF_DISCOVERY_ROOTS, type AfDiscoveryOptions, discoverAfExecutable } from "../vibefeld/af-discovery";
+import {
+  AF_DISCOVERY_ROOTS,
+  type AfDiscoveryOptions,
+  createAfDiscoveryRoots,
+  discoverAfExecutable,
+} from "../vibefeld/af-discovery";
 
 const makeDiscovery = (
   files: Record<
@@ -37,6 +42,33 @@ describe("AF host-owned discovery", () => {
     const { options, stat } = makeDiscovery({ "/custom/bin/af": {} }, { pathValue: "/custom/bin" });
     expect(discoverAfExecutable(options)).toEqual({ state: "found", executable: "/custom/bin/af" });
     expect(stat.mock.calls.at(-1)?.[0]).toBe("/custom/bin/af");
+  });
+
+  it("appends approved home roots after system roots", () => {
+    expect(createAfDiscoveryRoots("/host/home")).toEqual([
+      ...AF_DISCOVERY_ROOTS,
+      "/host/home/go/bin",
+      "/host/home/bin",
+      "/host/home/.local/bin",
+    ]);
+  });
+
+  it.each(["", "relative/home", `/${"a".repeat(4_096)}`, "/host/\0home"])(
+    "omits home roots for an unusable home path (%s)",
+    (homePath) => {
+      expect(createAfDiscoveryRoots(homePath)).toEqual([...AF_DISCOVERY_ROOTS]);
+    },
+  );
+
+  it("deduplicates roots while preserving order", () => {
+    expect(createAfDiscoveryRoots("/usr")).toEqual([
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/go/bin",
+      "/usr/.local/bin",
+    ]);
   });
 
   it.each([

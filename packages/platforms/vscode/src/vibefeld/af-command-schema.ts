@@ -3,13 +3,36 @@ import { AF_FIXTURE_LIMITS } from "./af-runtime-contract";
 const SHELL_TOKEN = /[;&|`$\n\r]|\$\(|\b(?:sh|bash|zsh|fish|powershell|cmd)\s+-c\b/i;
 const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:[\\/]/u;
 
-export const AF_COMMAND_OPERATIONS = ["version", "schema", "init", "status"] as const;
+/** AF node identifiers are dotted decimal paths such as `1` or `1.2.3`. */
+const AF_NODE_ID_PATTERN = /^[0-9]+(?:\.[0-9]+)*$/;
+const AF_NODE_ID_MAX_LENGTH = 64;
+
+/**
+ * The projection owner identity is fixed by the host and deliberately private:
+ * no operation input can supply, override, or discover it.
+ */
+const AF_PROJECTION_OWNER = "scribe";
+
+/**
+ * Statement bound for one refine call. The execution boundary admits at most 32
+ * argv entries, and the fixed refine argv already occupies nine of them
+ * (executable, verb, parent id, `--owner`, owner, `--dir`, workspace,
+ * `--format`, `json`). Over-limit input is rejected, never truncated.
+ */
+export const AF_MAX_REFINE_STATEMENTS = AF_FIXTURE_LIMITS.argumentCount - 9;
+
+export const AF_COMMAND_OPERATIONS = ["version", "schema", "init", "claim", "refine", "status"] as const;
 export type AfCommandOperationName = (typeof AF_COMMAND_OPERATIONS)[number];
+
+/** The observed AF role allowlist for a claim; no other role is accepted. */
+export type AfClaimRole = "prover" | "verifier";
 
 export type AfCommandOperation =
   | { readonly operation: "version" }
   | { readonly operation: "schema" }
   | { readonly operation: "init"; readonly conjecture: string; readonly author: string }
+  | { readonly operation: "claim"; readonly nodeId: string; readonly role: AfClaimRole }
+  | { readonly operation: "refine"; readonly parentId: string; readonly statements: readonly string[] }
   | { readonly operation: "status" };
 
 /** The caller cannot select the executable or workspace through an operation. */
@@ -45,6 +68,20 @@ const isSafeBoundedText = (value: unknown): value is string =>
   value.length > 0 &&
   value.length <= AF_FIXTURE_LIMITS.stringLength &&
   !SHELL_TOKEN.test(value);
+
+const isBoundedNodeId = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= AF_NODE_ID_MAX_LENGTH &&
+  AF_NODE_ID_PATTERN.test(value);
+
+const isAfClaimRole = (value: unknown): value is AfClaimRole => value === "prover" || value === "verifier";
+
+const isBoundedStatementList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) &&
+  value.length > 0 &&
+  value.length <= AF_MAX_REFINE_STATEMENTS &&
+  value.every(isSafeBoundedText);
 
 const assertContext = (context: AfCommandContext): void => {
   if (
@@ -83,6 +120,16 @@ const assertOperation = (value: unknown): AfCommandOperation => {
         throw new AfCommandError("invalid-input", "init requires bounded conjecture and author text");
       }
       return { operation: "init", conjecture: value.conjecture, author: value.author };
+    case "claim":
+      if (keys.length !== 3 || !isBoundedNodeId(value.nodeId) || !isAfClaimRole(value.role)) {
+        throw new AfCommandError("invalid-input", "claim requires a bounded node id and a prover or verifier role");
+      }
+      return { operation: "claim", nodeId: value.nodeId, role: value.role };
+    case "refine":
+      if (keys.length !== 3 || !isBoundedNodeId(value.parentId) || !isBoundedStatementList(value.statements)) {
+        throw new AfCommandError("invalid-input", "refine requires a bounded parent id and a bounded statement list");
+      }
+      return { operation: "refine", parentId: value.parentId, statements: [...value.statements] };
     default:
       throw new AfCommandError("invalid-operation", "AF operation is not supported");
   }
@@ -117,6 +164,43 @@ export function createAfCommandSchema(context: AfCommandContext) {
               validated.author,
               "--dir",
               workspace,
+            ],
+            shell: false,
+            cwd: workspace,
+          };
+        case "claim":
+          return {
+            executable,
+            argv: [
+              executable,
+              "claim",
+              validated.nodeId,
+              "--owner",
+              AF_PROJECTION_OWNER,
+              "--role",
+              validated.role,
+              "--dir",
+              workspace,
+              "--format",
+              "json",
+            ],
+            shell: false,
+            cwd: workspace,
+          };
+        case "refine":
+          return {
+            executable,
+            argv: [
+              executable,
+              "refine",
+              validated.parentId,
+              ...validated.statements,
+              "--owner",
+              AF_PROJECTION_OWNER,
+              "--dir",
+              workspace,
+              "--format",
+              "json",
             ],
             shell: false,
             cwd: workspace,

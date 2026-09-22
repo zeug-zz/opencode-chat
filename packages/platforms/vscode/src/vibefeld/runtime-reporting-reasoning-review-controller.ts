@@ -78,7 +78,7 @@ export class RuntimeReportingReasoningReviewController implements IReasoningRevi
     return this.runtime;
   }
 
-  review(input: { sessionId: string; messageId: string; sourceText: string }) {
+  review(input: { sessionId: string; messageId: string; sourceText: string; invocation?: "manual" | "automatic" }) {
     return this.delegate.review(input);
   }
 

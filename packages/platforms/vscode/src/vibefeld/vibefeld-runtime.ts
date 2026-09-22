@@ -2,7 +2,14 @@ import type { AfCommandOperation } from "./af-command-schema";
 import type { AfCompatibilityMetadata, AfCompatibilityReason, AfCompatibilityResult } from "./af-compatibility";
 import { classifyAfCompatibility } from "./af-compatibility";
 import type { AfExecutionPolicyAdapter } from "./af-execution-boundary";
-import type { AfLiveInitFacts, AfLiveSchemaFacts, AfLiveStatusFacts, AfLiveVersionFacts } from "./af-live-output";
+import type {
+  AfLiveClaimFacts,
+  AfLiveInitFacts,
+  AfLiveRefineFacts,
+  AfLiveSchemaFacts,
+  AfLiveStatusFacts,
+  AfLiveVersionFacts,
+} from "./af-live-output";
 import { type AfOutputParserSet, createProductionAfOutputParsers } from "./af-parser-mode";
 import { type AfProcessExecutor, type AfProcessResult, createAfProcessExecutor } from "./af-process-executor";
 import type { ProofWorkspaceHandle, ProofWorkspaceStore } from "./proof-workspace-store";
@@ -15,8 +22,8 @@ export type AfBridgeState =
   | "ready"
   | "running"
   | "audit-failed";
-export type AfBridgeOperation = Extract<AfCommandOperation, { operation: "init" | "status" }>;
-export type AfBridgeFacts = AfLiveInitFacts | AfLiveStatusFacts;
+export type AfBridgeOperation = Extract<AfCommandOperation, { operation: "init" | "claim" | "refine" | "status" }>;
+export type AfBridgeFacts = AfLiveInitFacts | AfLiveStatusFacts | AfLiveClaimFacts | AfLiveRefineFacts;
 export type AfBridgeFailureReason =
   | "unsupported-platform"
   | "missing-executable"
@@ -112,11 +119,22 @@ const defaultCreateExecutor = (options: AfBridgeExecutorOptions): AfBridgeExecut
     parsers: options.parsers,
   });
 
+/**
+ * The only contracted claim projection capability. It is a frozen constant
+ * because the bridge always contracts the observed `claim`/`refine` set; reading
+ * it never preflights, spawns, allocates, reads status, or inspects the executor.
+ */
+const CLAIM_PROJECTION_CAPABILITY: Readonly<{ supported: true; operation: "claim_projection" }> = Object.freeze({
+  supported: true,
+  operation: "claim_projection",
+});
+
 /** Host-private AF bridge. Construction is intentionally side-effect free. */
 export class VibefeldRuntimeBridge {
   private state: AfBridgeState = "dormant";
   private workspace?: ProofWorkspaceHandle;
   private executor?: AfBridgeExecutor;
+  private executable?: string;
   private initialized = false;
   private compatibility?: AfCompatibilityMetadata;
   private readonly parsers: AfOutputParserSet;
@@ -127,6 +145,11 @@ export class VibefeldRuntimeBridge {
 
   getState(): AfBridgeState {
     return this.state;
+  }
+
+  /** Side-effect-free report of the contracted claim projection operation set. */
+  getClaimCapability(): Readonly<{ supported: true; operation: "claim_projection" }> {
+    return CLAIM_PROJECTION_CAPABILITY;
   }
 
   async preflight(): Promise<AfBridgeResult<never>> {
@@ -194,6 +217,58 @@ export class VibefeldRuntimeBridge {
         workspace: root,
         parsers: this.parsers,
       });
+      this.executable = executable;
+      this.state = "ready";
+      return result({ state: this.state, compatibility: this.compatibility });
+    } catch {
+      this.state = "audit-failed";
+      return result({ state: this.state, reason: "audit-failure", diagnostic: "audit" });
+    }
+  }
+
+  /**
+   * Bounded lifecycle step that starts one claim projection on a review root no
+   * prior projection has initialized. The preflight-allocated root is reused
+   * until a projection initializes it; after that the used root is cleaned up
+   * and replaced by a fresh contained root so recordings never accumulate. A
+   * cleanup or replacement failure is audit-failed and is never retried with a
+   * weaker containment boundary.
+   */
+  async beginReview(): Promise<AfBridgeResult<never>> {
+    if (this.executor?.isInvalidated) {
+      this.state = "audit-failed";
+      return result({ state: this.state, reason: "audit-failure", diagnostic: "audit" });
+    }
+    const workspace = this.workspace;
+    const executable = this.executable;
+    if (this.state !== "ready" || !this.executor || !workspace || !executable) {
+      return result({
+        state: this.state === "audit-failed" ? "audit-failed" : "unavailable",
+        reason: this.state === "audit-failed" ? "audit-failure" : "operation-not-ready",
+        diagnostic: this.state === "audit-failed" ? "audit" : "operation",
+      });
+    }
+    if (!this.initialized) return result({ state: "ready", compatibility: this.compatibility });
+    const cleanup = await this.options.proofStore.cleanup(workspace);
+    if (!cleanup.ok) {
+      this.state = "audit-failed";
+      return result({ state: this.state, reason: "cleanup-failure", diagnostic: "cleanup" });
+    }
+    // The initialized root is gone: no handle or executor may survive it, and a
+    // later failure stays audit-failed rather than reusing a weakened boundary.
+    this.workspace = undefined;
+    this.executor = undefined;
+    this.initialized = false;
+    try {
+      const allocated = await this.options.proofStore.allocate();
+      this.workspace = allocated;
+      const root = this.options.proofStore.resolvePath(allocated);
+      this.executor = (this.options.createExecutor ?? defaultCreateExecutor)({
+        adapter: this.options.policy,
+        executable,
+        workspace: root,
+        parsers: this.parsers,
+      });
       this.state = "ready";
       return result({ state: this.state, compatibility: this.compatibility });
     } catch {
@@ -214,7 +289,7 @@ export class VibefeldRuntimeBridge {
         diagnostic: this.state === "audit-failed" ? "audit" : "operation",
       });
     }
-    if (operation.operation === "status" && !this.initialized) {
+    if (operation.operation !== "init" && !this.initialized) {
       return result({ state: "ready", reason: "operation-not-ready", diagnostic: "operation" });
     }
     this.state = "running";

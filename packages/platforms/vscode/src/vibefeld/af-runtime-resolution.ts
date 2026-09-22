@@ -1,12 +1,13 @@
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { type AfDirectLauncher, createAfDirectPolicyAdapter } from "./af-direct-policy";
 import {
-  AF_DISCOVERY_ROOTS,
   type AfDiscoveryAccess,
   type AfDiscoveryOptions,
   type AfDiscoveryResult,
   type AfDiscoveryStat,
+  createAfDiscoveryRoots,
   discoverAfExecutable,
 } from "./af-discovery";
 import type { AfExecutionPolicyAdapter } from "./af-execution-boundary";
@@ -50,6 +51,7 @@ const defaultAccess = (candidate: string): AfDiscoveryAccess => {
 export type ResolveAfExecutableOptions = Readonly<{
   platform?: NodeJS.Platform;
   pathValue?: string;
+  homePath?: string;
   candidateRoots?: readonly string[];
   stat?: AfDiscoveryOptions["stat"];
   access?: AfDiscoveryOptions["access"];
@@ -60,7 +62,7 @@ export const resolveAfExecutable = (options: ResolveAfExecutableOptions = {}): A
   discoverAfExecutable({
     platform: options.platform ?? process.platform,
     pathValue: options.pathValue ?? process.env.PATH ?? "",
-    candidateRoots: options.candidateRoots ?? AF_DISCOVERY_ROOTS,
+    candidateRoots: options.candidateRoots ?? createAfDiscoveryRoots(options.homePath ?? os.homedir()),
     stat: options.stat ?? defaultStat,
     access: options.access ?? defaultAccess,
   });
@@ -79,9 +81,12 @@ export type AfRuntimeResolution =
 export type ResolveAfRuntimeOptions = Readonly<{
   platform?: NodeJS.Platform;
   pathValue?: string;
+  homePath?: string;
   candidateRoots?: readonly string[];
   stat?: AfDiscoveryOptions["stat"];
   access?: AfDiscoveryOptions["access"];
+  /** Host configuration only; never sourced from model, prompt, plugin, MCP, or webview input. */
+  explicitExecutable?: string;
   /** Test seam for the direct-execution adapter's process launcher. */
   launcher?: AfDirectLauncher;
 }>;
@@ -98,22 +103,40 @@ export const resolveAfRuntime = async (options: ResolveAfRuntimeOptions = {}): P
   const platform = options.platform ?? process.platform;
   if (!isSupportedPlatform(platform)) return { state: "dormant", reason: "unsupported-platform" };
 
-  const af = resolveAfExecutable({
-    platform,
-    pathValue: options.pathValue ?? process.env.PATH ?? "",
-    candidateRoots: options.candidateRoots ?? AF_DISCOVERY_ROOTS,
-    stat: options.stat ?? defaultStat,
-    access: options.access ?? defaultAccess,
-  });
-  // A relative PATH entry is not a host-owned resolution and never reaches the adapter.
-  if (af.state !== "found" || !path.posix.isAbsolute(af.executable)) return { state: "dormant", reason: "missing-af" };
+  const stat = options.stat ?? defaultStat;
+  const access = options.access ?? defaultAccess;
+  let executable: string | undefined;
+
+  if (options.explicitExecutable !== undefined) {
+    const candidate = options.explicitExecutable.trim();
+    if (!candidate || !path.posix.isAbsolute(candidate)) return { state: "dormant", reason: "missing-af" };
+
+    const metadata = stat(candidate);
+    if (!metadata?.ownedByHost || !metadata.isFile || access(candidate) !== "executable") {
+      return { state: "dormant", reason: "missing-af" };
+    }
+    executable = candidate;
+  } else {
+    const af = resolveAfExecutable({
+      platform,
+      pathValue: options.pathValue ?? process.env.PATH ?? "",
+      homePath: options.homePath,
+      candidateRoots: options.candidateRoots,
+      stat,
+      access,
+    });
+    // A relative PATH entry is not a host-owned resolution and never reaches the adapter.
+    if (af.state !== "found" || !path.posix.isAbsolute(af.executable))
+      return { state: "dormant", reason: "missing-af" };
+    executable = af.executable;
+  }
 
   const policy = createAfDirectPolicyAdapter({
     platform,
-    resolveExecutable: () => af.executable,
+    resolveExecutable: () => executable as string,
     ...(options.launcher ? { launcher: options.launcher } : {}),
   });
   if (policy.readiness.state !== "ready") return { state: "dormant", reason: "missing-af" };
 
-  return { state: "ready", resolveExecutable: () => af.executable, policy };
+  return { state: "ready", resolveExecutable: () => executable as string, policy };
 };

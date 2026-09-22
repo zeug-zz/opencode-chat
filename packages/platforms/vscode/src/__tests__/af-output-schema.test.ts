@@ -4,7 +4,9 @@ import {
   AF_FIXTURE_RUNTIME_FACTS,
   AF_FIXTURE_SCHEMA_VERSION,
   AF_FIXTURE_WORKSPACE_FORMAT,
+  parseAfClaimOutput,
   parseAfInitOutput,
+  parseAfRefineOutput,
   parseAfSchemaOutput,
   parseAfStatusOutput,
   parseAfVersionOutput,
@@ -43,6 +45,32 @@ describe("AF output schema", () => {
       ok: false,
       failure: { outcome: "unavailable" },
     });
+  });
+
+  it("keeps the fixture-mode claim and refine parsers closed", () => {
+    const unavailableUnknown = {
+      ok: false,
+      failure: { outcome: "unavailable", reason: "unknown", structuralStatus: null },
+    } as const;
+    // No synthetic claim or refine shape exists, so the closed test-only parsers
+    // reject fixture envelopes and live captures alike instead of inventing facts.
+    const syntheticClaim = JSON.stringify({
+      fixtureSchema: AF_FIXTURE_SCHEMA_VERSION,
+      node_id: "1",
+      owner: "capture",
+      role: "prover",
+      status: "claimed",
+    });
+    const results = [
+      parseAfClaimOutput(syntheticClaim, { exitCode: 0 }),
+      parseAfClaimOutput(liveFixture("claim.json"), { exitCode: 0 }),
+      parseAfRefineOutput(fixture("status.json")),
+      parseAfRefineOutput(liveFixture("refine.json"), { exitCode: 0 }),
+    ];
+    for (const result of results) expect(result).toEqual(unavailableUnknown);
+    const serialized = JSON.stringify(results);
+    expect(serialized).not.toContain("af-runtime-fixture");
+    expect(serialized).not.toContain("fixtureSchema");
   });
 
   it("normalizes schema, initialization, and status while dropping content and paths", () => {

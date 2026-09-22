@@ -26,7 +26,7 @@ for review scratch, and direct execution is the only execution path.
 - **AND** the root SHALL be passed to AF only as the working directory, with no
   isolation guarantee claimed
 
-#### Scenario: AF runs directly with no nested sandbox
+#### Scenario: AF starts a descendant process or attempts an escape
 
 - **WHEN** the bridge launches or tears down AF
 - **THEN** AF SHALL run directly as a bounded child process with no `nono`
@@ -104,7 +104,7 @@ fixtures or injected seams only and SHALL not require an AF binary or any nono
 installation; live capture requires an explicit opt-in documented by the
 activation change.
 
-#### Scenario: Extension activation and ordinary review remain dormant
+#### Scenario: Extension activation and ordinary review remain unavailable
 
 - **WHEN** the extension activates and AF is absent, incompatible, or unsupported, or direct execution readiness is unavailable
 - **THEN** production code SHALL not spawn AF or create a proof workspace

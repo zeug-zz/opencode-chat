@@ -159,6 +159,21 @@ describe("RuntimeReportingReasoningReviewController", () => {
     expect(delegate.cancel).toHaveBeenCalledWith("session-1", "message-1");
   });
 
+  it("forwards automatic invocation unchanged", async () => {
+    const delegate = createDelegate();
+    const controller = new RuntimeReportingReasoningReviewController(delegate, DORMANT_REASONING_REVIEW_RUNTIME);
+    const input = {
+      sessionId: "session-1",
+      messageId: "message-1",
+      sourceText: "unreviewed answer",
+      invocation: "automatic" as const,
+    };
+
+    await controller.review(input);
+
+    expect(delegate.review).toHaveBeenCalledWith(input);
+  });
+
   it("keeps the manual fallback summary unchanged through the wrapper", async () => {
     const controller = new RuntimeReportingReasoningReviewController(
       new UnavailableReasoningReviewController(),

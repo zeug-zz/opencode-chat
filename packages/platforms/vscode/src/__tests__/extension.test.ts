@@ -10,6 +10,7 @@ import { resolveOpenCodePaths, resolveRuntimeCachePaths } from "../chat-sandbox-
 import { classifyConnectError } from "../connect-error";
 import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-projection-reasoning-review-controller";
 import { createClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
+import { HIDDEN_SESSION_MARKER_PREFIX, hiddenSessionRegistry } from "../vibefeld/hidden-session-registry";
 import {
   DORMANT_REASONING_REVIEW_RUNTIME,
   deriveReasoningReviewRuntime,
@@ -40,6 +41,9 @@ const mockHindsightResolution = {
 const blockedProviderPackageRoot = path.join(os.homedir(), "keychains", "provider");
 const mockResolveHindsightPlugin = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockGetToolIds = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockListSessions = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockDeleteSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockCreateRestrictedReviewProvider = vi.hoisted(() => vi.fn());
 const mockPublishedSandboxStatuses: unknown[] = [];
 const mockChatViewProviderOptions: unknown[] = [];
 let mockChatViewProviderInstance:
@@ -82,21 +86,38 @@ let mockVibefeldComposition: unknown;
 const mockVibefeldActivationOptions: unknown[] = [];
 const mockTeardownVibefeldActivation = vi.fn().mockResolvedValue(undefined);
 const mockResolveAfRuntime = vi.hoisted(() => vi.fn());
+let mockVibefeldAfPath: string | undefined;
+let mockVibefeldAfPathReadCount = 0;
 
 type MockVibefeldBridge = {
   preflight: ReturnType<typeof vi.fn>;
   getState: ReturnType<typeof vi.fn>;
   run: ReturnType<typeof vi.fn>;
   teardown: ReturnType<typeof vi.fn>;
+  beginReview?: ReturnType<typeof vi.fn>;
+  getClaimCapability?: ReturnType<typeof vi.fn>;
 };
 
+type MockVibefeldBridgeBoundary = Readonly<{
+  /**
+   * Both stubs are absent by default so the production factory's exact-shape
+   * capability read reports no supported claim operation. A test that passes
+   * them asserts the capability path is expressible without a production
+   * change and that selection starts no claim operation.
+   */
+  getClaimCapability?: () => unknown;
+  beginReview?: () => unknown;
+}>;
+
 /** Fake composed activation; the bridge never spawns anything, only spies. */
-function composedVibefeldActivation(preflight: ReturnType<typeof vi.fn>) {
+function composedVibefeldActivation(preflight: ReturnType<typeof vi.fn>, boundary: MockVibefeldBridgeBoundary = {}) {
   const bridge: MockVibefeldBridge = {
     preflight,
     getState: vi.fn(() => "ready"),
     run: vi.fn(),
     teardown: vi.fn().mockResolvedValue({ state: "unavailable", structuralStatus: null }),
+    ...(boundary.beginReview ? { beginReview: vi.fn(boundary.beginReview) } : {}),
+    ...(boundary.getClaimCapability ? { getClaimCapability: vi.fn(boundary.getClaimCapability) } : {}),
   };
   return { composition: { state: "composed", bridge, proofStore: {} }, bridge };
 }
@@ -194,6 +215,9 @@ function createMockAgentClass() {
     connect = mockConnect;
     getConfig = vi.fn().mockImplementation(() => Promise.resolve(mockEffectiveConfig));
     getToolIds = mockGetToolIds;
+    listSessions = mockListSessions;
+    deleteSession = mockDeleteSession;
+    createRestrictedReviewProvider = mockCreateRestrictedReviewProvider;
     disconnect = mockDisconnect;
     stopForReconnect = mockStopForReconnect;
     updateLaunchConfiguration = mockUpdateLaunchConfiguration;
@@ -240,6 +264,9 @@ describe("extension", () => {
     mockEffectiveConfig = {};
     mockResolveHindsightPlugin.mockResolvedValue(undefined);
     mockGetToolIds.mockResolvedValue([]);
+    mockListSessions.mockResolvedValue([]);
+    mockDeleteSession.mockResolvedValue(undefined);
+    mockCreateRestrictedReviewProvider.mockReset();
     mockPublishedSandboxStatuses.length = 0;
     mockChatViewProviderOptions.length = 0;
     mockChatViewProviderInstance = undefined;
@@ -251,6 +278,8 @@ describe("extension", () => {
     mockTeardownVibefeldActivation.mockClear();
     mockResolveAfRuntime.mockReset();
     mockResolveAfRuntime.mockResolvedValue({ state: "dormant", reason: "missing-af" });
+    mockVibefeldAfPath = undefined;
+    mockVibefeldAfPathReadCount = 0;
     mockLoadBundledResearchResources.mockResolvedValue({ resources: [], diagnostics: [] });
     mockDetectMemoryProvider.mockResolvedValue({
       id: "none",
@@ -268,6 +297,10 @@ describe("extension", () => {
           get: vi.fn((key: string) => {
             if (section === "opencode-chat" && key === "chatSandbox.mode") return "inherit";
             if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+            if (section === "opencode-chat" && key === "vibefeld.afPath") {
+              mockVibefeldAfPathReadCount += 1;
+              return mockVibefeldAfPath;
+            }
             if (section === "chat.agent.sandbox" && key === "enabled") return "off";
             return undefined;
           }),
@@ -336,6 +369,16 @@ describe("extension", () => {
       }),
       resolveMcpInventory: mockResolveMcpInventory,
       buildMcpOverlay: vi.fn(() => mockMcpOverlay),
+      RESTRICTED_REVIEW_PROMPT: "restricted review prompt",
+      RESTRICTED_REVIEW_MAX_STEPS: 4,
+      MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS: 30_000,
+      MAX_RESTRICTED_REVIEW_TEXT_LENGTH: 8_192,
+      mintRestrictedReviewProvenance: (role: "prover" | "verifier") => ({
+        identity: `${role}-identity`,
+        handle: `${role}-handle`,
+        role,
+        contextNumber: role === "prover" ? 1 : 2,
+      }),
     }));
     vi.doMock("@vscode/sandbox-runtime", () => ({
       SandboxManager: { isSupportedPlatform: mockSandboxSupported },
@@ -421,6 +464,36 @@ describe("extension", () => {
   // ============================================================
 
   describe("activate() - normal", () => {
+    it("scavenges only bounded marked leftovers after a successful connection", async () => {
+      mockListSessions.mockResolvedValue([
+        ...Array.from({ length: 10 }, (_, index) => ({
+          id: `marked-${index}`,
+          title: `${HIDDEN_SESSION_MARKER_PREFIX}${index}`,
+        })),
+        { id: "normal", title: "A normal session" },
+      ]);
+      mockDeleteSession.mockImplementation(async (id: string) => {
+        if (id === "marked-1") throw new Error("delete failed");
+      });
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(mockDeleteSession.mock.calls.map(([id]) => id)).toEqual([
+        "marked-0",
+        "marked-1",
+        "marked-2",
+        "marked-3",
+        "marked-4",
+        "marked-5",
+        "marked-6",
+        "marked-7",
+        "marked-8",
+      ]);
+      expect(mockDeleteSession).not.toHaveBeenCalledWith("normal");
+      expect(mockNonoProfileUpdate).not.toHaveBeenCalled();
+    });
+
     it("does not import or construct an adversarial controller during activation", async () => {
       vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => {
         adversarialControllerImported = true;
@@ -1703,8 +1776,10 @@ describe("extension", () => {
       };
 
       it("keeps the unavailable controller and publishes the bounded capability status from a ready preflight", async () => {
+        const beginReview = vi.fn(() => ({ state: "ready", structuralStatus: null }));
         const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
-        mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+        const { composition, bridge } = composedVibefeldActivation(preflight, { beginReview });
+        mockVibefeldComposition = composition;
 
         await activateWithComposition();
 
@@ -1732,6 +1807,8 @@ describe("extension", () => {
           invocation: "manual",
           evidenceStatus: "not_assessed",
         });
+        expect(beginReview).not.toHaveBeenCalled();
+        expect(bridge.run).not.toHaveBeenCalled();
         await controller.getRuntime();
         await controller.getRuntime();
         expect(preflight).toHaveBeenCalledTimes(1);
@@ -1754,6 +1831,42 @@ describe("extension", () => {
         // The supported seam is reused: status reads never re-preflight.
         await controller.getRuntime();
         expect(preflight).toHaveBeenCalledTimes(1);
+      });
+
+      it("selects the production bridge-backed seam from the real capability report without starting a claim operation", async () => {
+        // The test-only seam double stays off: the real factory runs against
+        // the composed bridge and its exact-shape capability read.
+        mockSupportedClaimCapability = false;
+        const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+        const getClaimCapability = vi.fn(() => ({ supported: true, operation: "claim_projection" }));
+        const beginReview = vi.fn(() => ({ state: "ready", structuralStatus: null }));
+        const { composition, bridge } = composedVibefeldActivation(preflight, { getClaimCapability, beginReview });
+        mockVibefeldComposition = composition;
+
+        await activateWithComposition();
+
+        // Capability discovery is side-effect-free: one activation preflight,
+        // one capability read, and no claim operation started by selection.
+        expect(preflight).toHaveBeenCalledTimes(1);
+        expect(getClaimCapability).toHaveBeenCalledTimes(1);
+        expect(beginReview).not.toHaveBeenCalled();
+        expect(bridge.run).not.toHaveBeenCalled();
+
+        const controller = injectedReviewController();
+        expect(controller).toBeInstanceOf(RuntimeReportingReasoningReviewController);
+        expect(reviewDelegate(controller)).toBeInstanceOf(ClaimProjectionReasoningReviewController);
+        await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
+        // Only the bounded state is published: no compatibility metadata.
+        expect(Object.keys(await controller.getRuntime())).toEqual(["state"]);
+
+        // Repeated status reads reuse the settled preflight and never re-read
+        // the capability or touch the bridge.
+        await controller.getRuntime();
+        await controller.getRuntime();
+        expect(preflight).toHaveBeenCalledTimes(1);
+        expect(getClaimCapability).toHaveBeenCalledTimes(1);
+        expect(beginReview).not.toHaveBeenCalled();
+        expect(bridge.run).not.toHaveBeenCalled();
       });
 
       it("keeps automatic routing, the effective preference, and qualification inert without the claim capability", async () => {
@@ -1943,8 +2056,52 @@ describe("extension", () => {
         await activateWithComposition();
 
         expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
-        const options = mockResolveAfRuntime.mock.calls.at(-1)?.[0];
-        expect(options ?? {}).toEqual({});
+        expect(mockResolveAfRuntime).toHaveBeenCalledWith();
+        expect(mockVibefeldAfPathReadCount).toBe(1);
+      });
+
+      it("threads the configured AF path once and does not re-read it on status reads", async () => {
+        const explicitExecutable = "/custom/bin/af";
+        mockVibefeldAfPath = explicitExecutable;
+
+        await activateWithComposition();
+
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+        expect(mockResolveAfRuntime).toHaveBeenCalledWith({ explicitExecutable });
+        expect(mockVibefeldAfPathReadCount).toBe(1);
+
+        const controller = injectedReviewController();
+        mockVibefeldAfPath = "/changed/bin/af";
+        await controller.getRuntime();
+        await registeredProvider().resolveWebviewView({}, {}, {});
+
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+        expect(mockVibefeldAfPathReadCount).toBe(1);
+      });
+
+      it("applies an AF path change only when activation runs again", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+        mockVibefeldActivation = true;
+        mockVibefeldAfPath = "/first/bin/af";
+        const ext = await importExtension();
+        const nextExt = await importExtension();
+        await nextExt.activate(updaterContext(new Map()) as never);
+        await registeredProvider().resolveWebviewView({}, {}, {});
+
+        mockVibefeldAfPath = "/second/bin/af";
+        expect(mockResolveAfRuntime).toHaveBeenCalledWith({ explicitExecutable: "/first/bin/af" });
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+
+        const controller = injectedReviewController();
+        await controller.getRuntime();
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
+        expect(mockVibefeldAfPathReadCount).toBe(1);
+
+        await ext.activate(updaterContext(new Map()) as never);
+        await registeredProvider().resolveWebviewView({}, {}, {});
+        expect(mockResolveAfRuntime).toHaveBeenLastCalledWith({ explicitExecutable: "/second/bin/af" });
+        expect(mockResolveAfRuntime).toHaveBeenCalledTimes(2);
+        expect(mockVibefeldAfPathReadCount).toBe(2);
       });
 
       it("keeps the single bridge preflight in activation and out of message paths", () => {
@@ -2448,6 +2605,53 @@ describe("extension", () => {
       ext.deactivate();
 
       expect(mockDisconnect).not.toHaveBeenCalled();
+    });
+
+    it("awaits restricted child disposal before disconnecting the agent", async () => {
+      hiddenSessionRegistry.reset();
+      mockEffectiveConfig = { model: "provider/model" };
+      const order: string[] = [];
+      let createCount = 0;
+      const stage = new Promise<never>(() => undefined);
+      const provider = {
+        createSession: vi.fn(async () => ({ ok: true as const, sessionId: `child-${++createCount}` })),
+        promptStage: vi.fn(),
+        retrieveStageText: vi.fn(),
+        runStage: vi.fn(async () => stage),
+        beginReview: vi.fn(),
+        cancelReview: vi.fn(),
+        isReviewCurrent: vi.fn(),
+        cancel: vi.fn(async () => {
+          order.push("cancel");
+          return { ok: true as const };
+        }),
+        delete: vi.fn(async () => {
+          order.push("delete");
+          return { ok: true as const };
+        }),
+        checkReadiness: vi.fn(async () => true),
+        isReady: vi.fn(() => true),
+        invalidate: vi.fn(),
+      };
+      mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+      mockDisconnect.mockImplementation(() => order.push("disconnect"));
+      vi.doUnmock("../vibefeld/adversarial-review-reasoning-review-controller");
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+      expect(mockCreateRestrictedReviewProvider).toHaveBeenCalled();
+      const controller = injectedReviewController();
+      expect(provider.checkReadiness).toHaveBeenCalled();
+      void controller.review({
+        sessionId: "session",
+        messageId: "message",
+        sourceText: "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.",
+      });
+      await vi.waitFor(() => expect(provider.createSession).toHaveBeenCalled());
+
+      await ext.deactivate();
+
+      expect(order).toEqual(["cancel", "delete", "disconnect"]);
     });
   });
 

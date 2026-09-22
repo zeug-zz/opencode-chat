@@ -13,6 +13,10 @@ const UNAVAILABLE_RUNTIME: ReasoningReviewRuntime = {
 };
 
 type ReviewCancellation = Readonly<{ controller: AbortController; token: number }>;
+type AdversarialReviewControllerOptions = Readonly<{
+  timeoutMs?: number;
+  readinessCheck?: () => Promise<boolean>;
+}>;
 
 /**
  * Host-private manual adversarial review. The injected seam is dormant unless
@@ -23,8 +27,12 @@ export class AdversarialReviewReasoningReviewController implements IReasoningRev
   private token = 0;
   private readonly orchestrator: ReturnType<typeof createAdversarialReviewOrchestrator>;
 
-  constructor(private readonly seam: AdversarialReviewSeam = createUnsupportedAdversarialReviewSeam()) {
-    this.orchestrator = createAdversarialReviewOrchestrator(seam);
+  constructor(
+    private readonly seam: AdversarialReviewSeam = createUnsupportedAdversarialReviewSeam(),
+    private readonly options: AdversarialReviewControllerOptions = {},
+  ) {
+    const timeoutMs = options.timeoutMs ?? 60_000;
+    this.orchestrator = createAdversarialReviewOrchestrator(seam, { timeoutMs });
   }
 
   async getRuntime(): Promise<ReasoningReviewRuntime> {
@@ -35,17 +43,27 @@ export class AdversarialReviewReasoningReviewController implements IReasoningRev
     sessionId,
     messageId,
     sourceText,
+    invocation,
   }: {
     sessionId: string;
     messageId: string;
     sourceText: string;
+    invocation?: "manual" | "automatic";
   }): Promise<ReasoningReviewSummary> {
+    if (invocation === "automatic") {
+      return this.unavailableSummary(messageId, "unsupported", invocation);
+    }
+
     const key = this.key(sessionId, messageId);
     this.cancel(sessionId, messageId);
     const cancellation = { controller: new AbortController(), token: ++this.token };
     this.inFlight.set(key, cancellation);
 
     try {
+      if (this.options.readinessCheck && !(await this.options.readinessCheck())) {
+        return this.unavailableSummary(messageId, "stale-generation", "manual");
+      }
+
       const graph = compileClaimGraph(sourceText);
       if (!graph.ok) {
         return mapAdversarialReviewToSummary({
@@ -81,5 +99,27 @@ export class AdversarialReviewReasoningReviewController implements IReasoningRev
 
   private key(sessionId: string, messageId: string): string {
     return `${sessionId}\u0000${messageId}`;
+  }
+
+  private unavailableSummary(
+    messageId: string,
+    reason: "unsupported" | "stale-generation",
+    invocation: "manual" | "automatic" = "manual",
+  ): ReasoningReviewSummary {
+    return {
+      ...mapAdversarialReviewToSummary({
+        reviewedMessageId: messageId,
+        evidence: normalizeEvidenceReferences([]),
+        outcome: {
+          ok: false,
+          failure: {
+            status: reason === "stale-generation" ? "audit_failed" : "unavailable",
+            phase: "host",
+            reason: reason === "stale-generation" ? "malformed" : "unsupported",
+          },
+        },
+      }),
+      invocation,
+    };
   }
 }

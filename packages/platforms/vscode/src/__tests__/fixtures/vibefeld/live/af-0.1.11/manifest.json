@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-21T07:23:54Z",
+  "capturedAt": "2026-09-22T00:47:11.800Z",
   "runtime": {
     "version": "0.1.11",
     "commit": "611291b",
@@ -12,6 +12,8 @@
     ["af", "version", "--json"],
     ["af", "schema", "--format", "json"],
     ["af", "init", "-c", "<conjecture>", "-a", "<author>", "-d", "<workspace>"],
+    ["af", "claim", "<node-id>", "--owner", "<owner>", "--role", "<role>", "-d", "<workspace>", "--format", "json"],
+    ["af", "refine", "<parent-id>", "<statement>", "--owner", "<owner>", "-d", "<workspace>", "--format", "json"],
     ["af", "status", "-d", "<workspace>", "--format", "json"]
   ]
 }

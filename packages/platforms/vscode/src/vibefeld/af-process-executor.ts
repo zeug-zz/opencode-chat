@@ -10,7 +10,9 @@ import type { AfLiveOutputResult } from "./af-live-output";
 import {
   type AfOutputExecution,
   type AfOutputResult,
+  parseAfClaimOutput,
   parseAfInitOutput,
+  parseAfRefineOutput,
   parseAfSchemaOutput,
   parseAfStatusOutput,
   parseAfVersionOutput,
@@ -23,7 +25,14 @@ import {
   classifyAfRuntimeResult,
 } from "./af-runtime-contract";
 
-const OPERATION_TIMEOUTS_MS = Object.freeze({ version: 5_000, schema: 5_000, init: 15_000, status: 5_000 });
+const OPERATION_TIMEOUTS_MS = Object.freeze({
+  version: 5_000,
+  schema: 5_000,
+  init: 15_000,
+  claim: 5_000,
+  refine: 15_000,
+  status: 5_000,
+});
 const CLEANUP_TIMEOUT_MS = 2_000;
 const IO_LIMITS: AfPolicyIoLimits = Object.freeze({
   stdinBytes: AF_FIXTURE_LIMITS.jsonBytes,
@@ -89,6 +98,10 @@ const parserFor = (operation: AfOperationName, parsers: AfOutputParserSet | unde
       return parsers?.schema ?? parseAfSchemaOutput;
     case "init":
       return parsers?.init ?? parseAfInitOutput;
+    case "claim":
+      return parsers?.claim ?? parseAfClaimOutput;
+    case "refine":
+      return parsers?.refine ?? parseAfRefineOutput;
     case "status":
       return parsers?.status ?? parseAfStatusOutput;
   }

@@ -63,6 +63,28 @@ function reviewSeam(disposition: "confirmed" | "rejected" | "unresolved"): Adver
   };
 }
 
+function hostileReviewSeam(): AdversarialReviewSeam {
+  const seam = reviewSeam("confirmed");
+  return {
+    ...seam,
+    runVerifier: vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        verifier: { identity: "verifier-id", role: "verifier" as const, contextNumber: 2 as const },
+        proposalId: "proposal-1",
+        dispositions: [
+          {
+            objectionId: "objection-1",
+            disposition: "confirmed" as const,
+            reason:
+              "/Users/zeug/Projects/opencode-chat/AGENTS.md https://example.com/a?token=abc Bearer abc.def.ghi 0123456789abcdef0123456789abcdef0123456789abcdef",
+          },
+        ],
+      },
+    })),
+  };
+}
+
 function evidence(status: "source_recorded" | "conflicted") {
   return normalizeEvidenceReferences([
     { id: "evidence-1", claimId: "claim-premise", metadata: { sourceKind: "observation", status } },
@@ -109,6 +131,25 @@ describe("adversarial review mapping", () => {
     expect(result.evidenceStatus).toBe("conflicted");
     expect(result.openChallenges).toEqual([]);
     expect(result.conclusion).not.toMatch(/truth|proved/i);
+  });
+
+  it("redacts child-derived reasons at the public projection point", async () => {
+    const outcome = await createAdversarialReviewOrchestrator(hostileReviewSeam()).review(source);
+    expect(outcome.ok).toBe(true);
+    const result = mapAdversarialReviewToSummary({
+      reviewedMessageId: "message-1",
+      evidence: evidence("source_recorded"),
+      outcome,
+    });
+    const reason = result.openChallenges[0]?.reason ?? "";
+
+    expect(reason).toContain("[redacted-path]");
+    expect(reason).toContain("[redacted-url]");
+    expect(reason).toContain("[redacted-secret]");
+    expect(reason).not.toContain("/Users/zeug/Projects/opencode-chat/AGENTS.md");
+    expect(reason).not.toContain("https://example.com/a?token=abc");
+    expect(reason).not.toContain("Bearer abc.def.ghi");
+    expect(reason.length).toBeLessThanOrEqual(256);
   });
 
   it("maps bounded failures without exposing failure payloads", () => {

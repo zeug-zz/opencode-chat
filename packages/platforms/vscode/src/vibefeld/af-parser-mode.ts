@@ -1,16 +1,27 @@
 import {
+  type AfLiveClaimFacts,
   type AfLiveInitFacts,
   type AfLiveOutputExecution,
   type AfLiveOutputResult,
+  type AfLiveRefineFacts,
   type AfLiveSchemaFacts,
   type AfLiveStatusFacts,
   type AfLiveVersionFacts,
+  parseLiveClaimOutput,
   parseLiveInitOutput,
+  parseLiveRefineOutput,
   parseLiveSchemaOutput,
   parseLiveStatusOutput,
   parseLiveVersionOutput,
 } from "./af-live-output";
-import { parseAfInitOutput, parseAfSchemaOutput, parseAfStatusOutput, parseAfVersionOutput } from "./af-output-schema";
+import {
+  parseAfClaimOutput,
+  parseAfInitOutput,
+  parseAfRefineOutput,
+  parseAfSchemaOutput,
+  parseAfStatusOutput,
+  parseAfVersionOutput,
+} from "./af-output-schema";
 
 /**
  * Explicit mode selection between the live AF parsers and the fixture-schema
@@ -26,30 +37,55 @@ import { parseAfInitOutput, parseAfSchemaOutput, parseAfStatusOutput, parseAfVer
 
 export type AfParserMode = "live" | "fixture";
 
-/** The four AF operations covered by a parser set. */
-export type AfParserOperation = "version" | "schema" | "init" | "status";
+/** The six AF operations covered by a parser set. */
+export type AfParserOperation = "version" | "schema" | "init" | "claim" | "refine" | "status";
 
-export type AfOutputParserSet<TVersion = unknown, TSchema = unknown, TInit = unknown, TStatus = unknown> = Readonly<{
+export type AfOutputParserSet<
+  TVersion = unknown,
+  TSchema = unknown,
+  TInit = unknown,
+  TClaim = unknown,
+  TRefine = unknown,
+  TStatus = unknown,
+> = Readonly<{
   version: (stdout: string, execution?: AfLiveOutputExecution) => AfLiveOutputResult<TVersion>;
   schema: (stdout: string, execution?: AfLiveOutputExecution) => AfLiveOutputResult<TSchema>;
   init: (stdout: string, execution?: AfLiveOutputExecution) => AfLiveOutputResult<TInit>;
+  claim: (stdout: string, execution?: AfLiveOutputExecution) => AfLiveOutputResult<TClaim>;
+  refine: (stdout: string, execution?: AfLiveOutputExecution) => AfLiveOutputResult<TRefine>;
   status: (stdout: string, execution?: AfLiveOutputExecution) => AfLiveOutputResult<TStatus>;
 }>;
 
-type LiveParserSet = AfOutputParserSet<AfLiveVersionFacts, AfLiveSchemaFacts, AfLiveInitFacts, AfLiveStatusFacts>;
+type LiveParserSet = AfOutputParserSet<
+  AfLiveVersionFacts,
+  AfLiveSchemaFacts,
+  AfLiveInitFacts,
+  AfLiveClaimFacts,
+  AfLiveRefineFacts,
+  AfLiveStatusFacts
+>;
 
 const LIVE_PARSERS: LiveParserSet = Object.freeze({
   version: parseLiveVersionOutput,
   schema: parseLiveSchemaOutput,
   init: parseLiveInitOutput,
+  claim: parseLiveClaimOutput,
+  refine: parseLiveRefineOutput,
   status: parseLiveStatusOutput,
 });
 
-/** The fixture-schema test double; never returned by the production entry point. */
+/**
+ * The fixture-schema test double; never returned by the production entry point.
+ * The synthetic envelope has no claim or refine shape, so those two members are
+ * explicitly closed test-only parsers that always fail closed (`unknown`)
+ * instead of inventing fixture facts or extending the envelope.
+ */
 const FIXTURE_PARSERS: AfOutputParserSet = Object.freeze({
   version: parseAfVersionOutput,
   schema: parseAfSchemaOutput,
   init: parseAfInitOutput,
+  claim: parseAfClaimOutput,
+  refine: parseAfRefineOutput,
   status: parseAfStatusOutput,
 });
 

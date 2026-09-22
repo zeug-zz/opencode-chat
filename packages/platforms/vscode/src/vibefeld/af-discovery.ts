@@ -1,3 +1,5 @@
+import path from "node:path";
+
 /**
  * Host-private AF executable discovery.
  *
@@ -29,6 +31,23 @@ export type AfDiscoveryOptions = Readonly<{
 
 /** Fixed order is intentional: approved roots precede host PATH entries. */
 export const AF_DISCOVERY_ROOTS = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] as const;
+
+const HOME_PATH_MAX_LENGTH = 4_096;
+
+const isUsableHomePath = (homePath: string): boolean =>
+  homePath.length > 0 &&
+  homePath.length <= HOME_PATH_MAX_LENGTH &&
+  !homePath.includes("\0") &&
+  path.isAbsolute(homePath);
+
+/** Build the approved roots in deterministic system-then-home order. */
+export const createAfDiscoveryRoots = (homePath: string): readonly string[] => {
+  const roots = [...AF_DISCOVERY_ROOTS];
+  if (isUsableHomePath(homePath)) {
+    roots.push(path.join(homePath, "go", "bin"), path.join(homePath, "bin"), path.join(homePath, ".local", "bin"));
+  }
+  return roots.filter((root, index) => roots.indexOf(root) === index);
+};
 
 const executableName = "af";
 

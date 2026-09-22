@@ -105,6 +105,53 @@ describe("AdversarialReviewReasoningReviewController", () => {
     expect(reviewSeam.runVerifier).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects automatic invocation before touching the seam or readiness gate", async () => {
+    const reviewSeam = seam();
+    const readinessCheck = vi.fn(async () => true);
+    const controller = new AdversarialReviewReasoningReviewController(reviewSeam, { readinessCheck });
+
+    await expect(
+      controller.review({
+        sessionId: "session-1",
+        messageId: "message-1",
+        sourceText: source,
+        invocation: "automatic",
+      }),
+    ).resolves.toMatchObject({ status: "unavailable", invocation: "automatic", reviewedMessageId: "message-1" });
+    expect(readinessCheck).not.toHaveBeenCalled();
+    expect(reviewSeam.getCapability).not.toHaveBeenCalled();
+    expect(reviewSeam.createContext).not.toHaveBeenCalled();
+    expect(reviewSeam.runProver).not.toHaveBeenCalled();
+    expect(reviewSeam.runVerifier).not.toHaveBeenCalled();
+  });
+
+  it("fails a stale-generation readiness check before creating a child context", async () => {
+    const reviewSeam = seam();
+    const readinessCheck = vi.fn(async () => false);
+    const controller = new AdversarialReviewReasoningReviewController(reviewSeam, { readinessCheck });
+
+    await expect(
+      controller.review({ sessionId: "session-1", messageId: "message-1", sourceText: source }),
+    ).resolves.toMatchObject({ status: "audit_failed", reviewedMessageId: "message-1" });
+    expect(readinessCheck).toHaveBeenCalledTimes(1);
+    expect(reviewSeam.getCapability).not.toHaveBeenCalled();
+    expect(reviewSeam.createContext).not.toHaveBeenCalled();
+  });
+
+  it("revalidates readiness once for a manual review and never from getRuntime", async () => {
+    const reviewSeam = seam();
+    const readinessCheck = vi.fn(async () => true);
+    const controller = new AdversarialReviewReasoningReviewController(reviewSeam, { readinessCheck });
+
+    await controller.getRuntime();
+    expect(readinessCheck).not.toHaveBeenCalled();
+    await expect(
+      controller.review({ sessionId: "session-1", messageId: "message-1", sourceText: source }),
+    ).resolves.toMatchObject({ status: "unresolved", invocation: "manual" });
+    expect(readinessCheck).toHaveBeenCalledTimes(1);
+    expect(reviewSeam.createContext).toHaveBeenCalledTimes(2);
+  });
+
   it("fails closed before invoking the injected seam for an invalid packet", async () => {
     const reviewSeam = seam();
     const controller = new AdversarialReviewReasoningReviewController(reviewSeam);

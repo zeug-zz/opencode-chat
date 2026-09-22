@@ -8,9 +8,15 @@ import type {
   AfPolicyIoLimits,
   AfPreflightDescriptor,
 } from "../vibefeld/af-execution-boundary";
-import { AfProcessExecutor } from "../vibefeld/af-process-executor";
+import type { AfOutputParserSet } from "../vibefeld/af-parser-mode";
+import { AfProcessExecutor, type AfProcessResult } from "../vibefeld/af-process-executor";
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/vibefeld/${name}`, import.meta.url), "utf8");
+
+const liveFixture = (name: string) =>
+  readFileSync(new URL(`./fixtures/vibefeld/live/af-0.1.11/${name}`, import.meta.url), "utf8");
+
+const closedUnknown = { outcome: "unavailable", reason: "unknown", structuralStatus: null } as const;
 
 const readiness = { state: "ready" as const, execution: "direct" as const };
 
@@ -75,6 +81,52 @@ describe("AF process executor", () => {
     ]);
   });
 
+  it("executes the injected claim parser for a claim build", async () => {
+    const adapter = createAdapter({ outcome: "exited", exitCode: 0, stdout: liveFixture("claim.json"), stderr: "" });
+    const claim = vi.fn(() => ({ ok: true as const, facts: { executed: "claim" }, structuralStatus: null }));
+    const unused = vi.fn(() => ({ ok: false as const, failure: closedUnknown }));
+    const parsers: AfOutputParserSet = {
+      version: unused,
+      schema: unused,
+      init: unused,
+      claim,
+      refine: unused,
+      status: unused,
+    };
+    const result = await new AfProcessExecutor({ ...options(adapter), parsers }).execute({
+      operation: "claim",
+      nodeId: "1",
+      role: "prover",
+    });
+    expect(result).toEqual({ ok: true, operation: "claim", facts: { executed: "claim" }, structuralStatus: null });
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
+    expect(adapter.launches[0].argv[1]).toBe("claim");
+  });
+
+  it("executes the injected refine parser for a refine build", async () => {
+    const adapter = createAdapter({ outcome: "exited", exitCode: 0, stdout: liveFixture("refine.json"), stderr: "" });
+    const refine = vi.fn(() => ({ ok: true as const, facts: { executed: "refine" }, structuralStatus: null }));
+    const unused = vi.fn(() => ({ ok: false as const, failure: closedUnknown }));
+    const parsers: AfOutputParserSet = {
+      version: unused,
+      schema: unused,
+      init: unused,
+      claim: unused,
+      refine,
+      status: unused,
+    };
+    const result = await new AfProcessExecutor({ ...options(adapter), parsers }).execute({
+      operation: "refine",
+      parentId: "1",
+      statements: ["statement"],
+    });
+    expect(result).toEqual({ ok: true, operation: "refine", facts: { executed: "refine" }, structuralStatus: null });
+    expect(refine).toHaveBeenCalledTimes(1);
+    expect(unused).not.toHaveBeenCalled();
+    expect(adapter.launches[0].argv[1]).toBe("refine");
+  });
+
   it("preflights version and schema through the same direct descriptor shape", async () => {
     const adapter = createAdapter({ outcome: "exited", exitCode: 0, stdout: fixture("version.json"), stderr: "" });
     await new AfProcessExecutor(options(adapter)).executePreflight({ operation: "version" }, { cwd: "/preflight" });
@@ -111,6 +163,31 @@ describe("AF process executor", () => {
       ok: false,
       classification: { outcome: "unavailable", reason, structuralStatus: null },
     });
+  });
+
+  it.each([
+    ["claim", { operation: "claim", nodeId: "1", role: "prover" } as const, 5_000],
+    ["refine", { operation: "refine", parentId: "1", statements: ["statement"] } as const, 15_000],
+  ] as const)("applies the %s per-operation timeout", async (_name, operation, timeout) => {
+    vi.useFakeTimers();
+    try {
+      const adapter = createAdapter({ outcome: "exited", exitCode: 0, stdout: "", stderr: "" });
+      adapter.launch = async () => new Promise<never>(() => {});
+      const pending: Promise<AfProcessResult> = new AfProcessExecutor(options(adapter)).execute(operation);
+      let settled: AfProcessResult | undefined;
+      void pending.then((result) => {
+        settled = result;
+      });
+      await vi.advanceTimersByTimeAsync(timeout - 1);
+      expect(settled).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        classification: { outcome: "unavailable", reason: "timeout", structuralStatus: null },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("invalidates after cleanup failure and refuses subsequent work", async () => {

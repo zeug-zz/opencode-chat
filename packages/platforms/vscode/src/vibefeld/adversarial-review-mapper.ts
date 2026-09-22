@@ -5,6 +5,7 @@ import type {
   ReasoningReviewSummary,
 } from "@opencode-chat/core";
 import type { AdversarialReviewOrchestrationResult } from "./adversarial-review-orchestrator";
+import { redactReviewReason } from "./adversarial-review-redaction";
 import type { EvidenceNormalizationResult } from "./evidence-metadata";
 
 export type AdversarialReviewMappingInput = Readonly<{
@@ -77,7 +78,7 @@ export function mapAdversarialReviewToSummary(input: AdversarialReviewMappingInp
     challenges.push({
       severity: objection.severity,
       target: `${objection.target.kind}:${objection.target.id}`,
-      reason: disposition.reason,
+      reason: redactReviewReason(disposition.reason),
     });
   }
 

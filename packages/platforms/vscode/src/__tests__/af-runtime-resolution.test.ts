@@ -87,6 +87,70 @@ describe("host-owned AF executable resolution", () => {
     expect(access).toHaveBeenCalledWith(AF_PATH);
   });
 
+  it("finds an executable installed only in an approved home root", () => {
+    const homePath = "/host/home";
+    const homeAf = `${homePath}/go/bin/af`;
+    const { stat, access } = afSeams({ [homeAf]: {} });
+    expect(resolveAfExecutable({ platform: "darwin", pathValue: "", homePath, stat, access })).toEqual({
+      state: "found",
+      executable: homeAf,
+    });
+  });
+
+  it("reaches ready with a home-root executable without launching", async () => {
+    const homePath = "/host/home";
+    const homeAf = `${homePath}/go/bin/af`;
+    const { stat, access } = afSeams({ [homeAf]: {} });
+    const launcher = new RecordingLauncher();
+    const resolution = await resolveAfRuntime({ platform: "darwin", pathValue: "", homePath, stat, access, launcher });
+    expect(resolution.state).toBe("ready");
+    if (resolution.state === "ready") expect(resolution.resolveExecutable()).toBe(homeAf);
+    expect(launcher.calls).toHaveLength(0);
+  });
+
+  it("does not add home roots for an invalid home path", () => {
+    const { stat, access } = afSeams();
+    expect(resolveAfExecutable({ platform: "darwin", pathValue: "", homePath: "relative/home", stat, access })).toEqual(
+      {
+        state: "unavailable",
+        reason: "absent",
+      },
+    );
+    expect(stat).toHaveBeenCalledTimes(AF_DISCOVERY_ROOTS.length);
+  });
+
+  it("deduplicates a PATH candidate matching a home root", () => {
+    const homePath = "/host/home";
+    const homeAf = `${homePath}/go/bin/af`;
+    const { stat, access } = afSeams({ [homeAf]: {} });
+    expect(
+      resolveAfExecutable({ platform: "darwin", homePath, pathValue: `${homePath}/go/bin`, stat, access }),
+    ).toEqual({ state: "found", executable: homeAf });
+    expect(stat.mock.calls.filter(([candidate]) => candidate === homeAf)).toHaveLength(1);
+  });
+
+  it.each([
+    ["not-owned", { ownedByHost: false }, "not-owned"],
+    ["not a regular file", { isFile: false }, "not-executable"],
+    ["not executable", { access: "not-executable" as const }, "not-executable"],
+  ] as const)("keeps the existing reason for a home candidate that is %s", (_name, metadata, reason) => {
+    const homeAf = "/host/home/go/bin/af";
+    const { stat, access } = afSeams({ [homeAf]: metadata });
+    expect(resolveAfExecutable({ platform: "darwin", pathValue: "", homePath: "/host/home", stat, access })).toEqual({
+      state: "unavailable",
+      reason,
+    });
+  });
+
+  it("remains ambiguous across system and home roots", () => {
+    const homeAf = "/host/home/go/bin/af";
+    const { stat, access } = afSeams({ [AF_PATH]: {}, [homeAf]: {} });
+    expect(resolveAfExecutable({ platform: "darwin", pathValue: "", homePath: "/host/home", stat, access })).toEqual({
+      state: "unavailable",
+      reason: "ambiguous",
+    });
+  });
+
   it("returns absent without a PATH entry", () => {
     const { stat, access } = afSeams();
     expect(
@@ -249,6 +313,67 @@ describe("composed AF runtime resolution", () => {
     expect(access).not.toHaveBeenCalled();
     expect(launcher.calls).toHaveLength(0);
   });
+
+  it("uses a valid explicit executable directly without discovery", async () => {
+    const explicitExecutable = "/host/custom/af";
+    const { stat, access } = afSeams({ [explicitExecutable]: {} });
+
+    const resolution = await resolveAfRuntime({
+      platform: "darwin",
+      explicitExecutable,
+      stat,
+      access,
+      launcher: new RecordingLauncher(),
+    });
+
+    expect(resolution.state).toBe("ready");
+    if (resolution.state !== "ready") return;
+    expect(resolution.resolveExecutable()).toBe(explicitExecutable);
+    expect(stat).toHaveBeenCalledWith(explicitExecutable);
+    expect(access).toHaveBeenCalledWith(explicitExecutable);
+    expect(stat.mock.calls.map(([candidate]) => candidate)).toEqual([explicitExecutable]);
+  });
+
+  it.each([
+    ["relative", "custom/af", undefined],
+    ["blank", "", undefined],
+    ["whitespace", "  \t", undefined],
+    ["missing", "/host/custom/missing-af", undefined],
+    ["not-owned", "/host/custom/not-owned-af", { ownedByHost: false }],
+    ["not a regular file", "/host/custom/directory", { isFile: false }],
+    ["not executable", "/host/custom/not-executable-af", { access: "not-executable" as const }],
+    ["access denied", "/host/custom/denied-af", { access: "denied" as const }],
+  ] as const)(
+    "fails closed for an invalid explicit executable that is %s",
+    async (_name, explicitExecutable, metadata) => {
+      const files = metadata ? { [explicitExecutable]: metadata } : {};
+      const { stat, access } = afSeams(files);
+
+      const resolution = await resolveAfRuntime({
+        platform: "darwin",
+        explicitExecutable,
+        pathValue: "/fallback/bin",
+        candidateRoots: AF_DISCOVERY_ROOTS,
+        stat,
+        access,
+      });
+
+      expect(resolution).toEqual({ state: "dormant", reason: "missing-af" });
+      expect(stat.mock.calls.map(([candidate]) => candidate)).toEqual(
+        explicitExecutable.trim() && path.posix.isAbsolute(explicitExecutable) ? [explicitExecutable] : [],
+      );
+      expect(stat.mock.calls.every(([candidate]) => candidate === explicitExecutable)).toBe(true);
+    },
+  );
+
+  it("leaves discovery unchanged when the explicit executable is unset", async () => {
+    const { options } = runtimeOptions();
+    const withoutExplicit = await resolveAfRuntime(options);
+    const withUndefined = await resolveAfRuntime({ ...options, explicitExecutable: undefined });
+
+    expect(withUndefined.state).toBe(withoutExplicit.state);
+    expect(withUndefined).toMatchObject({ state: "ready" });
+  });
 });
 
 describe("ready composition descriptor and preflight proof", () => {
@@ -404,7 +529,7 @@ describe("resolution security pins", () => {
   it("keeps the real host seams and no process channel in production code", () => {
     expect(source).toContain("options.platform ?? process.platform");
     expect(source).toContain('options.pathValue ?? process.env.PATH ?? ""');
-    expect(source).toContain("options.candidateRoots ?? AF_DISCOVERY_ROOTS");
+    expect(source).toContain("options.candidateRoots ?? createAfDiscoveryRoots(options.homePath ?? os.homedir())");
     expect(source).toContain("options.stat ?? defaultStat");
     expect(source).toContain("options.access ?? defaultAccess");
     expect(source).toContain("accessSync(candidate, fsConstants.X_OK)");

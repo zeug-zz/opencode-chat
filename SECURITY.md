@@ -153,6 +153,15 @@ Reads outside that baseline remain broad to support local MCPs and installed run
 dependencies. Writes remain constrained to the documented workspace, OpenCode, runtime, and
 temporary paths.
 
+Chat sandboxing is controlled from the Chat panel's gear settings: the
+`inherit`, `on`, and `off` modes determine whether the extension-owned server
+is sandboxed, and **Allow network access** applies to the complete extension
+process tree. Local MCPs inherit the sandbox automatically; no MCP-specific
+path allowlist is required for Node, Python, uv, Bun, or other installed
+runtimes. With network access disabled, remote providers and MCPs fail inside
+the sandbox; with it enabled, the extension tree can use provider and MCP
+network services.
+
 The current versioned, reviewed expansion adds narrow leaves rather than broad
 parent denies. The selected additions are:
 
@@ -195,6 +204,19 @@ protected path fail closed before launch; the deny is not removed, the grant is
 not broadened, and no unsandboxed retry occurs. The complete extension-owned server process
 tree, including local MCP descendants, inherits the baseline, so an MCP that
 intentionally reads a newly protected path may be affected.
+
+Inherited plugins reuse these generic compatibility reads and existing write
+paths. There are no plugin-name-specific grants or broad home/credential
+writes; a plugin requiring an unsupported write path can fail instead. If
+inherited plugin loading prevents startup or readiness, the companion retries
+at most once with an explicit empty plugin list in the same requested sandbox
+mode. It never retries unsandboxed or broadens policy. If the fallback starts,
+Chat and Write remain usable and only bounded, redacted diagnostics are
+reported; failures after readiness remain operation-level failures. Users who
+do not configure plugins retain the plugin-free behavior.
+
+Users who need stronger read isolation should wait for the future advanced
+strict-sandbox mode rather than adding ad hoc MCP exceptions.
 
 Outside the protected leaves, existing compatibility behavior remains: reads
 stay broad, while writes remain available for permitted workspace, OpenCode,

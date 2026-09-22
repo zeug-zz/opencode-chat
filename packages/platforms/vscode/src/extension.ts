@@ -5,6 +5,9 @@ import {
   detectMemoryProvider,
   OpenCodeAgent,
   type OpenCodeLaunchConfiguration,
+  RESTRICTED_REVIEW_MAX_STEPS,
+  RESTRICTED_REVIEW_PROMPT,
+  type RestrictedReviewModel,
   readEffectiveOpenCodeConfiguration,
   readHindsightPackageMetadata,
   resolveHindsightPlugin,
@@ -44,6 +47,7 @@ import { resolveAutomaticRoutingActivation } from "./vibefeld/automatic-routing-
 import { selectAutomaticRouting } from "./vibefeld/automatic-routing-policy";
 import { ClaimProjectionReasoningReviewController } from "./vibefeld/claim-projection-reasoning-review-controller";
 import { createCurrentVibefeldClaimProjectionSeam } from "./vibefeld/current-vibefeld-claim-projection";
+import { HIDDEN_SESSION_MARKER_PREFIX } from "./vibefeld/hidden-session-registry";
 import { QualificationRecorder } from "./vibefeld/qualification-recorder";
 import { createQualificationFileStore } from "./vibefeld/qualification-store";
 import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
@@ -60,6 +64,7 @@ import {
   type VibefeldActivationComposition,
 } from "./vibefeld/vibefeld-activation";
 import {
+  readVibefeldAfPath,
   readVibefeldPreference,
   updateVibefeldEnabled,
   updateVibefeldWorkspaceOptOut,
@@ -67,6 +72,8 @@ import {
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent!: OpenCodeAgent;
+let restrictedReviewDisposal: (() => Promise<void>) | undefined;
+let resolvedRestrictedReviewModel: RestrictedReviewModel | undefined;
 let chatInitialization: Promise<ChatViewProvider | undefined> | undefined;
 let sandboxController: ChatSandboxController<ChatSandboxStatus> | undefined;
 let memoryProviderStatus: MemoryProviderStatus = {
@@ -77,6 +84,7 @@ let memoryProviderStatus: MemoryProviderStatus = {
 };
 const MCP_INVENTORY_ERROR_MESSAGE =
   "OpenCode Scribe could not resolve its MCP inventory. Repair the OpenCode configuration and reload the extension.";
+const MAX_STARTUP_HIDDEN_SESSION_SCAVENGE = 8;
 
 class McpInventoryError extends Error {
   constructor() {
@@ -231,15 +239,18 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   const openCodePaths = resolveOpenCodePaths();
   let inheritedPluginSources: OpenCodeLaunchConfiguration["pluginSources"] = [];
   let hindsightResolution: Awaited<ReturnType<typeof resolveHindsightPlugin>>;
+  let resolvedModel: string | undefined;
   let hindsightResolutionFailed = false;
   try {
     const effectiveConfig = readEffectiveOpenCodeConfiguration(openCodePaths.config, workspaceFolder);
+    resolvedModel = effectiveConfig.model;
     inheritedPluginSources = (effectiveConfig.plugin ?? []) as OpenCodeLaunchConfiguration["pluginSources"];
     hindsightResolution = await resolveHindsightPlugin(effectiveConfig, readHindsightPackageMetadata);
   } catch {
     hindsightResolutionFailed = true;
     hindsightResolution = undefined;
   }
+  resolvedRestrictedReviewModel = parseRestrictedReviewModel(resolvedModel);
   // The preflight launch must keep provider hooks disabled. Exact observed
   // inventory verification below is the gate that activates lifecycle
   // retention on the final launch.
@@ -343,6 +354,15 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
         : {}),
       ...(hindsightIntegration && providerPathsAvailable
         ? { hindsightCompanionIntegration: hindsightIntegration }
+        : {}),
+      ...(resolvedRestrictedReviewModel
+        ? {
+            restrictedReview: {
+              model: `${resolvedRestrictedReviewModel.providerID}/${resolvedRestrictedReviewModel.modelID}`,
+              prompt: RESTRICTED_REVIEW_PROMPT,
+              maxSteps: RESTRICTED_REVIEW_MAX_STEPS,
+            },
+          }
         : {}),
     };
   };
@@ -451,6 +471,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   } else {
     try {
       await connectAgent(sandboxSettings.enabled);
+      await scavengeLeftoverRestrictedReviewSessions();
     } catch (error) {
       const kind = classifyConnectError(error);
       if (kind === "not-found") {
@@ -555,7 +576,12 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   // host resolution is skipped there rather than running a bounded process for
   // a composition that stays dormant.
   const globalStoragePath = context.globalStorageUri?.fsPath ?? "";
-  const afRuntimeResolution = globalStoragePath ? await resolveAfRuntime() : undefined;
+  const afRuntimeResolution = globalStoragePath
+    ? await (async () => {
+        const explicitExecutable = readVibefeldAfPath(workspaceUri);
+        return explicitExecutable ? resolveAfRuntime({ explicitExecutable }) : resolveAfRuntime();
+      })()
+    : undefined;
 
   // Host-private activation composition. Construction is dormant and free of
   // side effects; preflight and controller selection are separate steps. A
@@ -743,6 +769,25 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   return chatViewProvider;
 }
 
+async function scavengeLeftoverRestrictedReviewSessions(): Promise<void> {
+  try {
+    const sessions = await agent.listSessions();
+    let deleted = 0;
+    for (const session of sessions) {
+      if (deleted >= MAX_STARTUP_HIDDEN_SESSION_SCAVENGE) break;
+      if (!session.title?.startsWith(HIDDEN_SESSION_MARKER_PREFIX)) continue;
+      try {
+        await agent.deleteSession(session.id);
+        deleted += 1;
+      } catch {
+        // Startup scavenging is best effort and must not block activation.
+      }
+    }
+  } catch {
+    // A failed session listing is nonfatal; no configuration is changed.
+  }
+}
+
 /**
  * Bounded runtime status for a ready runtime whose bridge reports no supported
  * claim operation. Availability is never published from compatibility or
@@ -769,40 +814,90 @@ const CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME: ReasoningReviewRunt
  */
 async function selectReasoningReviewController(
   composition: VibefeldActivationComposition,
+  options: RestrictedReviewSelectionOptions = {},
 ): Promise<IReasoningReviewController> {
-  if (composition.state !== "composed") {
-    return new RuntimeReportingReasoningReviewController(
-      new UnavailableReasoningReviewController(),
-      DORMANT_REASONING_REVIEW_RUNTIME,
-    );
-  }
-  const runtime = PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME;
+  let runtime: ReasoningReviewRuntime =
+    composition.state === "composed" ? PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME : DORMANT_REASONING_REVIEW_RUNTIME;
+  let claimAvailable = false;
+  let claimSeam: ReturnType<typeof createCurrentVibefeldClaimProjectionSeam> | undefined;
   try {
-    const preflight = await composition.bridge.preflight();
-    if (preflight.state !== "ready") {
-      return new RuntimeReportingReasoningReviewController(
-        new UnavailableReasoningReviewController(),
-        deriveReasoningReviewRuntime(preflight),
-      );
+    if (composition.state === "composed") {
+      const preflight = await composition.bridge.preflight();
+      if (preflight.state === "ready") {
+        claimSeam = createCurrentVibefeldClaimProjectionSeam(composition.bridge);
+        claimAvailable = claimSeam.getCapability().supported;
+        runtime = claimAvailable
+          ? deriveReasoningReviewRuntime(preflight)
+          : CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME;
+      } else {
+        runtime = deriveReasoningReviewRuntime(preflight);
+      }
     }
-    // Capability discovery is side-effect-free: it never preflights, spawns,
-    // or allocates a proof workspace, so the preflight above stays the only
-    // bridge interaction of the activation.
-    const seam = createCurrentVibefeldClaimProjectionSeam(composition.bridge);
-    if (!seam.getCapability().supported) {
-      return new RuntimeReportingReasoningReviewController(
-        new UnavailableReasoningReviewController(),
-        CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME,
-      );
-    }
-    return new RuntimeReportingReasoningReviewController(
-      new ClaimProjectionReasoningReviewController(seam),
-      deriveReasoningReviewRuntime(preflight),
-    );
   } catch {
     // A rejected preflight is nonfatal; the bounded failure status stays.
   }
+
+  if (claimAvailable && claimSeam) {
+    return new RuntimeReportingReasoningReviewController(
+      new ClaimProjectionReasoningReviewController(claimSeam),
+      runtime,
+    );
+  }
+
+  const model = options.model ?? resolvedRestrictedReviewModel;
+  const createProvider =
+    options.createProvider ??
+    ((pinnedModel: RestrictedReviewModel) => agent?.createRestrictedReviewProvider(pinnedModel));
+  try {
+    const provider = model ? createProvider(model) : undefined;
+    if (provider && (await provider.checkReadiness())) {
+      // Keep the adversarial implementation dormant-by-construction when no
+      // host-pinned model/provider exists on the current host.
+      const [
+        { AdversarialReviewReasoningReviewController },
+        { createAdversarialReviewSeam },
+        { createRestrictedReviewAdapter },
+      ] = await Promise.all([
+        import("./vibefeld/adversarial-review-reasoning-review-controller"),
+        import("./vibefeld/adversarial-review-seam"),
+        import("./vibefeld/restricted-review-adapter"),
+      ]);
+      const adapter = createRestrictedReviewAdapter({ provider });
+      const seam = createAdversarialReviewSeam(adapter);
+      if (seam.getCapability().supported) {
+        restrictedReviewDisposal = adapter.dispose;
+        return new RuntimeReportingReasoningReviewController(
+          new AdversarialReviewReasoningReviewController(seam, {
+            readinessCheck: () => provider.checkReadiness(),
+          }),
+          { state: "available" },
+        );
+      }
+    }
+  } catch {
+    // Restricted review is optional and fails closed.
+  }
   return new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), runtime);
+}
+
+type RestrictedReviewSelectionOptions = Readonly<{
+  model?: RestrictedReviewModel;
+  createProvider?: (model: RestrictedReviewModel) => ReturnType<OpenCodeAgent["createRestrictedReviewProvider"]>;
+}>;
+
+function parseRestrictedReviewModel(value: string | undefined): RestrictedReviewModel | undefined {
+  if (
+    !value ||
+    value.length > 256 ||
+    [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+  )
+    return undefined;
+  const separator = value.indexOf("/");
+  if (separator <= 0 || separator === value.length - 1) return undefined;
+  const providerID = value.slice(0, separator);
+  const modelID = value.slice(separator + 1);
+  if (!providerID || !modelID || providerID.length > 128 || modelID.length > 256) return undefined;
+  return { providerID, modelID };
 }
 
 class LazyChatViewProvider implements vscode.WebviewViewProvider {
@@ -818,8 +913,17 @@ class LazyChatViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
-export function deactivate() {
+export async function deactivate() {
   sandboxController = undefined;
+  const dispose = restrictedReviewDisposal;
+  restrictedReviewDisposal = undefined;
+  if (dispose) {
+    try {
+      await dispose();
+    } catch {
+      // Restricted child cleanup is best effort during shutdown.
+    }
+  }
   agent?.disconnect();
 }
 

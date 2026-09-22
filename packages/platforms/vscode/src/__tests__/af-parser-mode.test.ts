@@ -82,10 +82,20 @@ describe("AF parser mode selection", () => {
       totalEntries: 39,
     });
     expect(factsOf(parsers.init(liveFixture("init.txt"), { exitCode: 0 }))).toEqual({ initialized: true });
+    expect(factsOf(parsers.claim(liveFixture("claim.json"), { exitCode: 0 }))).toEqual({
+      nodeId: "1",
+      role: "prover",
+      claimed: true,
+    });
+    expect(factsOf(parsers.refine(liveFixture("refine.json"), { exitCode: 0 }))).toEqual({
+      parentId: "1",
+      childIds: ["1.1"],
+      childCount: 1,
+    });
     expect(factsOf(parsers.status(liveFixture("status.json"), { exitCode: 0 }))).toEqual({
-      statistics: { totalNodes: 1, totalChallenges: 0, openChallenges: 0 },
+      statistics: { totalNodes: 2, totalChallenges: 0, openChallenges: 0 },
       jobs: { proverJobs: 0, verifierJobs: 1 },
-      nodeCount: 1,
+      nodeCount: 2,
     });
   });
 
@@ -120,12 +130,49 @@ describe("AF parser mode selection", () => {
     });
   });
 
-  it("exposes exactly the four parser operations in both modes and in production", () => {
-    const operations: readonly AfParserOperation[] = ["version", "schema", "init", "status"];
+  it("exposes exactly the six parser operations in both modes and in production", () => {
+    const operations: readonly AfParserOperation[] = ["version", "schema", "init", "claim", "refine", "status"];
     const expected = [...operations].sort();
     expect(Object.keys(selectedParsers("live")).sort()).toEqual(expected);
     expect(Object.keys(selectedParsers("fixture")).sort()).toEqual(expected);
     expect(Object.keys(createProductionAfOutputParsers()).sort()).toEqual(expected);
+  });
+
+  it("keeps the fixture-mode claim and refine parsers closed", () => {
+    const fixtures = selectedParsers("fixture");
+    // The synthetic envelope has no claim or refine section, so the test double
+    // must not accept a fixture envelope or a live shape for those operations.
+    const syntheticClaim = JSON.stringify({
+      fixtureSchema: "af-runtime-fixture-1",
+      node_id: "1",
+      owner: "capture",
+      role: "prover",
+      status: "claimed",
+    });
+    const syntheticRefine = JSON.stringify({
+      fixtureSchema: "af-runtime-fixture-1",
+      children: [{ id: "1.1" }],
+      parent_id: "1",
+      success: true,
+    });
+    const closed = [
+      fixtures.claim(syntheticClaim, { exitCode: 0 }),
+      fixtures.claim(fixture("version.json")),
+      fixtures.claim(liveFixture("claim.json"), { exitCode: 0 }),
+      fixtures.refine(syntheticRefine, { exitCode: 0 }),
+      fixtures.refine(fixture("status.json")),
+      fixtures.refine(liveFixture("refine.json"), { exitCode: 0 }),
+    ];
+    for (const result of closed) expect(result).toEqual(unavailableUnknown);
+    const serialized = JSON.stringify(closed);
+    expect(serialized).not.toContain("af-runtime-fixture");
+    expect(serialized).not.toContain("fixtureSchema");
+    expect(serialized).not.toContain("nodeId");
+
+    // The stored captures still parse in live mode; only fixture mode is closed.
+    const live = selectedParsers("live");
+    expect(live.claim(liveFixture("claim.json"), { exitCode: 0 }).ok).toBe(true);
+    expect(live.refine(liveFixture("refine.json"), { exitCode: 0 }).ok).toBe(true);
   });
 
   it("rejects the synthetic af-runtime-fixture-1 envelope in live mode without falling back", () => {
@@ -176,16 +223,28 @@ describe("AF parser mode selection", () => {
     });
     expect(factsOf(production.schema(liveFixture("schema.json"), { exitCode: 0 })).totalEntries).toBe(39);
     expect(factsOf(production.init(liveFixture("init.txt"), { exitCode: 0 }))).toEqual({ initialized: true });
+    expect(factsOf(production.claim(liveFixture("claim.json"), { exitCode: 0 }))).toEqual({
+      nodeId: "1",
+      role: "prover",
+      claimed: true,
+    });
+    expect(factsOf(production.refine(liveFixture("refine.json"), { exitCode: 0 }))).toEqual({
+      parentId: "1",
+      childIds: ["1.1"],
+      childCount: 1,
+    });
     expect(factsOf(production.status(liveFixture("status.json"), { exitCode: 0 }))).toMatchObject({
-      statistics: { totalNodes: 1, totalChallenges: 0, openChallenges: 0 },
+      statistics: { totalNodes: 2, totalChallenges: 0, openChallenges: 0 },
       jobs: { proverJobs: 0, verifierJobs: 1 },
-      nodeCount: 1,
+      nodeCount: 2,
     });
 
     const rejected = [
       production.version(fixture("version.json")),
       production.schema(fixture("schema.json")),
       production.init(fixture("workspace-init.json")),
+      production.claim(fixture("version.json")),
+      production.refine(fixture("status.json")),
       production.status(fixture("status.json")),
     ];
     for (const result of rejected) expect(result).toEqual(unavailableUnknown);

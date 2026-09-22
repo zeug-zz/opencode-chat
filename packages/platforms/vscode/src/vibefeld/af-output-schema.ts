@@ -312,3 +312,23 @@ export function parseAfStatusOutput(stdout: string, execution: AfOutputExecution
     structuralStatus: null,
   };
 }
+
+/**
+ * Closed fixture-mode test double for `claim`. The synthetic
+ * `af-runtime-fixture-1` envelope deliberately has no claim shape, so this
+ * test-only parser never accepts a fixture or live shape and never invents
+ * facts: every input is a bounded `unknown` failure. Production never selects
+ * it.
+ */
+export function parseAfClaimOutput(_stdout: string, _execution: AfOutputExecution = {}): AfOutputResult<never> {
+  return failure("unknown");
+}
+
+/**
+ * Closed fixture-mode test double for `refine`, closed exactly like
+ * `parseAfClaimOutput`: no synthetic refine shape exists, so every input is a
+ * bounded `unknown` failure rather than invented fixture facts.
+ */
+export function parseAfRefineOutput(_stdout: string, _execution: AfOutputExecution = {}): AfOutputResult<never> {
+  return failure("unknown");
+}

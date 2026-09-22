@@ -42,6 +42,13 @@ export type OpenCodeGuidanceOverlay = {
   command?: Record<string, OpenCodeCommandDefinition>;
 };
 
+export type OpenCodeRestrictedReviewConfiguration = {
+  model: string;
+  prompt: string;
+  maxSteps: number;
+  dynamicToolNames?: readonly string[];
+};
+
 export type OpenCodeLaunchConfiguration = {
   workspacePath: string;
   /** Set by the extension host for every new companion connection. */
@@ -62,4 +69,6 @@ export type OpenCodeLaunchConfiguration = {
   guidanceOverlay?: OpenCodeGuidanceOverlay;
   hindsightCompanionIntegration?: HindsightCompanionIntegration;
   memoryRetentionPolicy?: MemoryRetentionPolicy;
+  /** Host-composed, in-memory-only restricted review agent configuration. */
+  restrictedReview?: OpenCodeRestrictedReviewConfiguration;
 };

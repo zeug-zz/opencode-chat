@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   AF_CAPTURE_AUTHOR,
+  AF_CAPTURE_CLAIM_ROLE,
   AF_CAPTURE_MANIFEST_FILE,
+  AF_CAPTURE_ROOT_NODE_ID,
+  AF_CAPTURE_STATEMENT,
   type AfCaptureOperation,
   type AfCaptureSanitizeResult,
   buildCaptureArgv,
@@ -42,15 +45,47 @@ const statusJson = (): {
     challenges: Array<Record<string, unknown>>;
   };
 
-/** Sanitizes the stored live fixtures so capture-set assembly can be exercised. */
+const CLAIM_CONTEXT = "Node 1 recorded: All primes greater than 2 are odd\nDependencies: none";
+const REFINE_STATEMENT = "Every prime greater than 2 is odd";
+
+/** Synthetic claim shape; the stored claim fixture is produced by the gated capture run. */
+const claimJson = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  context: CLAIM_CONTEXT,
+  expires_at: "2026-09-21T11:23:54Z",
+  node_id: AF_CAPTURE_ROOT_NODE_ID,
+  owner: AF_CAPTURE_AUTHOR,
+  role: AF_CAPTURE_CLAIM_ROLE,
+  status: "claimed",
+  timeout: 300,
+  ...overrides,
+});
+
+/** Synthetic refine shape; the stored refine fixture is produced by the gated capture run. */
+const refineJson = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  children: [{ id: "2", type: "claim", statement: REFINE_STATEMENT, inference: "assumption" }],
+  parent_id: AF_CAPTURE_ROOT_NODE_ID,
+  success: true,
+  ...overrides,
+});
+
+/** Sanitizes the stored live fixtures plus the synthetic claim/refine shapes for set assembly. */
 const sanitizedFixtures = (): Record<AfCaptureOperation, string> => {
   const fixtures: Record<AfCaptureOperation, string> = {
     version: liveFixture("version.json"),
     schema: liveFixture("schema.json"),
     init: liveFixture("init.txt"),
+    claim: JSON.stringify(claimJson()),
+    refine: JSON.stringify(refineJson()),
     status: liveFixture("status.json"),
   };
-  const outputs: Record<AfCaptureOperation, string> = { version: "", schema: "", init: "", status: "" };
+  const outputs: Record<AfCaptureOperation, string> = {
+    version: "",
+    schema: "",
+    init: "",
+    claim: "",
+    refine: "",
+    status: "",
+  };
   for (const shape of CAPTURE_OPERATIONS) {
     outputs[shape.operation] = contentsOf(sanitizeCaptureOutput(shape.operation, fixtures[shape.operation], WORKSPACE));
   }
@@ -58,17 +93,21 @@ const sanitizedFixtures = (): Record<AfCaptureOperation, string> => {
 };
 
 describe("AF live-capture harness", () => {
-  it("pins the four fixed capture command shapes", () => {
+  it("pins the six fixed capture command shapes", () => {
     expect(CAPTURE_OPERATIONS.map(({ operation, file }) => [operation, file])).toEqual([
       ["version", "version.json"],
       ["schema", "schema.json"],
       ["init", "init.txt"],
+      ["claim", "claim.json"],
+      ["refine", "refine.json"],
       ["status", "status.json"],
     ]);
     expect(CAPTURE_OPERATIONS.map(({ argv }) => argv)).toEqual([
       ["version", "--json"],
       ["schema", "--format", "json"],
       ["init", "-c", "<conjecture>", "-a", "<author>", "-d", "<workspace>"],
+      ["claim", "<node-id>", "--owner", "<owner>", "--role", "<role>", "-d", "<workspace>", "--format", "json"],
+      ["refine", "<parent-id>", "<statement>", "--owner", "<owner>", "-d", "<workspace>", "--format", "json"],
       ["status", "-d", "<workspace>", "--format", "json"],
     ]);
   });
@@ -100,8 +139,12 @@ describe("AF live-capture harness", () => {
 
   it("replaces node statements, content hashes, and challenge content with placeholders", () => {
     const status = statusJson();
-    const statement = status.nodes[0].statement as string;
-    const contentHash = status.nodes[0].content_hash as string;
+    // The stored live status fixture is already sanitized, so inject unredacted
+    // values to prove the sanitizer replaces them rather than keeping them.
+    const statement = "All primes greater than 2 are odd";
+    const contentHash = "cfedf56f083914648d5727cb1f99c0b44177b07d8a93fa95792915e6c0fdd9c2";
+    status.nodes[0].statement = statement;
+    status.nodes[0].content_hash = contentHash;
     status.challenges.push({
       id: "1",
       node: "1",
@@ -139,6 +182,84 @@ describe("AF live-capture harness", () => {
     const contents = contentsOf(sanitizeCaptureOutput("status", JSON.stringify(status), WORKSPACE));
     expect(contents).toContain("<statement>");
     expect(contents).not.toContain("super-secret-token");
+  });
+
+  it("redacts claim context and refine child statements before inspection", () => {
+    const claimContents = contentsOf(sanitizeCaptureOutput("claim", JSON.stringify(claimJson()), WORKSPACE));
+    expect(JSON.parse(claimContents)).toEqual({
+      context: "<context>",
+      expires_at: "2026-09-21T11:23:54Z",
+      node_id: "1",
+      owner: "capture",
+      role: "prover",
+      status: "claimed",
+      timeout: 300,
+    });
+    expect(claimContents).not.toContain(CLAIM_CONTEXT);
+    expect(claimContents).not.toContain("All primes greater than 2 are odd");
+
+    const longContext = "n".repeat(8_000);
+    const longContents = contentsOf(
+      sanitizeCaptureOutput("claim", JSON.stringify(claimJson({ context: longContext })), WORKSPACE),
+    );
+    expect(JSON.parse(longContents)).toMatchObject({ context: "<context>" });
+    expect(longContents).not.toContain(longContext);
+
+    const refineContents = contentsOf(sanitizeCaptureOutput("refine", JSON.stringify(refineJson()), WORKSPACE));
+    expect(JSON.parse(refineContents)).toEqual({
+      children: [{ id: "2", type: "claim", statement: "<statement>", inference: "assumption" }],
+      parent_id: "1",
+      success: true,
+    });
+    expect(refineContents).not.toContain(REFINE_STATEMENT);
+  });
+
+  it("rejects unsafe, control-character, shell-token, and oversized claim or refine captures", () => {
+    const unsafeCases: ReadonlyArray<readonly [AfCaptureOperation, string, string]> = [
+      ["claim", JSON.stringify(claimJson({ node_id: "/etc/passwd" })), "/etc/passwd"],
+      ["claim", JSON.stringify(claimJson({ owner: "capture; rm -rf /" })), "capture; rm -rf /"],
+      ["refine", JSON.stringify(refineJson({ parent_id: "1\u0000" })), "\u0000"],
+      [
+        "refine",
+        JSON.stringify(
+          refineJson({ children: [{ id: "2", type: "claim", statement: "child", inference: "be\u0007cause" }] }),
+        ),
+        "\u0007",
+      ],
+    ];
+    for (const [operation, stdout, literal] of unsafeCases) {
+      const result = sanitizeCaptureOutput(operation, stdout, WORKSPACE);
+      expect(result).toEqual({ ok: false, operation, reason: "unsafe-value" });
+      expect(JSON.stringify(result)).not.toContain(literal);
+    }
+
+    const oversizedClaim = { ok: false, operation: "claim", reason: "oversized" } as const;
+    expect(sanitizeCaptureOutput("claim", "x".repeat(32_769), WORKSPACE)).toEqual(oversizedClaim);
+    expect(sanitizeCaptureOutput("claim", JSON.stringify(claimJson({ node_id: "a".repeat(300) })), WORKSPACE)).toEqual(
+      oversizedClaim,
+    );
+    expect(sanitizeCaptureOutput("claim", "{", WORKSPACE)).toEqual({
+      ok: false,
+      operation: "claim",
+      reason: "malformed",
+    });
+
+    const children = Array.from({ length: 257 }, (_, index) => ({
+      id: String(index + 2),
+      type: "claim",
+      statement: "child",
+      inference: "assumption",
+    }));
+    expect(sanitizeCaptureOutput("refine", "x".repeat(32_769), WORKSPACE)).toEqual({
+      ok: false,
+      operation: "refine",
+      reason: "oversized",
+    });
+    expect(sanitizeCaptureOutput("refine", JSON.stringify(refineJson({ children })), WORKSPACE)).toEqual({
+      ok: false,
+      operation: "refine",
+      reason: "oversized",
+    });
   });
 
   it("rejects unsafe values with bounded reasons and never echoes them", () => {
@@ -209,6 +330,8 @@ describe("AF live-capture harness", () => {
       "version.json",
       "schema.json",
       "init.txt",
+      "claim.json",
+      "refine.json",
       "status.json",
       AF_CAPTURE_MANIFEST_FILE,
     ]);
@@ -224,6 +347,8 @@ describe("AF live-capture harness", () => {
         ["af", "version", "--json"],
         ["af", "schema", "--format", "json"],
         ["af", "init", "-c", "<conjecture>", "-a", "<author>", "-d", "<workspace>"],
+        ["af", "claim", "<node-id>", "--owner", "<owner>", "--role", "<role>", "-d", "<workspace>", "--format", "json"],
+        ["af", "refine", "<parent-id>", "<statement>", "--owner", "<owner>", "-d", "<workspace>", "--format", "json"],
         ["af", "status", "-d", "<workspace>", "--format", "json"],
       ],
     });
@@ -231,6 +356,8 @@ describe("AF live-capture harness", () => {
     expect(serialized).not.toContain(WORKSPACE);
     expect(serialized).not.toContain("/Users/");
     expect(serialized).not.toContain("packages/platforms");
+    expect(serialized).not.toContain(CLAIM_CONTEXT);
+    expect(serialized).not.toContain(REFINE_STATEMENT);
     expect(serialized.toLowerCase()).not.toContain("af-runtime-fixture");
   });
 
@@ -279,9 +406,49 @@ describe("AF live-capture harness", () => {
     expect(buildCaptureArgv("init", { workspace: WORKSPACE, conjecture: "All primes greater than 2 are odd" })).toEqual(
       ["init", "-c", "All primes greater than 2 are odd", "-a", AF_CAPTURE_AUTHOR, "-d", WORKSPACE],
     );
+    expect(buildCaptureArgv("claim", { workspace: WORKSPACE })).toEqual([
+      "claim",
+      AF_CAPTURE_ROOT_NODE_ID,
+      "--owner",
+      AF_CAPTURE_AUTHOR,
+      "--role",
+      AF_CAPTURE_CLAIM_ROLE,
+      "-d",
+      WORKSPACE,
+      "--format",
+      "json",
+    ]);
+    expect(buildCaptureArgv("refine", { workspace: `${WORKSPACE}/` })).toEqual([
+      "refine",
+      AF_CAPTURE_ROOT_NODE_ID,
+      AF_CAPTURE_STATEMENT,
+      "--owner",
+      AF_CAPTURE_AUTHOR,
+      "-d",
+      WORKSPACE,
+      "--format",
+      "json",
+    ]);
     expect(AF_CAPTURE_AUTHOR).toBe("capture");
+    expect(AF_CAPTURE_ROOT_NODE_ID).toBe("1");
+    expect(AF_CAPTURE_CLAIM_ROLE).toBe("prover");
+    expect(AF_CAPTURE_STATEMENT).toBe("All primes greater than 2 are odd");
     expect(buildCaptureArgv("init", { workspace: WORKSPACE })).toBeUndefined();
     expect(buildCaptureArgv("init", { workspace: WORKSPACE, conjecture: "rm -rf /; echo" })).toBeUndefined();
+    expect(buildCaptureArgv("claim", { workspace: WORKSPACE, conjecture: "ignored" })).toEqual([
+      "claim",
+      AF_CAPTURE_ROOT_NODE_ID,
+      "--owner",
+      AF_CAPTURE_AUTHOR,
+      "--role",
+      AF_CAPTURE_CLAIM_ROLE,
+      "-d",
+      WORKSPACE,
+      "--format",
+      "json",
+    ]);
+    expect(buildCaptureArgv("claim", { workspace: "" })).toBeUndefined();
+    expect(buildCaptureArgv("refine", { workspace: "tmp/../escape" })).toBeUndefined();
     expect(buildCaptureArgv("status", { workspace: "" })).toBeUndefined();
     expect(buildCaptureArgv("status", { workspace: "tmp/../escape" })).toBeUndefined();
   });
@@ -320,5 +487,10 @@ describe("AF live-capture harness", () => {
     expect(gateIndex).toBeGreaterThan(-1);
     expect(spawnIndex).toBeGreaterThan(-1);
     expect(gateIndex).toBeLessThan(spawnIndex);
+
+    const keepIndex = source.indexOf("OPENCODE_CHAT_KEEP_VIBEFELD_CAPTURE");
+    expect(keepIndex).toBeGreaterThan(-1);
+    expect(keepIndex).toBeLessThan(spawnIndex);
+    expect(source).toMatch(/if\s*\(\s*!KEEP_STAGING_ROOT\s*\)\s*await rm\(/u);
   });
 });

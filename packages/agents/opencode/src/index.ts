@@ -37,6 +37,7 @@ export type {
   OpenCodeLaunchConfiguration,
   OpenCodeNonoLaunch,
   OpenCodePluginEntry,
+  OpenCodeRestrictedReviewConfiguration,
 } from "./launch-config";
 export * from "./mappers";
 export type { McpInventory, McpTransport } from "./mcp-inventory";
@@ -82,3 +83,37 @@ export {
   validateMemoryRetentionSummary,
 } from "./memory-retention-policy";
 export { OpenCodeAgent } from "./opencode-agent";
+export type {
+  RestrictedReviewAgentEntry,
+  RestrictedReviewOverlayInput,
+} from "./restricted-review-overlay";
+export {
+  buildRestrictedReviewAgentEntry,
+  RESTRICTED_REVIEW_AGENT_NAME,
+  RESTRICTED_REVIEW_AUTHORITIES,
+  RESTRICTED_REVIEW_MAX_STEPS,
+  RESTRICTED_REVIEW_PROMPT,
+  RESTRICTED_REVIEW_PROVER_STAGE_INSTRUCTION,
+  RESTRICTED_REVIEW_VERIFIER_STAGE_INSTRUCTION,
+  RestrictedReviewOverlayValidationError,
+  validateRestrictedReviewOverlayInput,
+} from "./restricted-review-overlay";
+export type {
+  CreateRestrictedReviewProviderOptions,
+  RestrictedReviewFailure,
+  RestrictedReviewGeneration,
+  RestrictedReviewModel,
+  RestrictedReviewOperationResult,
+  RestrictedReviewProvenance,
+  RestrictedReviewProvider,
+  RestrictedReviewRole,
+  RestrictedReviewSessionResult,
+  RestrictedReviewTextResult,
+  RestrictedReviewToken,
+} from "./restricted-review-provider";
+export {
+  createRestrictedReviewProvider,
+  MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS,
+  MAX_RESTRICTED_REVIEW_TEXT_LENGTH,
+  mintRestrictedReviewProvenance,
+} from "./restricted-review-provider";

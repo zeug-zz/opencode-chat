@@ -12,6 +12,8 @@ import { type AfResultClassification, classifyAfRuntimeResult } from "./af-runti
 
 const MAX_OUTPUT_BYTES = 32_768;
 const MAX_TEXT_LENGTH = 256;
+/** One refine response is bounded; content beyond the limit is never retained or truncated. */
+const MAX_REFINE_CHILDREN = 256;
 
 const FIXTURE_MARKERS = [
   "af-runtime-fixture",
@@ -27,6 +29,8 @@ const UNSAFE_VALUE =
   /(?:prompt|source[-_ ]?packet|private[-_ ]?reasoning|chain[-_ ]?of[-_ ]?thought|secret|password|token|authorization|credential|api[-_ ]?key)/iu;
 const SHELL_TOKEN = /[;&|`$\n\r]/u;
 const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:[\\/]/u;
+/** AF node identifiers are dotted decimal paths such as `1` or `1.2.3`. */
+const NODE_ID_PATTERN = /^[0-9]+(?:\.[0-9]+)*$/u;
 const SUPPORTED_LIVE_PLATFORMS = ["darwin", "linux"] as const;
 const SUPPORTED_LIVE_ARCHITECTURES = ["arm64", "x64", "arm", "ia32"] as const;
 
@@ -70,6 +74,18 @@ export type AfLiveStatusFacts = Readonly<{
   statistics: Readonly<{ totalNodes: number; totalChallenges: number; openChallenges: number }>;
   jobs: Readonly<{ proverJobs: number; verifierJobs: number }>;
   nodeCount: number;
+}>;
+
+export type AfLiveClaimFacts = Readonly<{
+  nodeId: string;
+  role: "prover" | "verifier";
+  claimed: true;
+}>;
+
+export type AfLiveRefineFacts = Readonly<{
+  parentId: string;
+  childIds: readonly string[];
+  childCount: number;
 }>;
 
 export type AfLiveHostPlatform = Readonly<{
@@ -141,6 +157,17 @@ const readLiveText = (value: unknown): AfLiveTextRead => {
   if (value === undefined || value === null) return { ok: false, reason: "unknown" };
   if (!isBoundedText(value) || !isSafeText(value)) return { ok: false, reason: "audit-failure" };
   return { ok: true, value };
+};
+
+/**
+ * Required node identifiers keep the `readLiveText` conventions and additionally
+ * accept only the observed dotted-decimal shape. A present but unrecognized
+ * shape is unrecognized evidence, not an unsafe value.
+ */
+const readLiveNodeId = (value: unknown): AfLiveTextRead => {
+  const read = readLiveText(value);
+  if (!read.ok) return read;
+  return NODE_ID_PATTERN.test(read.value) ? read : { ok: false, reason: "unknown" };
 };
 
 const failedReadReason = (parts: readonly AfLiveTextRead[]): "unknown" | "audit-failure" | undefined => {
@@ -244,6 +271,59 @@ export function parseLiveStatusOutput(
       jobs: { proverJobs, verifierJobs },
       nodeCount: nodes.length,
     },
+    structuralStatus: null,
+  };
+}
+
+/**
+ * Normalizes a `af claim ... --format json` result. Only the claimed status,
+ * the bounded node identifier, and the allowlisted role become facts; `context`,
+ * `owner`, `expires_at`, `timeout`, and every other field are discarded.
+ */
+export function parseLiveClaimOutput(
+  stdout: string,
+  execution: AfLiveOutputExecution = {},
+): AfLiveOutputResult<AfLiveClaimFacts> {
+  const parsed = parseBoundedJson(stdout, execution);
+  if (!parsed.ok) return parsed;
+  const status = readLiveText(parsed.facts.status);
+  if (!status.ok) return failure(status.reason);
+  if (status.value !== "claimed") return failure("unknown");
+  const nodeId = readLiveNodeId(parsed.facts.node_id);
+  if (!nodeId.ok) return failure(nodeId.reason);
+  const role = readLiveText(parsed.facts.role);
+  if (!role.ok) return failure(role.reason);
+  if (role.value !== "prover" && role.value !== "verifier") return failure("unknown");
+  return { ok: true, facts: { nodeId: nodeId.value, role: role.value, claimed: true }, structuralStatus: null };
+}
+
+/**
+ * Normalizes a `af refine ... --format json` result. Only the bounded parent
+ * identifier, the ordered bounded child identifiers, and their count become
+ * facts; `type`, `statement`, `inference`, and every other field are discarded.
+ */
+export function parseLiveRefineOutput(
+  stdout: string,
+  execution: AfLiveOutputExecution = {},
+): AfLiveOutputResult<AfLiveRefineFacts> {
+  const parsed = parseBoundedJson(stdout, execution);
+  if (!parsed.ok) return parsed;
+  if (parsed.facts.success !== true) return failure("unknown");
+  const parentId = readLiveNodeId(parsed.facts.parent_id);
+  if (!parentId.ok) return failure(parentId.reason);
+  const children = parsed.facts.children;
+  if (!Array.isArray(children) || children.length === 0) return failure("unknown");
+  if (children.length > MAX_REFINE_CHILDREN) return failure("oversized");
+  const childIds: string[] = [];
+  for (const child of children) {
+    if (!isRecord(child)) return failure("unknown");
+    const childId = readLiveNodeId(child.id);
+    if (!childId.ok) return failure(childId.reason);
+    childIds.push(childId.value);
+  }
+  return {
+    ok: true,
+    facts: { parentId: parentId.value, childIds, childCount: childIds.length },
     structuralStatus: null,
   };
 }

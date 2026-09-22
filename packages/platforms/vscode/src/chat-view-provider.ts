@@ -32,6 +32,7 @@ import type {
   AutomaticRoutingStructuralSignals,
   AutomaticRoutingWorkMode,
 } from "./vibefeld/automatic-routing-policy";
+import { hiddenSessionRegistry } from "./vibefeld/hidden-session-registry";
 import type { QualificationRecorderSeam } from "./vibefeld/qualification-recorder";
 import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
 import { buildReasoningReviewSourcePacket } from "./vibefeld/reasoning-review-source-packet";
@@ -353,6 +354,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // SSE イベントを Webview に転送する
     this.agent.onEvent((event) => {
+      const properties = event.properties as unknown as { sessionID?: string; info?: { id?: string; title?: string } };
+      const sessionId = properties.sessionID ?? properties.info?.id;
+      const title = properties.info?.title;
+      if (
+        (sessionId !== undefined && hiddenSessionRegistry.isHiddenSessionId(sessionId)) ||
+        (title !== undefined && hiddenSessionRegistry.suppressPendingEvent(title))
+      ) {
+        return;
+      }
       let eventForWebview = event;
       if (event.type === "permission.asked" && event.properties.permission === MEMORY_RETENTION_PERMISSION) {
         const metadata = event.properties.metadata;
@@ -531,6 +541,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             sessionId: message.sessionId,
             messageId: message.messageId,
             sourceText: buildReasoningReviewSourcePacket(targetMessage),
+            invocation: "manual",
           });
           if (
             this.inFlightReasoningReviews.get(key)?.token !== review.token ||
@@ -598,7 +609,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         ) {
           break;
         }
-        this.postMessage({ type: "sessions", sessions });
+        this.postMessage({ type: "sessions", sessions: hiddenSessionRegistry.filterSessions(sessions) });
         break;
       }
       case "listSessions": {
@@ -611,7 +622,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         ) {
           break;
         }
-        this.postMessage({ type: "sessions", sessions });
+        this.postMessage({ type: "sessions", sessions: hiddenSessionRegistry.filterSessions(sessions) });
         break;
       }
       case "selectSession": {
@@ -645,7 +656,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           listRequestGeneration === this.sessionListRequestGeneration &&
           (!deletesActiveSession || operationGeneration === this.sessionOperationGeneration)
         ) {
-          this.postMessage({ type: "sessions", sessions });
+          this.postMessage({ type: "sessions", sessions: hiddenSessionRegistry.filterSessions(sessions) });
         }
         break;
       }
@@ -865,7 +876,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         ) {
           break;
         }
-        this.postMessage({ type: "sessions", sessions: forkedSessions });
+        this.postMessage({
+          type: "sessions",
+          sessions: hiddenSessionRegistry.filterSessions(forkedSessions),
+        });
         break;
       }
       case "getSessionDiff": {
@@ -885,7 +899,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "getAgents": {
         const agents = await this.agent.getAgents();
-        this.postMessage({ type: "agents", agents });
+        this.postMessage({ type: "agents", agents: hiddenSessionRegistry.filterAgents(agents) });
         break;
       }
       case "getSkills": {
@@ -995,7 +1009,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } catch {}
 
     if (sessionOperationIsCurrent && listRequestIsCurrent) {
-      this.postMessage({ type: "sessions", sessions });
+      this.postMessage({ type: "sessions", sessions: hiddenSessionRegistry.filterSessions(sessions) });
     }
     if (sessionOperationIsCurrent && this.activeSession?.id === activeSessionId) {
       await this.publishActiveSession(this.activeSession, operationGeneration, activeSessionId);
@@ -1007,7 +1021,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       default: providersData.default,
       configModel,
     });
-    this.postMessage({ type: "agents", agents });
+    this.postMessage({ type: "agents", agents: hiddenSessionRegistry.filterAgents(agents) });
     this.postMessage({ type: "mcpStatus", status: mcpStatus });
     this.postMessage({ type: "memoryStatus", status: this.memoryProviderStatus });
     if (chatSandboxStatus) {
@@ -1037,6 +1051,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     ) {
       return false;
     }
+    if (session && hiddenSessionRegistry.isHiddenSessionId(session.id)) return false;
 
     if (this.activeSession?.id !== session?.id) {
       this.clearAutomaticRoutingMetadata();
@@ -1238,6 +1253,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         sessionId: binding.sessionId,
         messageId: binding.messageId,
         sourceText: buildReasoningReviewSourcePacket(targetMessage),
+        invocation: "automatic",
       });
       if (this.activeSession?.id !== binding.sessionId || this.sessionOperationGeneration !== binding.generation) {
         this.automaticRoutingLifecycle.cancel(started.attemptId, binding);

@@ -95,7 +95,6 @@ export class AdversarialReviewOrchestrator {
     }, this.timeoutMs);
     let proverContext: ReviewContextMetadata | undefined;
     let verifierContext: ReviewContextMetadata | undefined;
-    let completed = false;
     let outcome: AdversarialReviewOrchestrationResult | undefined;
 
     const cleanup = async (): Promise<BoundedAdversarialReviewFailure | undefined> => {
@@ -187,7 +186,6 @@ export class AdversarialReviewOrchestrator {
           break;
         }
 
-        completed = true;
         outcome = {
           ok: true,
           value: {
@@ -200,10 +198,8 @@ export class AdversarialReviewOrchestrator {
       } finally {
         clearTimeout(timer);
         signal?.removeEventListener("abort", forwardAbort);
-        if (controller.signal.aborted || !completed) {
-          const cleanupFailure = await cleanup();
-          if (cleanupFailure) outcome = failure(cleanupFailure.phase, "cleanup", "audit_failed");
-        }
+        const cleanupFailure = await cleanup();
+        if (cleanupFailure) outcome = failure(cleanupFailure.phase, "cleanup", "audit_failed");
       }
     }
     return outcome ?? failure("host", "model_failure");

@@ -13,7 +13,7 @@ import {
   createProductionAfOutputParsers,
 } from "../vibefeld/af-parser-mode";
 import type { AfProcessResult } from "../vibefeld/af-process-executor";
-import { VibefeldRuntimeBridge } from "../vibefeld/vibefeld-runtime";
+import { type AfBridgeOperation, VibefeldRuntimeBridge } from "../vibefeld/vibefeld-runtime";
 
 const live = (name: string) =>
   readFileSync(new URL(`./fixtures/vibefeld/live/af-0.1.11/${name}`, import.meta.url), "utf8");
@@ -44,7 +44,10 @@ const schema: AfLiveSchemaFacts = {
 };
 const compatibility = { version: "0.1.11", commit: "611291b", format: "1.1", policy: "0.1.9" } as const;
 
-const success = <T>(operation: "version" | "schema" | "init" | "status", facts: T): AfProcessResult<T> => ({
+const success = <T>(
+  operation: "version" | "schema" | "init" | "claim" | "refine" | "status",
+  facts: T,
+): AfProcessResult<T> => ({
   ok: true,
   operation,
   facts,
@@ -92,14 +95,23 @@ const makeBridge = (
   };
 };
 
+type LiveCaptureOutputs = Readonly<{
+  version: string;
+  schema: string;
+  init?: string;
+  claim?: string;
+  refine?: string;
+  status?: string;
+}>;
+
 /** A fake dedicated policy that replays sanitized live captures; it never spawns. */
-const createLiveCapturePolicy = (
-  outputs: Readonly<{ version: string; schema: string; init?: string; status?: string }>,
-) => {
+const createLiveCapturePolicy = (outputs: LiveCaptureOutputs) => {
   const preflightLaunches: Array<AfPreflightDescriptor> = [];
   const launches: Array<AfPolicyDescriptor> = [];
   const stdoutFor = (operation: string | undefined): string | undefined => {
     if (operation === "init") return outputs.init;
+    if (operation === "claim") return outputs.claim;
+    if (operation === "refine") return outputs.refine;
     if (operation === "status") return outputs.status;
     if (operation === "schema") return outputs.schema;
     return outputs.version;
@@ -121,9 +133,7 @@ const createLiveCapturePolicy = (
 };
 
 /** Bridge with the real host-private executor and a fake policy; nothing spawns. */
-const makeLiveCaptureBridge = (
-  outputs: Readonly<{ version: string; schema: string; init?: string; status?: string }>,
-) => {
+const makeLiveCaptureBridge = (outputs: LiveCaptureOutputs) => {
   const { adapter, preflightLaunches, launches } = createLiveCapturePolicy(outputs);
   const proofStore = {
     allocate: vi.fn(async () => ({ token: "opaque" }) as never),
@@ -186,6 +196,33 @@ describe("Vibefeld runtime bridge", () => {
     expect(policy.launchPreflight).not.toHaveBeenCalled();
   });
 
+  it("reports the exact frozen claim capability with no preflight, spawn, allocation, or state change", () => {
+    const executor = { isInvalidated: false, executePreflight: vi.fn(), execute: vi.fn() };
+    const allocate = vi.fn(async () => ({ token: "opaque" }) as never);
+    const resolveExecutable = vi.fn(async () => "/private/af");
+    const policy = readyPolicy();
+    const { bridge, proofStore, createExecutor } = makeBridge(executor, allocate, resolveExecutable, { policy });
+
+    expect(bridge.getState()).toBe("dormant");
+    const capability = bridge.getClaimCapability();
+    expect(capability).toEqual({ supported: true, operation: "claim_projection" });
+    expect(Object.keys(capability).sort()).toEqual(["operation", "supported"]);
+    expect(Object.isFrozen(capability)).toBe(true);
+    expect(bridge.getClaimCapability()).toBe(capability);
+    expect(bridge.getState()).toBe("dormant");
+
+    expect(resolveExecutable).not.toHaveBeenCalled();
+    expect(allocate).not.toHaveBeenCalled();
+    expect(proofStore.resolvePath).not.toHaveBeenCalled();
+    expect(proofStore.cleanup).not.toHaveBeenCalled();
+    expect(createExecutor).not.toHaveBeenCalled();
+    expect(executor.executePreflight).not.toHaveBeenCalled();
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(policy.launch).not.toHaveBeenCalled();
+    expect(policy.launchPreflight).not.toHaveBeenCalled();
+    expect(JSON.stringify(capability)).not.toMatch(/(?:path|version|executable|workspace|error|profile)/iu);
+  });
+
   it("reaches ready only after live compatibility and returns the host-private metadata", async () => {
     const executor = {
       isInvalidated: false,
@@ -245,9 +282,9 @@ describe("Vibefeld runtime bridge", () => {
     expect(status).toMatchObject({
       state: "ready",
       facts: {
-        statistics: { totalNodes: 1, totalChallenges: 0, openChallenges: 0 },
+        statistics: { totalNodes: 2, totalChallenges: 0, openChallenges: 0 },
         jobs: { proverJobs: 0, verifierJobs: 1 },
-        nodeCount: 1,
+        nodeCount: 2,
       },
     });
     expect(proofStore.allocate).toHaveBeenCalledTimes(1);
@@ -441,7 +478,7 @@ describe("Vibefeld runtime bridge", () => {
       executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
         success(operation, operation === "version" ? version : schema),
       ),
-      execute: vi.fn(async (operation: { operation: "init" | "status" }) =>
+      execute: vi.fn(async (operation: { operation: "init" | "claim" | "refine" | "status" }) =>
         success(operation.operation, operation.operation === "init" ? initFacts : statusFacts),
       ),
     };
@@ -459,6 +496,144 @@ describe("Vibefeld runtime bridge", () => {
     expect(executor.execute).toHaveBeenCalledTimes(2);
     expectBoundedResult(status, ["/private"]);
   });
+
+  it("keeps claim, refine, and status unavailable until init, then returns parsed claim/refine facts", async () => {
+    const { bridge, proofStore, launches } = makeLiveCaptureBridge({
+      version: live("version.json"),
+      schema: live("schema.json"),
+      init: live("init.txt"),
+      claim: live("claim.json"),
+      refine: live("refine.json"),
+      status: live("status.json"),
+    });
+    await bridge.preflight();
+
+    expect(await bridge.run({ operation: "claim", nodeId: "1", role: "prover" })).toEqual({
+      state: "ready",
+      reason: "operation-not-ready",
+      diagnostic: "operation",
+      structuralStatus: null,
+    });
+    expect(await bridge.run({ operation: "refine", parentId: "1", statements: ["bounded"] })).toEqual({
+      state: "ready",
+      reason: "operation-not-ready",
+      diagnostic: "operation",
+      structuralStatus: null,
+    });
+    expect(await bridge.run({ operation: "status" })).toEqual({
+      state: "ready",
+      reason: "operation-not-ready",
+      diagnostic: "operation",
+      structuralStatus: null,
+    });
+    expect(launches).toHaveLength(0);
+    expect(proofStore.allocate).toHaveBeenCalledTimes(1);
+
+    const init = await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+    expect(init).toMatchObject({ state: "ready", facts: { initialized: true }, structuralStatus: null });
+
+    const claim = await bridge.run({ operation: "claim", nodeId: "1", role: "prover" });
+    const refine = await bridge.run({ operation: "refine", parentId: "1", statements: ["bounded"] });
+    const status = await bridge.run({ operation: "status" });
+
+    expect(claim).toMatchObject({ state: "ready", facts: { nodeId: "1", role: "prover", claimed: true } });
+    expect(refine).toMatchObject({ state: "ready", facts: { parentId: "1", childIds: ["1.1"], childCount: 1 } });
+    expect(status).toMatchObject({ state: "ready", facts: { nodeCount: 2 } });
+    for (const value of [init, claim, refine, status]) {
+      expect(value.structuralStatus).toBeNull();
+      expectBoundedResult(value, ["/private", "<statement>", "<context>", "capture"]);
+    }
+    expect(launches.map((descriptor) => descriptor.argv[1])).toEqual(["init", "claim", "refine", "status"]);
+  });
+
+  const failingClaim: AfBridgeOperation = { operation: "claim", nodeId: "1", role: "prover" };
+  const failingRefine: AfBridgeOperation = { operation: "refine", parentId: "1", statements: ["bounded"] };
+
+  it.each([
+    ["claim", failingClaim],
+    ["refine", failingRefine],
+  ] as const)(
+    "maps %s failures to the bounded unavailable result and refuses further work",
+    async (_name, operation) => {
+      const executor = {
+        isInvalidated: false,
+        executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+          success(operation, operation === "version" ? version : schema),
+        ),
+        execute: vi.fn(async (value: { operation: string }) =>
+          value.operation === "init"
+            ? success("init", { initialized: true })
+            : ({
+                ok: false,
+                classification: { outcome: "unavailable", reason: "non-zero", structuralStatus: null },
+                diagnostic: "non-zero",
+              } as AfProcessResult),
+        ),
+      };
+      const { bridge } = makeBridge(executor);
+      await bridge.preflight();
+      await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+
+      const failed = await bridge.run(operation);
+      expect(failed).toEqual({
+        state: "unavailable",
+        reason: "non-zero",
+        diagnostic: "operation",
+        structuralStatus: null,
+      });
+      expectBoundedResult(failed, ["/private"]);
+      expect(await bridge.run(operation)).toEqual({
+        state: "unavailable",
+        reason: "operation-not-ready",
+        diagnostic: "operation",
+        structuralStatus: null,
+      });
+      expect(executor.execute).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([
+    ["claim", failingClaim],
+    ["refine", failingRefine],
+  ] as const)(
+    "maps %s audit failures to the bounded audit-failed result and refuses further work",
+    async (_name, operation) => {
+      const executor = {
+        isInvalidated: false,
+        executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+          success(operation, operation === "version" ? version : schema),
+        ),
+        execute: vi.fn(async (value: { operation: string }) =>
+          value.operation === "init"
+            ? success("init", { initialized: true })
+            : ({
+                ok: false,
+                classification: { outcome: "audit-failed", reason: "audit-failure", structuralStatus: null },
+                diagnostic: "cleanup",
+              } as AfProcessResult),
+        ),
+      };
+      const { bridge } = makeBridge(executor);
+      await bridge.preflight();
+      await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+
+      const failed = await bridge.run(operation);
+      expect(failed).toEqual({
+        state: "audit-failed",
+        reason: "cleanup-failure",
+        diagnostic: "cleanup",
+        structuralStatus: null,
+      });
+      expectBoundedResult(failed, ["/private"]);
+      expect(await bridge.run(operation)).toEqual({
+        state: "audit-failed",
+        reason: "audit-failure",
+        diagnostic: "audit",
+        structuralStatus: null,
+      });
+      expect(executor.execute).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("passes only the allocated root to the private executor and never returns that path", async () => {
     const executor = {
@@ -543,5 +718,253 @@ describe("Vibefeld runtime bridge", () => {
     expect(teardown).toMatchObject({ state: "audit-failed", reason: "cleanup-failure", structuralStatus: null });
     expect(await failing.bridge.run({ operation: "status" })).toMatchObject({ state: "audit-failed" });
     expectBoundedResult(teardown, ["/private"]);
+  });
+
+  it("reuses the preflight-allocated root until a projection initializes it", async () => {
+    const executor = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? version : schema),
+      ),
+      execute: vi.fn(),
+    };
+    const { bridge, proofStore, createExecutor } = makeBridge(executor);
+
+    expect(await bridge.beginReview()).toEqual({
+      state: "unavailable",
+      reason: "operation-not-ready",
+      diagnostic: "operation",
+      structuralStatus: null,
+    });
+    expect(proofStore.allocate).not.toHaveBeenCalled();
+
+    await bridge.preflight();
+    const review = await bridge.beginReview();
+    expect(review).toEqual({ state: "ready", compatibility, structuralStatus: null });
+    expectBoundedResult(review, ["/private", "/private/af"]);
+    expect(proofStore.allocate).toHaveBeenCalledTimes(1);
+    expect(proofStore.resolvePath).toHaveBeenCalledTimes(1);
+    expect(proofStore.cleanup).not.toHaveBeenCalled();
+    expect(createExecutor).toHaveBeenCalledTimes(2);
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses beginReview once the executor is invalidated without touching the workspace", async () => {
+    const executor = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? version : schema),
+      ),
+      execute: vi.fn(),
+    };
+    const { bridge, proofStore } = makeBridge(executor);
+    await bridge.preflight();
+
+    executor.isInvalidated = true;
+    expect(await bridge.beginReview()).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expect(proofStore.cleanup).not.toHaveBeenCalled();
+    expect(proofStore.allocate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rotates to a fresh contained root once a projection initialized the current one", async () => {
+    const policy = readyPolicy();
+    const executor = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? version : schema),
+      ),
+      execute: vi.fn(async (operation: { operation: "init" | "claim" | "refine" | "status" }) =>
+        success(
+          operation.operation,
+          operation.operation === "init"
+            ? { initialized: true as const }
+            : { nodeId: "1", role: "prover" as const, claimed: true as const },
+        ),
+      ),
+    };
+    let allocations = 0;
+    const allocate = vi.fn(async () => {
+      allocations += 1;
+      return { token: `root-${allocations}` } as never;
+    });
+    const proofStore = {
+      allocate,
+      resolvePath: vi.fn((handle: unknown) => `/private/${(handle as { token: string }).token}`),
+      cleanup: vi.fn(async () => ({ ok: true as const })),
+    };
+    const createExecutor = vi.fn(() => executor);
+    const bridge = new VibefeldRuntimeBridge({
+      platform: "darwin",
+      architecture: "arm64",
+      resolveExecutable: vi.fn(async () => "/private/af"),
+      policy,
+      proofStore,
+      preflightCwd: "/private/preflight",
+      createExecutor,
+    });
+
+    await bridge.preflight();
+    await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+    const rotated = await bridge.beginReview();
+
+    expect(rotated).toEqual({ state: "ready", compatibility, structuralStatus: null });
+    expectBoundedResult(rotated, ["/private", "/private/af"]);
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(proofStore.cleanup).toHaveBeenCalledWith({ token: "root-1" });
+    expect(allocate).toHaveBeenCalledTimes(2);
+    expect(proofStore.resolvePath).toHaveBeenLastCalledWith({ token: "root-2" });
+    expect(createExecutor).toHaveBeenCalledTimes(3);
+    expect(createExecutor.mock.calls.at(-1)?.[0]).toMatchObject({
+      adapter: policy,
+      executable: "/private/af",
+      workspace: "/private/root-2",
+    });
+    expect(createExecutor.mock.calls.at(-1)?.[0].parsers).toBe(createProductionAfOutputParsers());
+
+    expect(await bridge.run({ operation: "claim", nodeId: "1", role: "prover" })).toEqual({
+      state: "ready",
+      reason: "operation-not-ready",
+      diagnostic: "operation",
+      structuralStatus: null,
+    });
+    const init = await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+    const claim = await bridge.run({ operation: "claim", nodeId: "1", role: "prover" });
+    expect(init).toMatchObject({ state: "ready", facts: { initialized: true }, structuralStatus: null });
+    expect(claim).toMatchObject({
+      state: "ready",
+      facts: { nodeId: "1", role: "prover", claimed: true },
+      structuralStatus: null,
+    });
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(proofStore.allocate).toHaveBeenCalledTimes(2);
+    expect(executor.execute).toHaveBeenCalledTimes(3);
+  });
+
+  it("fails closed as audit-failed when rotation cleanup fails and never retries it", async () => {
+    const executor = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? version : schema),
+      ),
+      execute: vi.fn(async () => success("init", { initialized: true })),
+    };
+    const { bridge, proofStore } = makeBridge(executor);
+    await bridge.preflight();
+    await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+    proofStore.cleanup.mockResolvedValue({ ok: false, code: "cleanup-failure" });
+
+    const failed = await bridge.beginReview();
+    expect(failed).toEqual({
+      state: "audit-failed",
+      reason: "cleanup-failure",
+      diagnostic: "cleanup",
+      structuralStatus: null,
+    });
+    expectBoundedResult(failed, ["/private", "/private/review-root", "/private/af"]);
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(proofStore.allocate).toHaveBeenCalledTimes(1);
+
+    expect(await bridge.beginReview()).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expect(await bridge.run({ operation: "status" })).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(proofStore.allocate).toHaveBeenCalledTimes(1);
+    expect(executor.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed as audit-failed when rotation allocation fails and never allocates again", async () => {
+    const executor = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? version : schema),
+      ),
+      execute: vi.fn(async () => success("init", { initialized: true })),
+    };
+    let allocations = 0;
+    const allocate = vi.fn(async () => {
+      allocations += 1;
+      if (allocations === 2) throw new Error("raw allocation path detail");
+      return { token: "opaque" } as never;
+    });
+    const { bridge, proofStore } = makeBridge(executor, allocate);
+    await bridge.preflight();
+    await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+
+    const failed = await bridge.beginReview();
+    expect(failed).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expectBoundedResult(failed, ["/private", "raw allocation path detail"]);
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(allocate).toHaveBeenCalledTimes(2);
+
+    expect(await bridge.beginReview()).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expect(await bridge.run({ operation: "claim", nodeId: "1", role: "prover" })).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(allocate).toHaveBeenCalledTimes(2);
+    expect(executor.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed as audit-failed when the rotated root cannot be rebound", async () => {
+    const executor = {
+      isInvalidated: false,
+      executePreflight: vi.fn(async ({ operation }: { operation: "version" | "schema" }) =>
+        success(operation, operation === "version" ? version : schema),
+      ),
+      execute: vi.fn(async () => success("init", { initialized: true })),
+    };
+    const { bridge, proofStore, createExecutor } = makeBridge(executor);
+    await bridge.preflight();
+    await bridge.run({ operation: "init", conjecture: "bounded", author: "host" });
+    createExecutor.mockImplementationOnce(() => {
+      throw new Error("raw rebinding failure detail");
+    });
+
+    const failed = await bridge.beginReview();
+    expect(failed).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expectBoundedResult(failed, ["/private", "raw rebinding failure detail"]);
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(proofStore.allocate).toHaveBeenCalledTimes(2);
+
+    expect(await bridge.beginReview()).toEqual({
+      state: "audit-failed",
+      reason: "audit-failure",
+      diagnostic: "audit",
+      structuralStatus: null,
+    });
+    expect(proofStore.cleanup).toHaveBeenCalledTimes(1);
+    expect(proofStore.allocate).toHaveBeenCalledTimes(2);
   });
 });

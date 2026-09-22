@@ -14,6 +14,9 @@ import * as vscode from "vscode";
 export const VIBEFELD_CONFIGURATION = "opencode-chat";
 export const VIBEFELD_ENABLED_SETTING = "vibefeld.enabled";
 export const VIBEFELD_WORKSPACE_OPT_OUT_SETTING = "vibefeld.workspaceOptOut";
+export const VIBEFELD_AF_PATH_SETTING = "vibefeld.afPath";
+
+const VIBEFELD_AF_PATH_MAX_LENGTH = 4_096;
 
 export type VibefeldPreference = {
   userEnabled: boolean;
@@ -33,6 +36,16 @@ export const DEFAULT_VIBEFELD_PREFERENCE: VibefeldPreference = {
 function readBoolean(key: string, fallback: boolean, scope?: vscode.ConfigurationScope): boolean {
   const stored = vscode.workspace.getConfiguration(VIBEFELD_CONFIGURATION, scope).get<unknown>(key);
   return typeof stored === "boolean" ? stored : fallback;
+}
+
+/** Read the optional host-configured AF executable path without accepting arbitrary input. */
+export function readVibefeldAfPath(scope?: vscode.ConfigurationScope): string | undefined {
+  const stored = vscode.workspace
+    .getConfiguration(VIBEFELD_CONFIGURATION, scope)
+    .get<unknown>(VIBEFELD_AF_PATH_SETTING);
+  if (typeof stored !== "string") return undefined;
+  const trimmed = stored.trim();
+  return trimmed.length > 0 && trimmed.length <= VIBEFELD_AF_PATH_MAX_LENGTH ? trimmed : undefined;
 }
 
 /**

@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  type AfLiveClaimFacts,
   type AfLiveOutputResult,
+  type AfLiveRefineFacts,
+  parseLiveClaimOutput,
   parseLiveInitOutput,
+  parseLiveRefineOutput,
   parseLiveSchemaOutput,
   parseLiveStatusOutput,
   parseLiveVersionOutput,
@@ -76,9 +80,9 @@ describe("AF live output parsers", () => {
     expect(result).toEqual({
       ok: true,
       facts: {
-        statistics: { totalNodes: 1, totalChallenges: 0, openChallenges: 0 },
+        statistics: { totalNodes: 2, totalChallenges: 0, openChallenges: 0 },
         jobs: { proverJobs: 0, verifierJobs: 1 },
-        nodeCount: 1,
+        nodeCount: 2,
       },
       structuralStatus: null,
     });
@@ -206,7 +210,7 @@ describe("AF live output parsers", () => {
     expect(manifest.runtime.go_version).toBe(versionFacts.goVersion);
     expect(manifest.runtime.format).toBe(versionFacts.format);
     expect(manifest.runtime.policy).toBe(versionFacts.policy);
-    expect(manifest.commands).toHaveLength(4);
+    expect(manifest.commands).toHaveLength(6);
   });
 
   it("has no process launch, filesystem, network, or fixture-envelope dependency in source", () => {
@@ -231,5 +235,169 @@ describe("AF live output parsers", () => {
     }
     expect(source).not.toMatch(/process\.(?:platform|arch|env|argv)/u);
     expect(source).toContain("classifyAfRuntimeResult");
+  });
+
+  it("normalizes the live claim capture into bounded host-private facts", () => {
+    const result = parseLiveClaimOutput(liveFixture("claim.json"), { exitCode: 0 });
+    expect(result).toEqual({
+      ok: true,
+      facts: { nodeId: "1", role: "prover", claimed: true },
+      structuralStatus: null,
+    });
+    const facts: AfLiveClaimFacts = factsOf(result);
+    expect(Object.keys(facts)).toEqual(["nodeId", "role", "claimed"]);
+    const serialized = JSON.stringify(facts);
+    for (const discarded of ["context", "<context>", "capture", "expires_at", "timeout", "owner"]) {
+      expect(serialized).not.toContain(discarded);
+    }
+  });
+
+  it("normalizes the live refine capture into ordered bounded child facts", () => {
+    const result = parseLiveRefineOutput(liveFixture("refine.json"), { exitCode: 0 });
+    expect(result).toEqual({
+      ok: true,
+      facts: { parentId: "1", childIds: ["1.1"], childCount: 1 },
+      structuralStatus: null,
+    });
+    const facts: AfLiveRefineFacts = factsOf(result);
+    expect(Object.keys(facts)).toEqual(["parentId", "childIds", "childCount"]);
+    const serialized = JSON.stringify(facts);
+    for (const discarded of ["context", "capture", "statement", "<statement>", "inference", "type"]) {
+      expect(serialized).not.toContain(discarded);
+    }
+  });
+
+  it("keeps refine child ids in response order and discards child content", () => {
+    const refine = readJson("refine.json");
+    const children = [
+      { id: "1.3", type: "claim", statement: "<statement>", inference: "assumption" },
+      { id: "1.1", type: "claim", statement: "<statement>", inference: "assumption" },
+      { id: "1.2.1", type: "claim", statement: "<statement>", inference: "assumption" },
+    ];
+    const result = parseLiveRefineOutput(JSON.stringify({ ...refine, children }), { exitCode: 0 });
+    expect(result).toEqual({
+      ok: true,
+      facts: { parentId: "1", childIds: ["1.3", "1.1", "1.2.1"], childCount: 3 },
+      structuralStatus: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("<statement>");
+  });
+
+  it("bounds the refine child count without retaining or truncating content", () => {
+    const refine = readJson("refine.json");
+    const atLimit = Array.from({ length: 256 }, (_, index) => ({ id: `1.${index + 1}` }));
+    const facts = factsOf(parseLiveRefineOutput(JSON.stringify({ ...refine, children: atLimit }), { exitCode: 0 }));
+    expect(facts.childCount).toBe(256);
+    expect(facts.childIds).toHaveLength(256);
+    expect(facts.childIds[255]).toBe("1.256");
+    const overLimit = Array.from({ length: 257 }, (_, index) => ({ id: `1.${index + 1}` }));
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, children: overLimit }), { exitCode: 0 })).toEqual({
+      ok: false,
+      failure: { outcome: "unavailable", reason: "oversized", structuralStatus: null },
+    });
+  });
+
+  it("rejects fixture-shaped claim and refine evidence in live mode", () => {
+    const rejected = { ok: false, failure: { outcome: "unavailable", reason: "unknown", structuralStatus: null } };
+    const envelope = JSON.stringify({
+      fixtureSchema: "af-runtime-fixture-1",
+      status: "claimed",
+      node_id: "1",
+      role: "prover",
+    });
+    expect(parseLiveClaimOutput(envelope)).toEqual(rejected);
+    expect(parseLiveClaimOutput(legacyFixture("version.json"))).toEqual(rejected);
+    expect(
+      parseLiveRefineOutput(JSON.stringify({ ...readJson("refine.json"), fixtureSchema: "af-runtime-fixture-1" })),
+    ).toEqual(rejected);
+    expect(parseLiveRefineOutput(legacyFixture("version.json"))).toEqual(rejected);
+  });
+
+  it.each([
+    ["non-zero", { exitCode: 1 }, "non-zero"],
+    ["timeout", { timedOut: true }, "timeout"],
+    ["cancelled", { cancelled: true }, "cancelled"],
+    ["signal", { signal: "SIGTERM" }, "signaled"],
+  ] as const)("classifies %s as bounded unavailable for claim and refine", (_name, execution, reason) => {
+    const expected = { ok: false, failure: { outcome: "unavailable", reason, structuralStatus: null } };
+    expect(parseLiveClaimOutput(liveFixture("claim.json"), execution)).toEqual(expected);
+    expect(parseLiveRefineOutput(liveFixture("refine.json"), execution)).toEqual(expected);
+  });
+
+  it("classifies malformed and oversized claim and refine output without echoing the payload", () => {
+    const malformed = { ok: false, failure: { outcome: "unavailable", reason: "malformed", structuralStatus: null } };
+    const oversized = { ok: false, failure: { outcome: "unavailable", reason: "oversized", structuralStatus: null } };
+    expect(parseLiveClaimOutput('{"status":"')).toEqual(malformed);
+    expect(parseLiveClaimOutput("[]")).toEqual(malformed);
+    expect(parseLiveRefineOutput("no json")).toEqual(malformed);
+    expect(parseLiveRefineOutput('{"success":true,"children":[')).toEqual(malformed);
+    const oversizedSecret = "credential-value".repeat(3_000);
+    const claimOversized = parseLiveClaimOutput(oversizedSecret);
+    expect(claimOversized).toEqual(oversized);
+    expect(JSON.stringify(claimOversized)).not.toContain("credential-value");
+    expect(parseLiveRefineOutput(oversizedSecret)).toEqual(oversized);
+    expect(parseLiveRefineOutput("x".repeat(32_769))).toEqual(oversized);
+  });
+
+  it("rejects missing, wrong, and unsafe claim fields with bounded classifications", () => {
+    const unavailableUnknown = {
+      ok: false,
+      failure: { outcome: "unavailable", reason: "unknown", structuralStatus: null },
+    };
+    const auditFailed = {
+      ok: false,
+      failure: { outcome: "audit-failed", reason: "audit-failure", structuralStatus: null },
+    };
+    const claim = readJson("claim.json");
+
+    expect(parseLiveClaimOutput(JSON.stringify(withoutKey(claim, "status")))).toEqual(unavailableUnknown);
+    expect(parseLiveClaimOutput(JSON.stringify({ ...claim, status: "released" }))).toEqual(unavailableUnknown);
+    expect(parseLiveClaimOutput(JSON.stringify(withoutKey(claim, "node_id")))).toEqual(unavailableUnknown);
+    expect(parseLiveClaimOutput(JSON.stringify({ ...claim, node_id: "not-a-node" }))).toEqual(unavailableUnknown);
+    expect(parseLiveClaimOutput(JSON.stringify(withoutKey(claim, "role")))).toEqual(unavailableUnknown);
+    expect(parseLiveClaimOutput(JSON.stringify({ ...claim, role: "builder" }))).toEqual(unavailableUnknown);
+
+    const absoluteId = parseLiveClaimOutput(JSON.stringify({ ...claim, node_id: "/etc/passwd" }));
+    expect(absoluteId).toEqual(auditFailed);
+    expect(JSON.stringify(absoluteId)).not.toContain("/etc/passwd");
+    const shellId = parseLiveClaimOutput(JSON.stringify({ ...claim, node_id: "1;rm -rf" }));
+    expect(shellId).toEqual(auditFailed);
+    expect(JSON.stringify(shellId)).not.toContain("rm -rf");
+    expect(parseLiveClaimOutput(JSON.stringify({ ...claim, node_id: "1".repeat(300) }))).toEqual(auditFailed);
+  });
+
+  it("rejects missing, wrong, empty, and unsafe refine fields with bounded classifications", () => {
+    const unavailableUnknown = {
+      ok: false,
+      failure: { outcome: "unavailable", reason: "unknown", structuralStatus: null },
+    };
+    const auditFailed = {
+      ok: false,
+      failure: { outcome: "audit-failed", reason: "audit-failure", structuralStatus: null },
+    };
+    const refine = readJson("refine.json");
+    const firstChild = (refine.children as Record<string, unknown>[])[0];
+
+    expect(parseLiveRefineOutput(JSON.stringify(withoutKey(refine, "success")))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, success: false }))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, success: "true" }))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify(withoutKey(refine, "parent_id")))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, parent_id: "1.a" }))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify(withoutKey(refine, "children")))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, children: [] }))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, children: "1.1" }))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, children: [{}] }))).toEqual(unavailableUnknown);
+    expect(parseLiveRefineOutput(JSON.stringify({ ...refine, children: [{ id: "not-a-node" }] }))).toEqual(
+      unavailableUnknown,
+    );
+
+    const absoluteChild = parseLiveRefineOutput(
+      JSON.stringify({ ...refine, children: [{ ...firstChild, id: "/etc/passwd" }] }),
+    );
+    expect(absoluteChild).toEqual(auditFailed);
+    expect(JSON.stringify(absoluteChild)).not.toContain("/etc/passwd");
+    const shellParent = parseLiveRefineOutput(JSON.stringify({ ...refine, parent_id: "$(whoami)" }));
+    expect(shellParent).toEqual(auditFailed);
+    expect(JSON.stringify(shellParent)).not.toContain("whoami");
   });
 });

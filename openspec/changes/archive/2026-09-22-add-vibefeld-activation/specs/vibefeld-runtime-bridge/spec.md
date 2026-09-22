@@ -10,9 +10,9 @@ The bridge SHALL not be exposed as an OpenCode plugin, MCP server, custom tool, 
 - **THEN** no bridge operation SHALL be available through that path
 - **AND** the existing Chat, Write, Scout, worker, MCP, reasoning-streaming, and TUI authority boundaries SHALL remain unchanged
 
-#### Scenario: The bridge is constructed during activation
+#### Scenario: The bridge is constructed without an explicit review request
 
-- **WHEN** the extension activates on a supported host
+- **WHEN** the extension activates on a supported host without a later claim-projection request
 - **THEN** the host MAY construct the bridge, allocate the proof store beneath global storage, and preflight once
 - **AND** a dormant or failed preflight SHALL leave the unavailable review flow and ordinary behavior unchanged
 

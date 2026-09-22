@@ -45,9 +45,11 @@ describe("Vibefeld activation wiring security negatives", () => {
     expect(readSource("../vibefeld/af-discovery.ts")).not.toMatch(/discoverAfExecutable\([^)]*,/u);
 
     const commandSchema = readSource("../vibefeld/af-command-schema.ts");
-    expect(commandSchema).toContain('export const AF_COMMAND_OPERATIONS = ["version", "schema", "init", "status"]');
+    expect(commandSchema).toContain(
+      'export const AF_COMMAND_OPERATIONS = ["version", "schema", "init", "claim", "refine", "status"]',
+    );
     expect(readSource("../vibefeld/vibefeld-runtime.ts")).toContain(
-      'export type AfBridgeOperation = Extract<AfCommandOperation, { operation: "init" | "status" }>',
+      'export type AfBridgeOperation = Extract<AfCommandOperation, { operation: "init" | "claim" | "refine" | "status" }>',
     );
     expect(readSource("../vibefeld/af-process-executor.ts")).toContain(
       "async execute<T = unknown>(operation: AfCommandOperation",
@@ -103,7 +105,9 @@ describe("Vibefeld activation wiring security negatives", () => {
     expect(directPolicySource).not.toMatch(/shell:\s*true/u);
     expect(directPolicySource).toContain("shell: false");
     expect(directPolicySource).toContain("detached: true");
-    expect(commandSchemaSource).toContain('AF_COMMAND_OPERATIONS = ["version", "schema", "init", "status"]');
+    expect(commandSchemaSource).toContain(
+      'AF_COMMAND_OPERATIONS = ["version", "schema", "init", "claim", "refine", "status"]',
+    );
   });
 
   it("keeps profile authority absent and does not reuse the Chat sandbox policy", () => {

@@ -5,8 +5,9 @@
  * filesystem, or touches the network. The default test suite exercises only
  * these functions against synthetic and stored-fixture inputs; the explicitly
  * opted-in integration test (`OPENCODE_CHAT_RUN_VIBEFELD_CAPTURE=1`) runs the
- * fixed commands against a project-relative disposable workspace, sanitizes
- * the results here, and writes the capture set beneath that temporary root.
+ * fixed version/schema/init/claim/refine/status sequence against a
+ * project-relative disposable workspace, sanitizes the results here, and
+ * writes the capture set beneath that temporary root.
  *
  * Sanitization is fail-closed and bounded: a capture either becomes a small
  * safe string containing no host path, no control character, no shell token,
@@ -24,11 +25,20 @@ const MAX_CAPTURE_ARRAY_LENGTH = 256;
 
 export const AF_CAPTURE_EXECUTABLE = "af";
 export const AF_CAPTURE_AUTHOR = "capture";
+/** Fixed host-owned claim/refine runtime values; no caller, graph, or model input reaches them. */
+export const AF_CAPTURE_ROOT_NODE_ID = "1";
+export const AF_CAPTURE_CLAIM_ROLE = "prover";
+export const AF_CAPTURE_STATEMENT = "All primes greater than 2 are odd";
 export const AF_CAPTURE_MANIFEST_FILE = "manifest.json";
 export const AF_CAPTURE_WORKSPACE_PLACEHOLDER = "<workspace>";
 
 const CONJECTURE_PLACEHOLDER = "<conjecture>";
 const AUTHOR_PLACEHOLDER = "<author>";
+const NODE_ID_PLACEHOLDER = "<node-id>";
+const PARENT_ID_PLACEHOLDER = "<parent-id>";
+const STATEMENT_PLACEHOLDER = "<statement>";
+const OWNER_PLACEHOLDER = "<owner>";
+const ROLE_PLACEHOLDER = "<role>";
 
 /**
  * Designated content fields are replaced with these placeholders before any
@@ -37,6 +47,7 @@ const AUTHOR_PLACEHOLDER = "<author>";
  */
 const REDACTED_CAPTURE_FIELDS: Readonly<Record<string, string>> = Object.freeze({
   statement: "<statement>",
+  context: "<context>",
   content_hash: "<hash>",
   content: "<content>",
   ledger: "<ledger>",
@@ -60,7 +71,10 @@ const HOST_PATH_PREFIX =
   /(?:\/(?:Users|home|root|private|var|tmp|etc|opt|mnt|media|srv|Volumes|System|Library|Applications|usr|dev|proc|run|bin|sbin)(?:\/|$)|[A-Za-z]:[\\/]|\\\\)/u;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/u;
 
-export type AfCaptureOperation = "version" | "schema" | "init" | "status";
+export type AfCaptureOperation = "version" | "schema" | "init" | "claim" | "refine" | "status";
+
+/** Operations whose JSON embeds recorded content: their designated fields are never stored. */
+const CONTENT_BEARING_OPERATIONS: readonly AfCaptureOperation[] = ["claim", "refine", "status"];
 
 export type AfCaptureOperationShape = Readonly<{
   operation: AfCaptureOperation;
@@ -71,9 +85,9 @@ export type AfCaptureOperationShape = Readonly<{
 }>;
 
 /**
- * The four fixed capture shapes. The recorded manifest keeps the shapes with
- * placeholders, so no host workspace, executable path, or conjecture text is
- * ever stored in the capture set.
+ * The six fixed capture shapes. The recorded manifest keeps the shapes with
+ * placeholders, so no host workspace, executable path, node or owner identity,
+ * statement, or conjecture text is ever stored in the capture set.
  */
 export const CAPTURE_OPERATIONS: readonly AfCaptureOperationShape[] = [
   { operation: "version", argv: ["version", "--json"], file: "version.json" },
@@ -82,6 +96,37 @@ export const CAPTURE_OPERATIONS: readonly AfCaptureOperationShape[] = [
     operation: "init",
     argv: ["init", "-c", CONJECTURE_PLACEHOLDER, "-a", AUTHOR_PLACEHOLDER, "-d", AF_CAPTURE_WORKSPACE_PLACEHOLDER],
     file: "init.txt",
+  },
+  {
+    operation: "claim",
+    argv: [
+      "claim",
+      NODE_ID_PLACEHOLDER,
+      "--owner",
+      OWNER_PLACEHOLDER,
+      "--role",
+      ROLE_PLACEHOLDER,
+      "-d",
+      AF_CAPTURE_WORKSPACE_PLACEHOLDER,
+      "--format",
+      "json",
+    ],
+    file: "claim.json",
+  },
+  {
+    operation: "refine",
+    argv: [
+      "refine",
+      PARENT_ID_PLACEHOLDER,
+      STATEMENT_PLACEHOLDER,
+      "--owner",
+      OWNER_PLACEHOLDER,
+      "-d",
+      AF_CAPTURE_WORKSPACE_PLACEHOLDER,
+      "--format",
+      "json",
+    ],
+    file: "refine.json",
   },
   {
     operation: "status",
@@ -233,7 +278,13 @@ const sanitizeCaptureJson = (
     return { ok: false, operation, reason: "malformed" };
   }
   if (!isRecord(parsed) && !Array.isArray(parsed)) return { ok: false, operation, reason: "malformed" };
-  const sanitized = sanitizeJsonValue(parsed, workspacePath, 0, { keys: 0 }, operation === "status");
+  const sanitized = sanitizeJsonValue(
+    parsed,
+    workspacePath,
+    0,
+    { keys: 0 },
+    CONTENT_BEARING_OPERATIONS.includes(operation),
+  );
   const contents = `${JSON.stringify(sanitized, null, 2)}\n`;
   const byteLength = utf8Bytes(contents);
   if (byteLength > MAX_CAPTURE_OUTPUT_BYTES) return { ok: false, operation, reason: "oversized" };
@@ -266,9 +317,10 @@ const sanitizeCaptureText = (
  * Sanitizes one captured stdout string into a bounded capture file body, or
  * returns a bounded failure reason. The workspace path is replaced with
  * `<workspace>` everywhere; any remaining absolute host path, control
- * character, shell token, or restricted marker rejects the capture. Status
- * node statements, content hashes, and challenge content are replaced with
- * placeholders, so no node, ledger, or challenge content is ever returned.
+ * character, shell token, or restricted marker rejects the capture. Status node
+ * statements, content hashes, challenge content, and recorded claim context or
+ * refine statements are replaced with placeholders, so no node, ledger,
+ * challenge, statement, or context content is ever returned.
  */
 export function sanitizeCaptureOutput(
   operation: AfCaptureOperation,
@@ -290,9 +342,9 @@ export function sanitizeCaptureOutput(
 
 /**
  * Builds the fixed argv for one capture operation. The workspace is the only
- * host-selected input; the author is always the fixed capture author. An
- * invalid workspace or conjecture resolves `undefined`, and callers must not
- * substitute one.
+ * host-selected input; the author, node identifiers, role, and refine statement
+ * are fixed host-owned capture values. An invalid workspace or conjecture
+ * resolves `undefined`, and callers must not substitute one.
  */
 export function buildCaptureArgv(
   operation: AfCaptureOperation,
@@ -308,6 +360,31 @@ export function buildCaptureArgv(
       return ["schema", "--format", "json"];
     case "status":
       return ["status", "-d", workspace, "--format", "json"];
+    case "claim":
+      return [
+        "claim",
+        AF_CAPTURE_ROOT_NODE_ID,
+        "--owner",
+        AF_CAPTURE_AUTHOR,
+        "--role",
+        AF_CAPTURE_CLAIM_ROLE,
+        "-d",
+        workspace,
+        "--format",
+        "json",
+      ];
+    case "refine":
+      return [
+        "refine",
+        AF_CAPTURE_ROOT_NODE_ID,
+        AF_CAPTURE_STATEMENT,
+        "--owner",
+        AF_CAPTURE_AUTHOR,
+        "-d",
+        workspace,
+        "--format",
+        "json",
+      ];
     case "init": {
       const conjecture = input.conjecture;
       if (typeof conjecture !== "string" || conjecture.length === 0) return undefined;

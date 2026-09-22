@@ -431,6 +431,7 @@ describe("ChatViewProvider", () => {
         sessionId: "session-a",
         messageId: "automatic-message",
         sourceText: "visible response",
+        invocation: "automatic",
       });
       expect(postMessage).toHaveBeenCalledWith({
         type: "reasoningReview",
@@ -868,6 +869,7 @@ describe("ChatViewProvider", () => {
         sessionId: "session-a",
         messageId: "message-1",
         sourceText: "visible",
+        invocation: "manual",
       });
       expect(postMessage).toHaveBeenCalledWith({ type: "reasoningReview", sessionId: "session-a", summary });
       expect(JSON.stringify(postMessage.mock.calls)).not.toContain("private reasoning");
