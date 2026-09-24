@@ -2,16 +2,24 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { OpenCodeRestrictedReviewConfiguration } from "./launch-config";
 import {
   RESTRICTED_REVIEW_AGENT_NAME,
+  RESTRICTED_REVIEW_ARCHITECT_STAGE_INSTRUCTION,
   RESTRICTED_REVIEW_AUTHORITIES,
+  RESTRICTED_REVIEW_CRITIC_STAGE_INSTRUCTION,
   RESTRICTED_REVIEW_PROVER_STAGE_INSTRUCTION,
   RESTRICTED_REVIEW_VERIFIER_STAGE_INSTRUCTION,
 } from "./restricted-review-overlay";
 
 const MAX_PACKET_TEXT_LENGTH = 16_384;
 export const MAX_RESTRICTED_REVIEW_TEXT_LENGTH = 8_192;
-export const MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS = 30_000;
+export const MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS = 35_000;
 const RESTRICTED_REVIEW_POLL_INTERVAL_MS = 50;
 const MAX_FAILURE_MESSAGE_LENGTH = 256;
+/**
+ * Marker-less-server compatibility: identical non-empty reply text observed on
+ * this many consecutive polls is treated as complete. A server that reports
+ * message- or part-level completion never needs it.
+ */
+const RETRIEVAL_STABILITY_POLLS = 6;
 
 export type RestrictedReviewModel = {
   providerID: string;
@@ -32,7 +40,7 @@ export type RestrictedReviewTextResult = { ok: true; text: string } | Restricted
 
 type RestrictedReviewSdkClient = Pick<OpencodeClient, "session" | "config">;
 
-export type RestrictedReviewRole = "prover" | "verifier";
+export type RestrictedReviewRole = "prover" | "verifier" | "architect" | "critic";
 
 export type RestrictedReviewProvenance = Readonly<{
   identity: string;
@@ -80,6 +88,20 @@ export type RestrictedReviewProvider = {
 };
 
 const PROVENANCE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const RESTRICTED_REVIEW_CONTEXT_NUMBERS: Readonly<Record<RestrictedReviewRole, 1 | 2>> = Object.freeze({
+  prover: 1,
+  verifier: 2,
+  architect: 1,
+  critic: 2,
+});
+// The instruction is a function of the host-owned role only: no packet, caller,
+// or model channel may supply or override it.
+const RESTRICTED_REVIEW_STAGE_INSTRUCTIONS: Readonly<Record<RestrictedReviewRole, string>> = Object.freeze({
+  prover: RESTRICTED_REVIEW_PROVER_STAGE_INSTRUCTION,
+  verifier: RESTRICTED_REVIEW_VERIFIER_STAGE_INSTRUCTION,
+  architect: RESTRICTED_REVIEW_ARCHITECT_STAGE_INSTRUCTION,
+  critic: RESTRICTED_REVIEW_CRITIC_STAGE_INSTRUCTION,
+});
 
 function randomToken(): string {
   const tokenLength = 24;
@@ -95,7 +117,7 @@ function randomToken(): string {
 }
 
 export function mintRestrictedReviewProvenance(role: RestrictedReviewRole): RestrictedReviewProvenance {
-  const contextNumber = role === "prover" ? 1 : 2;
+  const contextNumber = RESTRICTED_REVIEW_CONTEXT_NUMBERS[role];
   const token = randomToken();
   return Object.freeze({
     identity: `${role}-${token}`,
@@ -144,20 +166,36 @@ function boundedPacketText(packetText: string): string {
   return packetText.slice(0, MAX_PACKET_TEXT_LENGTH);
 }
 
-function extractAssistantText(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  const text: string[] = [];
-  for (const message of value) {
+type StageReplyCandidate = Readonly<{ text: string; complete: boolean }>;
+
+/**
+ * The LAST assistant message with at least one text part is the only stage
+ * reply candidate; user messages and text-less assistant messages are ignored.
+ * Its bounded text counts as complete only when the message reports a
+ * completion timestamp or every one of its text parts reports an end
+ * timestamp, so partial streamed text can never be returned for validation.
+ */
+function lastStageReplyCandidate(value: unknown): StageReplyCandidate | undefined {
+  if (!Array.isArray(value)) return undefined;
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const message = value[index];
     if (!message || typeof message !== "object") continue;
-    const record = message as { info?: { role?: unknown }; parts?: unknown };
+    const record = message as { info?: { role?: unknown; time?: { completed?: unknown } }; parts?: unknown };
     if (record.info?.role !== "assistant" || !Array.isArray(record.parts)) continue;
+    const text: string[] = [];
+    let allPartsEnded = true;
     for (const part of record.parts) {
       if (!part || typeof part !== "object") continue;
-      const candidate = part as { type?: unknown; text?: unknown };
-      if (candidate.type === "text" && typeof candidate.text === "string") text.push(candidate.text);
+      const candidate = part as { type?: unknown; text?: unknown; time?: { end?: unknown } };
+      if (candidate.type !== "text" || typeof candidate.text !== "string") continue;
+      text.push(candidate.text);
+      if (typeof candidate.time?.end !== "number") allPartsEnded = false;
     }
+    if (text.length === 0) return undefined;
+    const complete = typeof record.info.time?.completed === "number" || allPartsEnded;
+    return { text: text.join("\n").slice(0, MAX_RESTRICTED_REVIEW_TEXT_LENGTH), complete };
   }
-  return text.join("\n").slice(0, MAX_RESTRICTED_REVIEW_TEXT_LENGTH);
+  return undefined;
 }
 
 async function boundedAwait<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -219,15 +257,15 @@ export function createRestrictedReviewProvider({
     },
 
     async promptStage(sessionId, packetText, role) {
+      const instruction = RESTRICTED_REVIEW_STAGE_INSTRUCTIONS[role];
+      if (typeof instruction !== "string")
+        return failure("invalid-response", new Error("Unknown restricted review role."));
       try {
         await client.session.promptAsync({
           sessionID: sessionId,
           agent: RESTRICTED_REVIEW_AGENT_NAME,
           model: hostPinnedModel,
-          system:
-            role === "prover"
-              ? RESTRICTED_REVIEW_PROVER_STAGE_INSTRUCTION
-              : RESTRICTED_REVIEW_VERIFIER_STAGE_INSTRUCTION,
+          system: instruction,
           tools,
           parts: [{ type: "text", text: boundedPacketText(packetText) }],
         });
@@ -242,11 +280,28 @@ export function createRestrictedReviewProvider({
       if (!Number.isFinite(timeoutMs) || deadline <= 0) return failure("timeout");
       try {
         const startedAt = Date.now();
+        let stableText: string | undefined;
+        let stablePolls = 0;
         while (Date.now() - startedAt < deadline) {
           const remaining = deadline - (Date.now() - startedAt);
           const response = await boundedAwait(client.session.messages({ sessionID: sessionId, limit: 20 }), remaining);
-          const text = extractAssistantText(response.data);
-          if (text.length > 0) return { ok: true, text };
+          const candidate = lastStageReplyCandidate(response.data);
+          if (candidate) {
+            if (candidate.text.length > 0) {
+              if (stableText === candidate.text) stablePolls += 1;
+              else {
+                stableText = candidate.text;
+                stablePolls = 1;
+              }
+            } else {
+              // Only completion markers may report an empty reply; a stability
+              // streak never carries empty text.
+              stableText = undefined;
+              stablePolls = 0;
+            }
+            if (candidate.complete || stablePolls >= RETRIEVAL_STABILITY_POLLS)
+              return { ok: true, text: candidate.text };
+          }
           const wait = Math.min(RESTRICTED_REVIEW_POLL_INTERVAL_MS, deadline - (Date.now() - startedAt));
           if (wait <= 0) break;
           await waitForPollInterval(wait);

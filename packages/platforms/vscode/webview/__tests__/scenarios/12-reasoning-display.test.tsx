@@ -141,48 +141,4 @@ describe("思考表示（ReasoningPartView）", () => {
       });
     });
   });
-
-  context("推論レビューの自動選択理由", () => {
-    it("自動レビューの応答後ラベルと理由を表示すること", async () => {
-      await setupWithReasoningPart();
-      await sendExtMessage({
-        type: "reasoningReview",
-        sessionId: "s1",
-        summary: {
-          reviewedMessageId: "m1",
-          status: "conditional",
-          invocation: "automatic",
-          conclusion: "A bounded automatic conclusion",
-          assumptions: [],
-          evidenceStatus: "source_recorded",
-          openChallenges: [],
-          routing: { reasonCode: "multi_step_argument", summary: "Multi-step argument" },
-        },
-      });
-
-      expect(screen.getByText("Automatic post-response review")).toBeInTheDocument();
-      expect(screen.getByText("Multi-step argument")).toBeInTheDocument();
-    });
-
-    it("手動レビューでは自動選択理由を表示しないこと", async () => {
-      await setupWithReasoningPart();
-      await sendExtMessage({
-        type: "reasoningReview",
-        sessionId: "s1",
-        summary: {
-          reviewedMessageId: "m1",
-          status: "conditional",
-          invocation: "manual",
-          conclusion: "A bounded manual conclusion",
-          assumptions: [],
-          evidenceStatus: "source_recorded",
-          openChallenges: [],
-        },
-      });
-
-      expect(screen.getByText("A bounded manual conclusion")).toBeInTheDocument();
-      expect(screen.queryByText("Automatic post-response review")).not.toBeInTheDocument();
-      expect(screen.queryByText("Selection reason")).not.toBeInTheDocument();
-    });
-  });
 });

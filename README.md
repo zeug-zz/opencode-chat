@@ -66,7 +66,7 @@ Scribe works without any of these; each is external tooling detected at runtime.
 
 - **Sandbox — [nono](https://github.com/nolabs-ai/nono)** — When Chat sandboxing is enabled on macOS/Linux, one process boundary covers the extension's OpenCode server, local and remote MCPs, and their descendants, with a versioned deny baseline for credentials, shell history, and browser/private data. Uses nono and its built-in `opencode` profile when available, otherwise the VS Code compatibility sandbox; fails closed with no unsandboxed retry. Unsupported on Windows.
 - **Memory — [Hindsight](https://github.com/vectorize-io/hindsight)** — Provider-backed recall and reflection when the approved provider is detected. `AGENTS.md` stays ordinary project guidance, not session memory. Writes follow provider, lifecycle, and sandbox gates: explicit retention is confirmation-gated, and automatic summaries exclude secrets, raw tool payloads, and untrusted content.
-- **Logic — [Vibefeld](https://github.com/tobiasosborne/vibefeld)** — Optional, inspectable reasoning review of completed answers on request: explicit assumptions, dependencies, and calibrated structural conclusions. Not a theorem prover or evidence verifier; it activates only when a compatible `af` runtime is detected, and any workspace can opt out.
+- **Logic — [Vibefeld](https://github.com/tobiasosborne/vibefeld)** — Optional prompt-scoped reasoning assist: for eligible Scout text prompts the host runs one bounded, hidden preflight — an architect maps the argument, an optional critic raises bounded objections, and the `af` bridge records the structure — then quietly appends a bounded brief to the response's system instructions while a compact row shows the lifecycle and applied summary. Not a theorem prover or evidence verifier; activates only when a compatible `af` runtime is detected and OpenCode's configured default model can be pinned for the hidden stages; any workspace can opt out. The brief rides the per-message system instruction — servers that ignore per-request system overrides in agent-mode sessions would show the assist lifecycle without informing the response (deferred: synthetic-part fallback).
 
 **Security posture**
 
@@ -86,7 +86,7 @@ Scribe works without any of these; each is external tooling detected at runtime.
 - Optional integrations, detected at runtime:
   - **Sandbox** — [nono](https://github.com/nolabs-ai/nono), external sandbox for enabled Chat sandboxing
   - **Memory** — [Hindsight](https://github.com/vectorize-io/hindsight), provider-backed recall and reflection
-  - **Logic** — [Vibefeld](https://github.com/tobiasosborne/vibefeld), reasoning review when a compatible `af` runtime is present
+  - **Logic** — [Vibefeld](https://github.com/tobiasosborne/vibefeld), prompt-scoped reasoning assist (argument map, critique, AF structure recording) when a compatible `af` runtime is present
 
 #### Recommended MCP research tools
 

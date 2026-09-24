@@ -15,7 +15,6 @@ import { ChevronRightIcon, EditIcon, InfoCircleIcon, SpinnerIcon } from "../../a
 import { ShellResultView } from "../../molecules/ShellResultView";
 import { TextPartView } from "../../molecules/TextPartView";
 import { QuestionView } from "../QuestionView";
-import { ReasoningReviewCard } from "../ReasoningReviewCard";
 import { isTaskToolPart, type SubtaskPart, SubtaskPartView } from "../SubtaskPartView";
 import { ToolPartView } from "../ToolPartView";
 import styles from "./MessageItem.module.css";
@@ -73,28 +72,13 @@ export function getCopyableAssistantMarkdownSource(
   return getAssistantMarkdownSource(parts);
 }
 
-function MessageItemInner({ message, activeSessionId, showAllThinking = false, questions, onEditAndResend }: Props) {
+function MessageItemInner({ message, showAllThinking = false, questions, onEditAndResend }: Props) {
   const t = useLocale();
-  const {
-    isShellMessage,
-    childSessions,
-    onNavigateToChild,
-    isReasoningReviewing = () => false,
-    getReasoningReviewSummary = () => undefined,
-    getReasoningReviewFeedback = () => undefined,
-    reasoningReviewRuntime = null,
-    onRequestReasoningReview = () => {},
-    onCancelReasoningReview = () => {},
-    onSubmitReasoningReviewFeedback = () => {},
-  } = useAppContext();
+  const { isShellMessage, childSessions, onNavigateToChild } = useAppContext();
   const { info, parts } = message;
   const isUser = info.role === "user";
   const isShellUser = isUser && isShellMessage(info.id);
   const isShell = !isUser && isShellMessage(info.id);
-  const isCompletedAssistant = !isUser && !isShell && info.time.completed !== undefined;
-  const isReviewing = isReasoningReviewing(activeSessionId, info.id);
-  const reviewSummary = getReasoningReviewSummary(activeSessionId, info.id);
-  const reviewFeedback = getReasoningReviewFeedback(activeSessionId, info.id);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const editRef = useRef<HTMLTextAreaElement>(null);
@@ -102,19 +86,12 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
   // 連続クリックでも前のタイマーが残らないように ref で管理する。
   const [copied, setCopied] = useState(false);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 完了済みレビューカードの折りたたみ状態。レビュー実行中は isReviewing が優先される。
-  const [reviewCollapsed, setReviewCollapsed] = useState(false);
 
   useEffect(() => {
     return () => {
       if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
     };
   }, []);
-
-  // 新しいレビューが始まったら折りたたみを解除し、完了したサマリーを開いた状態で表示する。
-  useEffect(() => {
-    if (isReviewing) setReviewCollapsed(false);
-  }, [isReviewing]);
 
   // このメッセージに紐づく質問リクエストを取得する
   // QuestionRequest.tool.messageID でメッセージと紐付ける
@@ -180,17 +157,6 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
     },
     [handleEditSubmit],
   );
-
-  // サマリー済みで実行中でなければ、開始操作ではなく表示/非表示のトグルを出す。
-  const canToggleReview = reviewSummary !== undefined && !isReviewing;
-  // カードはレビュー実行中か、折りたたまれていないサマリーがあるときだけ表示する。
-  const reviewCardVisible = isCompletedAssistant && (isReviewing || (reviewSummary !== undefined && !reviewCollapsed));
-  let reviewActionLabel = t["message.reviewArgument"];
-  if (isReviewing) {
-    reviewActionLabel = t["message.cancelReview"];
-  } else if (canToggleReview) {
-    reviewActionLabel = reviewCollapsed ? t["message.showReview"] : t["message.hideReview"];
-  }
 
   return (
     <div className={`${styles.message} ${isUser ? styles.user : styles.assistant}`}>
@@ -307,41 +273,6 @@ function MessageItemInner({ message, activeSessionId, showAllThinking = false, q
             >
               <span dangerouslySetInnerHTML={{ __html: copied ? CHECK_ICON : COPY_ICON }} />
             </button>
-          )}
-          {/* 開始操作は完了済み assistant かつ runtime が available のときだけ出す。
-              実行中は runtime が available でなくても既存のキャンセル操作を維持し、
-              完了済みレビューは再リクエストせず表示/非表示を切り替える。 */}
-          {isCompletedAssistant && (isReviewing || reasoningReviewRuntime?.state === "available") && (
-            <div className={styles.reviewActions}>
-              <ActionButton
-                variant="ghost"
-                size="sm"
-                aria-label={reviewActionLabel}
-                aria-busy={isReviewing}
-                aria-expanded={canToggleReview ? !reviewCollapsed : undefined}
-                onClick={() => {
-                  if (isReviewing) {
-                    onCancelReasoningReview(info.id);
-                  } else if (canToggleReview) {
-                    // トグルは既存サマリーの表示切替のみで、新しいレビューは要求しない。
-                    setReviewCollapsed((collapsed) => !collapsed);
-                  } else {
-                    onRequestReasoningReview(info.id);
-                  }
-                }}
-              >
-                {reviewActionLabel}
-              </ActionButton>
-            </div>
-          )}
-          {reviewCardVisible && (
-            <ReasoningReviewCard
-              summary={reviewSummary}
-              isReviewing={isReviewing}
-              runtime={reasoningReviewRuntime}
-              feedback={reviewFeedback}
-              onFeedback={(value) => onSubmitReasoningReviewFeedback(activeSessionId, info.id, value)}
-            />
           )}
         </div>
       )}

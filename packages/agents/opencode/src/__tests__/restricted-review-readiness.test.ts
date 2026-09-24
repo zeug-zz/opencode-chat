@@ -84,6 +84,31 @@ describe("restricted review provenance", () => {
     expect(seen.size).toBe(500);
     expect(mintRestrictedReviewProvenance("prover")).not.toEqual(mintRestrictedReviewProvenance("prover"));
   });
+
+  it("numbers architect and critic contexts one and two in the same bounded form", () => {
+    const seen = new Set<string>();
+    for (let index = 0; index < 100; index += 1) {
+      const architect = mintRestrictedReviewProvenance("architect");
+      const critic = mintRestrictedReviewProvenance("critic");
+      expect(architect.contextNumber).toBe(1);
+      expect(critic.contextNumber).toBe(2);
+      expect(architect.identity).toMatch(/^architect-/);
+      expect(critic.identity).toMatch(/^critic-/);
+      expect(architect.identity).toMatch(identifier);
+      expect(architect.handle).toMatch(identifier);
+      expect(critic.identity).toMatch(identifier);
+      expect(critic.handle).toMatch(identifier);
+      expect(architect.identity.length).toBeLessThanOrEqual(64);
+      expect(architect.handle.length).toBeLessThanOrEqual(64);
+      expect(critic.identity.length).toBeLessThanOrEqual(64);
+      expect(critic.handle.length).toBeLessThanOrEqual(64);
+      expect(architect.identity).not.toBe(critic.identity);
+      expect(architect.handle).not.toBe(critic.handle);
+      seen.add(`${architect.identity}:${critic.identity}`);
+    }
+    expect(seen.size).toBe(100);
+    expect(mintRestrictedReviewProvenance("critic")).not.toEqual(mintRestrictedReviewProvenance("critic"));
+  });
 });
 
 describe("restricted review readiness", () => {

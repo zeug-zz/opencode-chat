@@ -111,7 +111,7 @@ export type ClaimGraphValidationResult =
  * DEPENDS: edge-id|from-claim-id|to-claim-id
  * EVIDENCE: evidence-id|claim-id|source-kind|status
  */
-const CLAIM_CLASSES: readonly ClaimClass[] = [
+export const CLAIM_CLASSES: readonly ClaimClass[] = [
   "deductive",
   "computational",
   "empirical",
@@ -119,14 +119,14 @@ const CLAIM_CLASSES: readonly ClaimClass[] = [
   "interpretive",
   "normative",
 ];
-const EVIDENCE_SOURCE_KINDS: readonly EvidenceSourceKind[] = [
+export const EVIDENCE_SOURCE_KINDS: readonly EvidenceSourceKind[] = [
   "citation",
   "observation",
   "calculation",
   "procedure",
   "human",
 ];
-const EVIDENCE_STATUSES: readonly EvidenceStatus[] = [
+export const EVIDENCE_STATUSES: readonly EvidenceStatus[] = [
   "not_required",
   "source_recorded",
   "unverified",
@@ -145,7 +145,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasUnsafeValue(value: unknown): boolean {
+/** Shared with the host-private reasoning-assist parser so unset/bounded text rules cannot drift. */
+export function hasUnsafeValue(value: unknown): boolean {
   return typeof value === "string" && UNSAFE_VALUE_PATTERN.test(value);
 }
 
@@ -153,7 +154,8 @@ function hasString(value: unknown, limit: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= limit;
 }
 
-function validIdentifier(value: unknown, limits: ClaimGraphLimits): value is string {
+/** Shared with the host-private reasoning-assist parser so the identifier rule and limit cannot drift. */
+export function validIdentifier(value: unknown, limits: ClaimGraphLimits): value is string {
   return (
     typeof value === "string" &&
     value.length > 0 &&

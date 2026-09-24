@@ -30,7 +30,8 @@ import type {
   SkillInfo,
   TodoItem,
 } from "./domain";
-import type { ReasoningReviewRuntime, ReasoningReviewSummary } from "./reasoning-review";
+import type { ReasoningAssistStage, ReasoningAssistSummary } from "./reasoning-assist";
+import type { ReasoningReviewRuntime } from "./reasoning-review";
 
 // ============================================================
 // UI -> Host
@@ -102,9 +103,7 @@ export type UIToHostMessage =
     }
   | { type: "abort"; sessionId: string }
 
-  // --- Reasoning review ---
-  | { type: "requestReasoningReview"; sessionId: string; messageId: string }
-  | { type: "cancelReasoningReview"; sessionId: string; messageId: string }
+  // --- Reasoning review preference ---
   | {
       type: "setReasoningReviewPreference";
       /**
@@ -113,17 +112,6 @@ export type UIToHostMessage =
        * the Workspace target. No runtime, executable, or path data is carried.
        */
       preference: { userEnabled?: boolean; workspaceOptOut?: boolean };
-    }
-  | {
-      type: "setReasoningReviewFeedback";
-      /**
-       * Bounded local review-card feedback. Only these booleans are carried:
-       * no prompt, source packet, review text, response text, or path data.
-       */
-      sessionId: string;
-      messageId: string;
-      correct: boolean;
-      falseChallenge?: boolean;
     }
 
   // --- Shell (via agent) ---
@@ -276,7 +264,7 @@ export type HostToUIMessage =
   // --- Chat sandbox ---
   | { type: "chatSandboxStatus"; status: ChatSandboxStatus }
 
-  // --- Reasoning review ---
+  // --- Reasoning review runtime and preference ---
   | { type: "reasoningRuntime"; runtime: ReasoningReviewRuntime }
   | {
       type: "reasoningReviewPreference";
@@ -286,8 +274,23 @@ export type HostToUIMessage =
        */
       preference: { userEnabled: boolean; workspaceOptOut: boolean; effective: boolean };
     }
+
+  // --- Prompt-scoped reasoning assist ---
   | {
-      type: "reasoningReview";
+      type: "reasoningAssistProgress";
       sessionId: string;
-      summary: ReasoningReviewSummary;
+      promptToken: string;
+      stage: ReasoningAssistStage;
+    }
+  | {
+      type: "reasoningAssistSummary";
+      sessionId: string;
+      promptToken: string;
+      summary: ReasoningAssistSummary;
+    }
+  /** The token prevents a stale preflight from clearing a newer prompt row. */
+  | {
+      type: "reasoningAssistCleared";
+      sessionId: string;
+      promptToken: string;
     };

@@ -10,41 +10,29 @@ import { zhTw } from "../locales/zh-tw";
 
 const dictionaries = { en, ja, "zh-cn": zhCn, ko, "zh-tw": zhTw, es, "pt-br": ptBr, ru };
 
-const reviewKeys = [
-  "message.reviewArgument",
-  "message.cancelReview",
-  "message.showReview",
-  "message.hideReview",
-  "review.card.title",
-  "review.status.unavailable",
-  "review.status.reviewing",
-  "review.status.structurallyChecked",
-  "review.status.conditional",
-  "review.status.unresolved",
-  "review.status.refuted",
-  "review.status.blocked",
-  "review.status.auditFailed",
-  "review.unavailableNote",
-  "review.conclusion",
-  "review.assumptions",
-  "review.evidence",
-  "review.evidence.notAssessed",
-  "review.evidence.notRequired",
-  "review.evidence.sourceRecorded",
-  "review.evidence.unverified",
-  "review.evidence.humanVerified",
-  "review.evidence.conflicted",
-  "review.openChallenges",
-  "review.interpretiveBoundary",
-  "review.automaticLabel",
-  "review.automaticReason",
-  "review.routingReason.evidenceDependent",
-  "review.routingReason.multiStepArgument",
-  "review.routingReason.highImpactRecommendation",
-  "review.feedback.label",
-  "review.feedback.correct",
-  "review.feedback.unfoundedChallenge",
-  "review.feedback.recorded",
+const retainedReviewConfigKeys = [
+  "config.reasoningReview",
+  "config.reasoningReviewEnable",
+  "config.reasoningReviewWorkspaceOptOut",
+  "config.reasoningReviewDescription",
+  "config.reasoningReviewEffective",
+] as const;
+
+const retainedReasoningAssistKeys = [
+  "reasoningAssist.title",
+  "reasoningAssist.stage.assessing",
+  "reasoningAssist.stage.mapping",
+  "reasoningAssist.stage.recording",
+  "reasoningAssist.stage.critiquing",
+  "reasoningAssist.stage.preparing",
+  "reasoningAssist.stage.applied",
+  "reasoningAssist.toggleDetails",
+  "reasoningAssist.candidateConclusion",
+  "reasoningAssist.assumptions",
+  "reasoningAssist.evidenceBoundary",
+  "reasoningAssist.criticObjections",
+  "reasoningAssist.afRecordedStructure",
+  "reasoningAssist.afNotAvailable",
 ] as const;
 
 describe("webview locale dictionaries", () => {
@@ -59,9 +47,17 @@ describe("webview locale dictionaries", () => {
     }
   });
 
-  it("provides every review action, status, safe-field, and evidence key in every locale", () => {
+  it("provides every retained reasoning-review runtime preference key in every locale", () => {
     for (const [locale, dictionary] of Object.entries(dictionaries)) {
-      for (const key of reviewKeys) {
+      for (const key of retainedReviewConfigKeys) {
+        expect(dictionary[key], `${locale}.${key}`).toBeTruthy();
+      }
+    }
+  });
+
+  it("provides every reasoning-assist lifecycle key in every locale", () => {
+    for (const [locale, dictionary] of Object.entries(dictionaries)) {
+      for (const key of retainedReasoningAssistKeys) {
         expect(dictionary[key], `${locale}.${key}`).toBeTruthy();
       }
     }

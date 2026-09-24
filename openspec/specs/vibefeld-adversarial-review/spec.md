@@ -7,60 +7,41 @@ Provide a host-owned, bounded adversarial review contract that can use independe
 
 ### Requirement: Require an explicit restricted child-review capability and deny broad authority
 
-The host SHALL accept a child-review adapter only when it explicitly supports the
-`prover` and `verifier` roles and attests to an exact restricted permission
-profile. The only production adapter SHALL be the internally constructed
-host-owned `vibefeld-restricted-contexts` provider — it SHALL NOT be an
-injection surface — and it SHALL report ready only through its
-configuration-verified, generation-bound readiness preflight, revalidated before
-each review and never described as enforced isolation. No fixture, test, or
-third-party adapter SHALL be wired into activation. The attestation SHALL be
-treated as a contract check, not as enforcement proof. A child context SHALL
-receive only a bounded review packet and schema-constrained result channel; it
-SHALL have no repository read or write access, shell, package manager, terminal,
-arbitrary task delegation, AF workspace, plugin, MCP, or model-visible tool
-authority. Stage-derived reason text SHALL be normalized with bounded, redacted
-wording before projection, and raw child text SHALL NOT reach the published
-summary. Host-configured plugins and MCP servers SHALL remain trusted host
-extensions outside this boundary. Missing, extra, or permissive capability
-fields SHALL fail closed.
+The host SHALL accept a child-review adapter for reasoning assistance only when
+it explicitly attests to an exact restricted permission profile and supports
+the host-owned architect and critic stages. The only production adapter SHALL be
+the internally constructed `vibefeld-restricted-contexts` provider; it SHALL NOT
+be an injection surface. Each child context SHALL receive only a bounded
+host-built packet and return schema-constrained data. It SHALL have no repository
+read or write access, shell, package manager, terminal, task delegation, AF
+workspace, plugin, MCP, or model-visible tool authority. Raw child text SHALL
+not reach the Scribe request or webview.
 
 #### Scenario: No reviewed child-model capability is supplied
-
-- **WHEN** the extension starts or a manual review is requested without an
-  explicitly attested restricted child-review adapter
+- **WHEN** an eligible prompt is dispatched without an explicitly attested
+  restricted adapter
 - **THEN** no child context SHALL be created
-- **AND** the existing unavailable-safe review behavior SHALL remain in effect
-- **AND** no capability preflight, process launch, AF operation, workspace
-  allocation, or configuration change SHALL occur
+- **AND** the host SHALL continue normal prompt dispatch without critic output
 
 #### Scenario: An adapter requests a forbidden permission
-
-- **WHEN** a supplied capability attestation grants repository access, shell,
-  package, terminal, task delegation, AF workspace, plugin, MCP, or model-visible
-  tool access, or contains unknown authority fields
+- **WHEN** a supplied capability attestation grants a forbidden authority or
+  contains unknown authority fields
 - **THEN** the host SHALL reject the capability before creating a context
-- **AND** it SHALL return an unavailable or audit-failed result without retrying
-  through another authority path
+- **AND** it SHALL not retry through another authority path
 
 #### Scenario: An adapter presents the exact restricted profile
-
-- **WHEN** an injected adapter explicitly supports both roles and declares only
-  bounded review-packet input and schema-constrained output with every forbidden
-  authority denied
-- **THEN** the host MAY create role-specific contexts
-- **AND** the attestation SHALL remain private to the host and SHALL not be
-  published through the core protocol or webview
+- **WHEN** an internally constructed adapter supports only the host-owned
+  architect and critic stages with every forbidden authority denied
+- **THEN** the host MAY create the relevant hidden stage context after the
+  generation-bound readiness check succeeds
+- **AND** the attestation SHALL remain private to the host
 
 #### Scenario: The host-owned restricted provider reports ready
-
 - **WHEN** the host-owned provider's generation-bound preflight confirms the
-  host-composed overlay and the restricted agent with every enumerated tool
-  denied in the current generation
-- **THEN** the host MAY create the prover and verifier contexts through that
-  provider for a manual review
-- **AND** a provider that is dormant, drifted, stale-generation, or unready SHALL
-  keep the existing unavailable-safe behavior with no child context
+  configured restricted agent and exact deny map
+- **THEN** the host MAY create architect and critic contexts for a valid prompt
+  preflight
+- **AND** readiness alone SHALL not be described as enforced isolation
 
 ### Requirement: Keep child inputs and results bounded and schema-constrained
 
@@ -78,80 +59,6 @@ The host SHALL send a child context only the existing bounded visible-text packe
 - **WHEN** a prover or verifier returns a command, path, prompt, credential, hidden-reasoning marker, unknown field, oversized string, unknown target, or malformed disposition
 - **THEN** the host SHALL reject the result as unavailable or audit-failed
 - **AND** it SHALL not continue with a guessed interpretation or expose the invalid value
-
-### Requirement: Enforce independent provenance and reject self-acceptance
-
-A prover and verifier SHALL run under distinct role identities and independently created context handles. The verifier SHALL not accept, reject, or finalize a proposal using the prover identity, the same context handle, or a context that is not explicitly marked as the verifier role. Any reused, missing, duplicated, or self-accepting provenance SHALL invalidate the review.
-
-#### Scenario: Prover and verifier have distinct provenance
-
-- **WHEN** the host creates one prover context and one verifier context with different validated provenance identities
-- **THEN** the verifier SHALL receive the bounded packet and normalized prover proposal as review input
-- **AND** the host SHALL record the result as independently evaluated private review data
-
-#### Scenario: The verifier reuses the prover identity or context
-
-- **WHEN** an adapter returns the same provenance identity, context handle, or role for both stages, or marks a prover proposal as accepted by the prover itself
-- **THEN** the host SHALL reject the review
-- **AND** it SHALL not publish an accepted challenge, structural success, or truth claim
-
-### Requirement: Keep adversarial review manual, host-owned, and post-response
-
-Only an explicit host-owned manual review of a completed assistant message MAY
-start adversarial orchestration; automatic routing SHALL NOT invoke the
-adversarial controller, and the controller SHALL reject any non-manual trigger.
-The verifier SHALL evaluate bounded proposal data rather than receive an
-unconstrained command or model prompt. Selection SHALL preserve the existing
-claim-projection capability: when claim projection is available it retains
-selection; when only the restricted provider is ready, the manual review SHALL
-select the adversarial controller and compile the bounded private claim graph
-for the prover and verifier stages; otherwise the bounded unavailable controller
-SHALL remain. Selection and status reads SHALL stay side-effect free, and
-readiness SHALL be revalidated for the current generation before a review starts.
-Adversarial review SHALL not be exposed through `IAgent`, OpenCode task
-delegation, plugins, MCP, custom tools, Scout, Write, the research worker, or
-ordinary model prompts, and SHALL not delay, rewrite, gate, or mutate the
-original response.
-
-#### Scenario: A normal interaction occurs without a manual request
-
-- **WHEN** the extension activates or a normal Chat, Write, Scout, worker, or
-  model interaction occurs without an explicit review request
-- **THEN** no prover or verifier context SHALL be created
-- **AND** no claim graph, AF preflight, proof workspace, child-model request, or
-  review configuration SHALL be created
-- **AND** existing behavior and permission boundaries SHALL remain unchanged
-
-#### Scenario: An automatic trigger occurs
-
-- **WHEN** automatic routing is configured and a response qualifies for
-  automatic post-processing
-- **THEN** the adversarial controller SHALL not be invoked and SHALL reject the
-  non-manual trigger
-- **AND** no child context, model request, or review configuration SHALL be
-  created
-
-#### Scenario: A manual request targets a completed active assistant message
-
-- **WHEN** the host validates a manual request for a completed assistant message
-  in the active session and an explicitly available restricted adapter is
-  generation-ready
-- **THEN** the host MAY run the prover stage followed by the verifier stage using
-  the bounded private packet
-- **AND** the original assistant message SHALL remain unchanged and already
-  published
-- **AND** the webview SHALL receive only the existing bounded review summary
-  shape with redacted reason text
-
-#### Scenario: Selection precedence for a ready provider
-
-- **WHEN** the restricted provider is ready and the claim projection capability
-  is also available
-- **THEN** the claim-projection controller SHALL retain selection so the
-  AF-backed structural result is not downgraded
-- **AND** the adversarial controller SHALL be selected only when claim projection
-  is unavailable, with selection remaining side-effect free until the manual
-  request arrives and no context, session, or model call created at activation
 
 ### Requirement: Fail closed across cancellation, failure, and stale work
 
@@ -208,3 +115,44 @@ Default tests and ordinary activation SHALL use sanitized fixtures, deterministi
 - **WHEN** a reviewed hidden child-model API or independently enforced permission boundary is absent
 - **THEN** live adversarial review SHALL remain unavailable or be safely skipped
 - **AND** default behavior SHALL not weaken its permissions or claim that a fixture result represents production child-model support
+
+### Requirement: Run a bounded critic during a valid prompt preflight
+
+Only the host MAY request one critic stage after it has validated an argument
+graph for an eligible prompt. The critic SHALL receive the bounded graph and no
+raw user prompt, tool content, attachment, command, path, credential, AF output,
+or private reasoning. It SHALL return at most two bounded objections targeting
+known claims or assumptions. Invalid, unsafe, oversized, unavailable, cancelled,
+or timed-out critic output SHALL be omitted rather than converted into an
+accepted finding or persistent error.
+
+#### Scenario: A valid graph receives bounded objections
+- **WHEN** a generation-ready restricted adapter receives a valid argument graph
+- **THEN** the host MAY run one critic stage and normalize at most two objections
+  targeting known graph elements
+- **AND** the resulting brief SHALL characterize them as objections to address or
+  qualify rather than true or verified facts
+
+#### Scenario: Critic work fails
+- **WHEN** the critic fails, returns malformed output, exceeds its deadline, or
+  becomes stale
+- **THEN** the host SHALL cancel and clean up its context
+- **AND** it SHALL continue with the valid argument brief without a critic fact
+
+### Requirement: Keep adversarial review host-owned during prompt preparation
+
+Reasoning-assist criticism SHALL run only as a bounded host-owned preflight
+before the normal Scribe request. It SHALL not be exposed through `IAgent`, task
+ordinary model prompts. It SHALL not create a post-response gate, mutate an
+already-published answer, or start a verifier stage.
+
+#### Scenario: A valid prompt requires critique
+- **WHEN** the host holds a valid argument graph and a ready restricted adapter
+- **THEN** it SHALL complete or bound the critic stage before adding any critic
+  fact to the normal Scribe brief
+- **AND** the normal Scribe response SHALL stream after preflight completion
+
+#### Scenario: A non-preflight route requests a critic
+- **WHEN** a manual message review, automatic post-response route, model, tool,
+  plugin, MCP server, or worker requests a critic
+- **THEN** the host SHALL reject that route without creating a child context

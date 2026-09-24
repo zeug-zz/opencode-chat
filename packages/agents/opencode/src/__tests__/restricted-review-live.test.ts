@@ -276,6 +276,81 @@ describe.skipIf(!canRun)(
     );
 
     it(
+      "returns a schema-parsable architect stage result only after the hidden reply completes",
+      async () => {
+        const token = await provider.beginReview();
+        let sessionId: string | undefined;
+        try {
+          const created = await provider.createSession("vibefeld-restricted-review-live-architect");
+          expect(created.ok).toBe(true);
+          if (!created.ok) return;
+          sessionId = created.sessionId;
+          await provider.promptStage(
+            sessionId,
+            'The recorded benchmark shows a 12% gain for this case. Should we conclude "claim-live-gain" follows from "claim-live-premise"?',
+            "architect",
+          );
+          // This is the retrieval that caught the streaming truncation: the
+          // stage result must be complete, never a partial streamed reply.
+          const result = await provider.retrieveStageText(sessionId, MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS);
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          const parsed: unknown = JSON.parse(result.text);
+          expect(parsed).toBeTypeOf("object");
+          expect(parsed).not.toBeNull();
+          const kind = (parsed as { kind?: unknown }).kind;
+          expect(kind === "ordinary" || kind === "argument").toBe(true);
+        } finally {
+          await provider.cancelReview(token);
+        }
+        expect(sessionId).toBeDefined();
+        expect((await sessionIds(agent)).has(sessionId!)).toBe(false);
+      },
+      timeoutMs,
+    );
+
+    it(
+      "returns a critic stage result whose parsed reply carries an objections array",
+      async () => {
+        const token = await provider.beginReview();
+        let sessionId: string | undefined;
+        try {
+          const created = await provider.createSession("vibefeld-restricted-review-live-critic");
+          expect(created.ok).toBe(true);
+          if (!created.ok) return;
+          sessionId = created.sessionId;
+          await provider.promptStage(
+            sessionId,
+            [
+              "Reasoning-assist critic packet.",
+              "",
+              "CANDIDATE CONCLUSION:",
+              "id: claim-live-conclusion",
+              "statement: The optimization is effective because the recorded benchmark improved.",
+              "",
+              "ASSUMPTIONS:",
+              "id: assumption-live-1",
+              "statement: The recorded benchmark applies to this deployment.",
+            ].join("\n"),
+            "critic",
+          );
+          const result = await provider.retrieveStageText(sessionId, MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS);
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          const parsed: unknown = JSON.parse(result.text);
+          expect(parsed).toBeTypeOf("object");
+          expect(parsed).not.toBeNull();
+          expect(Array.isArray((parsed as { objections?: unknown }).objections)).toBe(true);
+        } finally {
+          await provider.cancelReview(token);
+        }
+        expect(sessionId).toBeDefined();
+        expect((await sessionIds(agent)).has(sessionId!)).toBe(false);
+      },
+      timeoutMs,
+    );
+
+    it(
       "keeps the hidden agent out of visible agent surfaces and preserves config files",
       async () => {
         expect((await agent.getAgents()).some((entry) => entry.name === RESTRICTED_REVIEW_AGENT_NAME)).toBe(false);

@@ -3959,6 +3959,141 @@ describe("OpenCodeAgent", () => {
     });
   });
 
+  // ============================================================
+  // Event delivery hardening (payload-less events + listener isolation)
+  // ============================================================
+
+  describe("event delivery hardening", () => {
+    function setupControlledStream(): { emit: (event: unknown) => void; end: () => void } {
+      let emitEvent: ((event: unknown) => void) | undefined;
+      let endStream: (() => void) | undefined;
+
+      mockClient.global.event.mockResolvedValue({
+        stream: (async function* () {
+          const queue: unknown[] = [];
+          let resolve: (() => void) | undefined;
+          let done = false;
+
+          emitEvent = (event: unknown) => {
+            queue.push(event);
+            resolve?.();
+          };
+          endStream = () => {
+            done = true;
+            resolve?.();
+          };
+
+          while (!done) {
+            if (queue.length > 0) {
+              yield queue.shift()!;
+            } else {
+              await new Promise<void>((r) => {
+                resolve = r;
+              });
+            }
+          }
+        })(),
+      });
+
+      return { emit: (event) => emitEvent?.(event), end: () => endStream?.() };
+    }
+
+    it("delivers a payload-less event with empty properties and keeps later events flowing", async () => {
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      const listener = vi.fn();
+      agent.onEvent(listener);
+
+      // A serialized server.connected arrives without properties or data.
+      emit({ payload: { type: "server.connected" } });
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ type: "server.connected", properties: {} }));
+
+      emit({ payload: { type: "session.updated", properties: { id: "sess-1" } } });
+      await vi.waitFor(() =>
+        expect(listener).toHaveBeenLastCalledWith({ type: "session.updated", properties: { id: "sess-1" } }),
+      );
+      end();
+    });
+
+    it("isolates a throwing listener so later events still reach all listeners", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      const throwing = vi.fn(() => {
+        throw new TypeError("listener boom");
+      });
+      const healthy = vi.fn();
+      agent.onEvent(throwing);
+      agent.onEvent(healthy);
+
+      emit({ payload: { type: "message.updated", properties: { sessionID: "sess-1" } } });
+      await vi.waitFor(() => expect(healthy).toHaveBeenCalledTimes(1));
+
+      emit({ payload: { type: "session.updated", properties: { id: "sess-1" } } });
+      await vi.waitFor(() =>
+        expect(healthy).toHaveBeenLastCalledWith({ type: "session.updated", properties: { id: "sess-1" } }),
+      );
+
+      expect(healthy).toHaveBeenCalledTimes(2);
+      expect(throwing).toHaveBeenCalledTimes(2);
+      // The bounded diagnostic names only the event type and the error name,
+      // once per distinct type — never payload contents.
+      expect(errorLog).toHaveBeenCalledTimes(2);
+      expect(errorLog).toHaveBeenNthCalledWith(
+        1,
+        "[opencode-chat] OpenCode event listener failed (type=message.updated, error=TypeError)",
+      );
+      expect(errorLog).toHaveBeenNthCalledWith(
+        2,
+        "[opencode-chat] OpenCode event listener failed (type=session.updated, error=TypeError)",
+      );
+      expect(errorLog.mock.calls.flat().join("\n")).not.toContain("sess-1");
+      end();
+      errorLog.mockRestore();
+    });
+
+    it("records the payload-less diagnostic at most once per distinct type and only names the type", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      const listener = vi.fn();
+      agent.onEvent(listener);
+
+      emit({ payload: { type: "server.connected" } });
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+      emit({ payload: { type: "server.connected" } });
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2));
+
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(
+        "[opencode-chat] OpenCode event delivered without a payload (type=server.connected)",
+      );
+      end();
+      errorLog.mockRestore();
+    });
+
+    it("records the listener-failure diagnostic once per distinct type", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      agent.onEvent(() => {
+        throw new RangeError("nope");
+      });
+
+      emit({ payload: { type: "message.updated", properties: { sessionID: "sess-1" } } });
+      await vi.waitFor(() => expect(errorLog).toHaveBeenCalledTimes(1));
+      emit({ payload: { type: "message.updated", properties: { sessionID: "sess-2" } } });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(
+        "[opencode-chat] OpenCode event listener failed (type=message.updated, error=RangeError)",
+      );
+      end();
+      errorLog.mockRestore();
+    });
+  });
+
   describe("resubscribeEvents()", () => {
     it("should abort old stream and create new subscription", async () => {
       await agent.connect();

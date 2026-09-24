@@ -9,48 +9,23 @@ adversarial review without exposing broader model, tool, or configuration author
 ### Requirement: Provide a hidden restricted child-context provider over the extension-owned server
 
 The host MAY declare exactly one restricted-review agent overlay inside the
-extension-owned OpenCode server's in-memory configuration. The overlay SHALL
-deny every tool by enumerating the authoritative tool and permission inventory —
-the concrete built-in authorities (`read`, `glob`, `grep`, `edit`, `write`,
-`patch`, `bash`, `task`, `webfetch`, `websearch`, `skill`, `todo`/`todowrite`,
-`question`, `lsp`, `list`, `external_directory`, `doom_loop`) and any
-dynamically present tool names from installed plugins or MCP servers — in
-addition to the `"*"` wildcard, SHALL reject unknown or unrecognized authority
-entries rather than passing them through, SHALL pin the host-resolved child
-model, SHALL carry a fixed host-owned instruction, SHALL bound the agentic
-steps, and SHALL keep the agent hidden from user-visible agent surfaces. The
-overlay SHALL never be written to a global or workspace configuration file, a
-profile, a plugin, an MCP server, or a custom tool, and SHALL apply only to the
-extension-owned server process. Child stage prompts SHALL use that agent with
-the same deny map, the pinned model, a fixed host-owned system instruction, and
-only the bounded review packet as input; no attachments, files, argv, commands,
-paths, credentials, or additional instruction channels SHALL be supplied. The
-child model SHALL be resolved host-side only (from host-recorded review state or
-the host configuration) and SHALL never be derived from the packet, the review
-request, or child output. Host-configured plugins and MCP servers SHALL remain
-trusted host extensions in that same process; this requirement constrains the
-restricted agent's model-callable authority and SHALL NOT constrain those host
-extensions.
+extension-owned OpenCode server's in-memory configuration for the architect and
+critic stages. The overlay SHALL deny every known tool and dynamically present
+tool name in addition to the `"*"` wildcard, reject unknown authority entries,
 
 #### Scenario: The restricted overlay is built
-
-- **WHEN** the host composes the extension-owned server configuration for a
-  restricted review capability
-- **THEN** the restricted agent SHALL be present only in the in-memory
-  configuration with every enumerated tool denied and the host-pinned model and
-  instructions
-- **AND** no global or workspace configuration file, profile, plugin, MCP server,
-  or custom tool SHALL be added or modified
-- **AND** the restricted agent SHALL not appear in a user-visible agent list
+- **WHEN** the host composes its server configuration for reasoning assistance
+- **THEN** the restricted agent SHALL exist only in the in-memory configuration
+  with every enumerated tool denied and host-pinned model and instructions
+- **AND** it SHALL not appear in a user-visible agent list or modify configuration
+  files, profiles, plugins, MCP servers, or custom tools
 
 #### Scenario: An overlay is permissive or unknown
-
 - **WHEN** the overlay grants any tool, omits the deny map, supplies an
-  unexpected field, names an unknown authority entry, or names a model or
-  instruction channel that is not host-owned
-- **THEN** the host SHALL reject the overlay before any context is created
-- **AND** it SHALL keep the provider unavailable without retrying through another
-  authority path
+  unexpected field, names an unknown authority, or uses a non-host-owned model
+  or instruction channel
+- **THEN** the host SHALL reject it before any context is created
+- **AND** ordinary prompt dispatch SHALL continue without hidden assistance
 
 ### Requirement: Gate the provider on a configuration-verified, generation-bound readiness preflight
 
@@ -87,81 +62,30 @@ capability.
 - **AND** no child context, model call, configuration write, or fallback to
   another authority path SHALL occur
 
-### Requirement: Run provenance-distinct, bounded, cancellable stages
-
-The provider SHALL create one host-private context per role through distinct
-creation calls. It SHALL mint bounded letter-leading identities and handles
-(`prover-…`/`verifier-…`, ≤64 characters, matching `^[A-Za-z][A-Za-z0-9_-]*$`)
-that are never derived from packet content and never published to the webview or
-core protocol, and it SHALL use the fixed context numbers (prover 1, verifier 2).
-A child stage SHALL receive only the validated bounded review packet; stage text
-SHALL be obtained through a bounded await within a provider-enforced stage
-deadline (no more than 30 seconds), validated by the existing exact-key bounded
-validators, used only to produce redacted findings, and then discarded.
-Stage-derived reason text SHALL be normalized with host-applied redaction of
-path-, URL-, and secret-like patterns and hard bounds before any projection, and
-raw child text SHALL NOT be published. Malformed, oversized, unsafe,
-unknown-target, or ambiguous data SHALL fail closed as audit-failed without
-echoing the invalid payload or forcing acceptance. Each review SHALL run at most
-one prover stage and one verifier stage, with at most two child sessions alive
-and one in-flight review per session/message; the host SHALL set an explicit
-bounded total timeout (default 60 seconds) when constructing the orchestrator
-and SHALL perform no automatic retry. A newer review SHALL await the
-cancellation of the previous one before starting, cancellation SHALL abort and
-delete both role contexts, a publication generation token SHALL be checked
-before any result is published, and a late or superseded result SHALL never be
-published.
-
-#### Scenario: A bounded stage completes
-
-- **WHEN** a prover or verifier stage returns bounded schema-valid data for the
-  known packet targets within the stage deadline
-- **THEN** the host SHALL accept only the normalized review data and the minted
-  provenance identity
-- **AND** no raw child output, packet content, path, or reasoning SHALL be
-  retained or published, and projected reasons SHALL be redacted
-
-#### Scenario: A stage fails or is cancelled
-
-- **WHEN** a stage returns malformed, oversized, unsafe, or ambiguous data, the
-  model fails, the stage deadline or total timeout elapses, or the user cancels
-  the review
-- **THEN** the host SHALL map the outcome to unavailable, audit-failed, or
-  unresolved without forced acceptance or automatic retry
-- **AND** it SHALL abort and delete both contexts, drop any late result via the
-  generation token, and SHALL not retry through the Chat sandbox, a task, a
-  plugin, MCP, or an unsandboxed process
-
 ### Requirement: Keep child sessions hidden and unretained
 
 The provider SHALL register every created child session id with the host at
 creation, and the extension SHALL filter registered ids from session-list
-mapping, agent lists, and webview event publication, buffering events that
-arrive before registration resolves so hiddenness does not depend on title
-matching. Child sessions SHALL use fixed host-private marker titles containing
-only a random token — never packet, claim, or child content — retained solely
-for startup scavenging. Every review SHALL abort and delete its child sessions
-unconditionally regardless of outcome, extension deactivation SHALL await
-disposal of all child sessions, and startup SHALL scavenge leftover marked
-sessions from a crashed process. The host SHALL not persist review packets,
-proposals, verdicts, child outputs, or traces; only the existing bounded
-`ReasoningReviewSummary` may be published.
+mapping, agent lists, and webview event publication. Child sessions SHALL use
+fixed host-private marker titles containing only a random token. Every preflight
+SHALL abort and delete its child sessions regardless of outcome, extension
+deactivation SHALL await disposal, and startup SHALL scavenge leftover marked
+sessions. The host SHALL not persist stage packets, raw architect results, raw
+critic output, or traces; it MAY publish only the bounded reasoning-assist
+summary.
 
 #### Scenario: Child sessions exist during a review
-
-- **WHEN** the host holds one or more restricted child sessions, including one
+- **WHEN** the host holds an architect or critic child session, including one
   whose creation event arrives before registration resolves
 - **THEN** the extension's session list, agent list, and webview SHALL not
-  surface them
-- **AND** their events SHALL not reach the webview or alter the reviewed message
+  surface it or its events
 
 #### Scenario: A review or the extension ends
-
-- **WHEN** a review completes, fails, times out, or is cancelled, or the
+- **WHEN** a preflight completes, fails, times out, or is cancelled, or the
   extension deactivates with work in flight
-- **THEN** the host SHALL abort and delete every child session it created,
-  awaiting disposal on deactivation and scavenging marked leftovers at startup
-- **AND** no packet, proposal, verdict, or trace SHALL remain persisted
+- **THEN** the host SHALL abort and delete every created child session and await
+  disposal on deactivation
+- **AND** no packet, raw stage output, or trace SHALL remain persisted
 
 ### Requirement: Keep default verification fixture-only and gate the live proof
 
@@ -199,3 +123,67 @@ treated as proof.
 - **THEN** the proof SHALL skip safely
 - **AND** the provider SHALL remain unavailable rather than weaken permissions or
   claim fixture results represent production support
+
+### Requirement: Run bounded architect and critic stages
+
+The provider SHALL create one host-private context for an architect stage and,
+Each stage SHALL receive only its bounded packet, use a provider-enforced
+deadline, validate exact schema output, and discard raw text after host
+normalization. The stage instructions SHALL enumerate every bounded enum value
+the schema validates - claim classes, evidence source kinds, evidence statuses,
+objection severities, and objection target kinds - so a hidden stage can comply
+without guessing, and the enumerated literals SHALL match the host parser's
+frozen enums. The architect instruction SHALL request the smallest sufficient
+argument map - bounded soft counts for claims, assumptions, evidence needs, and
+uncertainty items, and short statements - so generation fits the stage deadline.
+It SHALL mint stage identities that are bounded, letter-leading,
+webview. A preflight SHALL have at most two live child sessions, no automatic
+retry, and a bounded total timeout.
+
+#### Scenario: Architect and critic stages complete
+- **WHEN** a generation-ready provider runs a valid architect result followed by
+  a valid critic stage
+- **THEN** it SHALL retain only normalized host-private stage data needed for the
+  compact assist brief
+- **AND** it SHALL not retain or publish raw child output, packets, paths, or
+  model reasoning
+
+#### Scenario: Stage instructions enumerate their validated enums
+- **WHEN** a hidden stage receives its instruction
+- **THEN** every enum the host schema validates SHALL be spelled out in the
+  instruction with its exact allowed values
+- **AND** the instruction literals SHALL be pinned to the host parser's frozen
+  enum constants by a cross-package test
+
+#### Scenario: A stage fails or is cancelled
+- **WHEN** a stage returns malformed, oversized, unsafe, or ambiguous data, the
+  stage deadline expires, or the prompt is cancelled or superseded
+- **THEN** the provider SHALL abort and delete every context it created and drop
+  late results
+- **AND** it SHALL not retry through the Chat sandbox, task delegation, plugin,
+  MCP, or an unsandboxed process
+
+### Requirement: Read stage results only after the hidden reply completes
+
+The stage transport SHALL treat a hidden stage reply as a stage result only
+after the assistant message reports completion, either through its
+message-level completion timestamp or through an end timestamp on every one of
+its text parts. When the server exposes neither marker, the transport SHALL
+require the same non-empty text across a fixed number of consecutive polls
+before returning it. Retrieval SHALL respect the provider-enforced deadline, and
+no partial streamed reply SHALL reach schema validation.
+
+#### Scenario: A streaming reply is not returned early
+- **WHEN** the hidden assistant message is still streaming without completion
+  markers
+- **THEN** the transport SHALL keep polling within the stage deadline
+- **AND** it SHALL NOT return partial text for schema validation
+
+#### Scenario: A completed reply is returned once
+- **WHEN** the assistant message reports completion
+- **THEN** the transport SHALL return its full bounded text as the stage result
+
+#### Scenario: A reply never completes
+- **WHEN** no completion marker or bounded stability is reached within the stage
+  deadline
+- **THEN** the transport SHALL fail the stage as a bounded timeout

@@ -13,16 +13,20 @@ const activationSources = [
   readSource("../vibefeld/vibefeld-runtime.ts"),
 ];
 const commandSchemaSource = readSource("../vibefeld/af-command-schema.ts");
-const qualificationSources = [
-  readSource("../vibefeld/qualification-recorder.ts"),
-  readSource("../vibefeld/qualification-store.ts"),
-];
 const extensionSource = readSource("../extension.ts");
 const agentSource = readSource("../../../../agents/opencode/src/opencode-agent.ts");
 const launchConfigSource = readSource("../../../../agents/opencode/src/launch-config.ts");
 const protocolSource = readSource("../../../../core/src/protocol.ts");
 const chatPrompt = readSource("../../CHAT_SYSTEM.md");
 const writePrompt = readSource("../../WRITE_SYSTEM.md");
+const reasoningAssistSources = [
+  readSource("../vibefeld/reasoning-assist-architect.ts"),
+  readSource("../vibefeld/reasoning-assist-critic.ts"),
+  readSource("../vibefeld/reasoning-assist-orchestrator.ts"),
+  readSource("../vibefeld/reasoning-assist-brief.ts"),
+  readSource("../vibefeld/reasoning-assist-structure-recorder.ts"),
+];
+const restrictedReviewAdapterSource = readSource("../vibefeld/restricted-review-adapter.ts");
 
 describe("Vibefeld activation wiring security negatives", () => {
   it("keeps runtime inputs host-owned and operations fixed", () => {
@@ -129,19 +133,61 @@ describe("Vibefeld activation wiring security negatives", () => {
   });
 
   it("keeps deferred response-gate, adversarial, Hindsight, and memory-provider paths unactivated", () => {
-    for (const source of [...activationSources, ...qualificationSources]) {
+    for (const source of activationSources) {
       expect(source).not.toMatch(/response[- ]gate|adversarial[- ]review|restricted[- ]context|prover|verifier/iu);
       expect(source).not.toMatch(
         /(?:from\s+["'][^"']*(?:hindsight|memory-provider|memory)[^"']*["']|(?:hindsight_|ctx_|detectMemoryProvider|resolveHindsightPlugin|buildHindsight))/iu,
       );
     }
 
-    expect(readSource("../vibefeld/qualification-recorder.ts")).toContain(
-      "Accept exactly `{ latencyMs, status, feedback }`",
+    // The retired post-response qualification and routing modules stay absent.
+    expect(existsSync(new URL("../vibefeld/qualification-recorder.ts", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../vibefeld/qualification-store.ts", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../vibefeld/automatic-routing-policy.ts", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../vibefeld/automatic-routing-evaluation.ts", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../vibefeld/automatic-routing-lifecycle.ts", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../vibefeld/automatic-routing-activation.ts", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../vibefeld/reasoning-review-source-packet.ts", import.meta.url))).toBe(false);
+  });
+});
+
+describe("Reasoning-assist activation negatives", () => {
+  it("keeps assist modules free of nono, profile, sandbox, and configuration authority", () => {
+    for (const source of [...reasoningAssistSources, restrictedReviewAdapterSource]) {
+      expect(source).not.toMatch(/nono/iu);
+      expect(source).not.toMatch(/--profile|\bprofile\b/iu);
+      expect(source).not.toMatch(/--read\b|--allow\b|\bwrap\b/iu);
+      expect(source).not.toMatch(/grant|denied[-_ ]?domain/iu);
+      expect(source).not.toMatch(/\bnested\b/iu);
+      expect(source).not.toMatch(/(?:writeFile|mkdir|configuration\.update)\s*\(/u);
+      expect(source).not.toMatch(/execFile\s*\(|spawn\s*\(\s*["']nono["']/iu);
+      expect(source).not.toMatch(
+        /SandboxManager|wrapWithSandbox|sandbox-exec|buildChatSandbox(?:Filesystem|Network)Policy|vibefeld\.nonoProfile|profile-drafts|\/nono\/profiles/u,
+      );
+      expect(source).not.toMatch(/from ["']vscode["']/u);
+    }
+  });
+
+  it("gains no assist, architect, or critic launch and lifecycle authority", () => {
+    expect(launchConfigSource).not.toMatch(/reasoningAssist|reasoning-assist|architect|critic/iu);
+    expect(launchConfigSource).toMatch(/pluginSources\?:/);
+    expect(launchConfigSource).toMatch(/mcpOverlay\?:/);
+
+    // The extension's assist touchpoints stay bounded: the typed adapter and
+    // recorder injected into the provider options plus the provider lifecycle
+    // hook. Every reasoningAssist identifier stays within that bounded set,
+    // and the wiring reaches no session, configuration, workspace, profile, or
+    // sandbox API.
+    expect(new Set(extensionSource.match(/reasoningAssist\w*/gu) ?? [])).toEqual(
+      new Set(["reasoningAssistAdapter", "reasoningAssistDisposal", "reasoningAssistStructureRecorder"]),
     );
-    expect(readSource("../vibefeld/qualification-recorder.ts")).toContain(
-      'const RECORD_KEYS: readonly string[] = ["latencyMs", "status", "feedback"]',
+    const assistWiring = extensionSource
+      .split("\n")
+      .filter((line) => line.includes("reasoningAssist"))
+      .join("\n");
+    expect(assistWiring).toContain("cancelAllReasoningAssistWork()");
+    expect(assistWiring).not.toMatch(
+      /getConfiguration|configuration\.update|workspace|nono|profile|sandbox|grant|permission|session/iu,
     );
-    expect(readSource("../vibefeld/qualification-store.ts")).toContain("aggregate-only retention");
   });
 });

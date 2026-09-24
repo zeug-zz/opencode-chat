@@ -5,6 +5,12 @@ export const RESTRICTED_REVIEW_PROVER_STAGE_INSTRUCTION =
   'Reply only as JSON: { "proposalId": <identifier>, "objections": [ { "objectionId", "target": { "kind", "id" }, "severity", "reason" } ] }.';
 export const RESTRICTED_REVIEW_VERIFIER_STAGE_INSTRUCTION =
   'Reply only as JSON: { "proposalId": <same identifier>, "dispositions": [ { "objectionId", "disposition", "reason" } ] }.';
+// The host parsers for these exact JSON shapes are implemented by the
+// reasoning-assist parser tasks and must stay in sync with these instructions.
+export const RESTRICTED_REVIEW_ARCHITECT_STAGE_INSTRUCTION =
+  'Reply only as JSON with no prose and no tool use. Return exactly one of: { "kind": "ordinary" } or { "kind": "argument", "conclusionId": <identifier>, "claims": [ { "id": <identifier>, "class": <"deductive" | "computational" | "empirical" | "procedural" | "interpretive" | "normative">, "statement": <bounded text>, "dependsOn": [<identifiers>] } ], "assumptions": [ { "id": <identifier>, "claimId": <identifier>, "statement": <bounded text> } ], "evidenceNeeds": [ { "claimId": <identifier>, "sourceKind": <"citation" | "observation" | "calculation" | "procedure" | "human">, "status": <"not_required" | "source_recorded" | "unverified" | "human_verified" | "conflicted"> } ], "uncertainty": [<bounded text>] }. Return the smallest sufficient map: at most 6 claims, 4 assumptions, 4 evidence needs, and 3 uncertainty items, and keep every statement under 160 characters. The host validates this exact schema and rejects any output outside it.';
+export const RESTRICTED_REVIEW_CRITIC_STAGE_INSTRUCTION =
+  'Reply only as JSON with no prose and no tool use. Return { "objections": [ { "target": { "kind": "claim" | "assumption", "id": <id from the packet> }, "severity": <"material" | "minor">, "reason": <bounded text> } ] } with at most two material objections naming only claims or assumptions present in the packet. Do not claim external truth, cite sources, or use tools. The host validates this exact schema and rejects any output outside it.';
 export const RESTRICTED_REVIEW_MAX_STEPS = 8;
 
 export const RESTRICTED_REVIEW_AUTHORITIES = [

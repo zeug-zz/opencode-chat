@@ -6,8 +6,6 @@ import type {
   Permission,
   ProviderInfo,
   QuestionRequest,
-  ReasoningReviewRuntime,
-  ReasoningReviewSummary,
   SoundEventSetting,
   SoundEventType,
   SoundSettings,
@@ -15,7 +13,6 @@ import type {
 } from "@opencode-chat/core";
 import { createContext, useContext } from "react";
 import type { MessageWithParts } from "../hooks/useMessages";
-import type { ReasoningReviewFeedback, ReasoningReviewSummaries } from "../hooks/useReasoningReview";
 import type { LocaleSetting } from "../locales";
 import type { AllProvidersData, FileAttachment } from "../vscode-api";
 
@@ -80,16 +77,6 @@ export type AppContextValue = {
   childSessions: ChatSession[];
   onNavigateToChild: (sessionId: string) => void;
   onNavigateToParent: () => void;
-
-  // Reasoning review (ephemeral, session/message keyed)
-  reasoningReviewRuntime: ReasoningReviewRuntime | null;
-  reasoningReviewSummaries: ReasoningReviewSummaries;
-  getReasoningReviewSummary: (sessionId: string, messageId: string) => ReasoningReviewSummary | undefined;
-  getReasoningReviewFeedback: (sessionId: string, messageId: string) => ReasoningReviewFeedback | undefined;
-  isReasoningReviewing: (sessionId: string, messageId: string) => boolean;
-  onRequestReasoningReview: (messageId: string) => void;
-  onCancelReasoningReview: (messageId: string) => void;
-  onSubmitReasoningReviewFeedback: (sessionId: string, messageId: string, feedback: ReasoningReviewFeedback) => void;
 };
 
 // Context は AppProvider 内でのみ使用される想定。

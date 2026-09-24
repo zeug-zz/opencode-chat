@@ -43,14 +43,15 @@ import {
   downloadAndValidatePrivateRelease,
 } from "./private-release-updater";
 import { resolveAfRuntime } from "./vibefeld/af-runtime-resolution";
-import { resolveAutomaticRoutingActivation } from "./vibefeld/automatic-routing-activation";
-import { selectAutomaticRouting } from "./vibefeld/automatic-routing-policy";
 import { ClaimProjectionReasoningReviewController } from "./vibefeld/claim-projection-reasoning-review-controller";
 import { createCurrentVibefeldClaimProjectionSeam } from "./vibefeld/current-vibefeld-claim-projection";
 import { HIDDEN_SESSION_MARKER_PREFIX } from "./vibefeld/hidden-session-registry";
-import { QualificationRecorder } from "./vibefeld/qualification-recorder";
-import { createQualificationFileStore } from "./vibefeld/qualification-store";
+import {
+  createReasoningAssistStructureRecorder,
+  type ReasoningAssistStructureRecorder,
+} from "./vibefeld/reasoning-assist-structure-recorder";
 import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
+import type { ReasoningAssistRestrictedReviewAdapter } from "./vibefeld/restricted-review-adapter";
 import {
   DORMANT_REASONING_REVIEW_RUNTIME,
   deriveReasoningReviewRuntime,
@@ -73,6 +74,7 @@ import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform
 
 let agent!: OpenCodeAgent;
 let restrictedReviewDisposal: (() => Promise<void>) | undefined;
+let reasoningAssistDisposal: (() => void) | undefined;
 let resolvedRestrictedReviewModel: RestrictedReviewModel | undefined;
 let chatInitialization: Promise<ChatViewProvider | undefined> | undefined;
 let sandboxController: ChatSandboxController<ChatSandboxStatus> | undefined;
@@ -607,25 +609,16 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   // Dynamic selection: the composition above is constructed once and this is
   // the only bridge preflight of the extension activation. Ordinary messages,
   // session switches, and later view resolves reuse the injected controller.
-  const reasoningReviewController = await selectReasoningReviewController(vibefeldActivation);
+  const {
+    controller: reasoningReviewController,
+    reasoningAssistAdapter,
+    reasoningAssistStructureRecorder,
+  } = await selectReasoningReviewDependencies(vibefeldActivation);
   const reasoningReviewPreference = {
     read: () => readVibefeldPreference(workspaceUri),
     setUserEnabled: (value: boolean) => updateVibefeldEnabled(value, workspaceUri),
     setWorkspaceOptOut: (value: boolean) => updateVibefeldWorkspaceOptOut(value, workspaceUri),
   };
-  const automaticRouting = resolveAutomaticRoutingActivation({
-    preference: reasoningReviewPreference.read(),
-    runtime: await reasoningReviewController.getRuntime(),
-    // Qualification stays unpublished until the host-private aggregate
-    // recorder reaches the existing case minimum; the recorder is read at
-    // selection time through the bounded evaluation provider below.
-    evaluation: undefined,
-  });
-  // Host-private aggregate live capture. Retention is beneath VS Code's global
-  // storage only; contexts without that path remain in-memory and inert.
-  const qualificationRecorder = new QualificationRecorder(
-    globalStoragePath ? createQualificationFileStore({ globalStoragePath }) : undefined,
-  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("opencode-chat.selectNonoProfile", () => selectNonoProfile(workspaceUri)),
@@ -638,14 +631,11 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     memoryProviderStatus,
     memoryRetentionStatus,
     reasoningReviewController,
-    // The 6.1 fail-closed resolver stays in place: the recorder only ever
-    // contributes an aggregate that the existing validator reports qualified.
-    automaticRouting: {
-      ...automaticRouting,
-      evaluationProvider: () => qualificationRecorder.currentEvaluation(),
-      router: selectAutomaticRouting,
-    },
-    qualificationRecorder,
+    // Host-private reasoning-assist dependencies selected by the single
+    // activation composition above; both are optional and the assist stays
+    // dormant whenever either is absent.
+    ...(reasoningAssistAdapter ? { reasoningAssistAdapter } : {}),
+    ...(reasoningAssistStructureRecorder ? { reasoningAssistStructureRecorder } : {}),
     // Availability-gated preference seam: the user toggle writes the Global
     // target and the workspace opt-out writes the Workspace target for this
     // workspace. Reads and writes stay within the two bounded boolean keys.
@@ -673,6 +663,9 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
       }
     },
   });
+  // The assist preflight holds host-private lifecycle state: deactivation must
+  // stop every in-flight preflight before adapters and sessions are torn down.
+  reasoningAssistDisposal = () => chatViewProvider?.cancelAllReasoningAssistWork();
   sandboxController = new ChatSandboxController<ChatSandboxStatus>({
     stop: () => agent.stopForReconnect(),
     start: async (settings) => {
@@ -799,31 +792,54 @@ const CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME: ReasoningReviewRunt
 };
 
 /**
- * Runs the one bounded activation preflight and selects the review controller.
- * A dormant composition is never inspected. A composed bridge is preflighted
- * exactly once, and the claim seam is then constructed once from the settled
- * preflight without touching the bridge. Only a ready preflight whose seam
- * reports an explicitly supported claim operation selects the claim-projection
- * controller; a ready runtime without that capability keeps the unavailable
- * controller and publishes the bounded `claim-capability-unavailable` status,
- * so `available` is never published without a supported claim operation. Any
- * preflight or construction failure is nonfatal and bounded: no raw error or
- * host path escapes, and the dormant unavailable controller stays injected.
- * The published runtime status is fixed from this single outcome, so later
- * status reads never re-preflight, discover, or spawn.
+ * The bounded set of host-private review dependencies selected by the single
+ * activation composition. The assist dependencies stay optional and are
+ * omitted whenever their runtime gate fails.
  */
-async function selectReasoningReviewController(
+type ReasoningReviewSelection = Readonly<{
+  controller: IReasoningReviewController;
+  reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter;
+  reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder;
+}>;
+
+/**
+ * Runs the one bounded activation preflight and selects the review
+ * dependencies. A dormant composition is never inspected. A composed bridge is
+ * preflighted exactly once, and the claim seam is then constructed once from
+ * the settled preflight without touching the bridge. Only a ready preflight
+ * whose seam reports an explicitly supported claim operation selects the
+ * claim-projection controller; a ready runtime without that capability keeps
+ * the unavailable controller and publishes the bounded
+ * `claim-capability-unavailable` status, so `available` is never published
+ * without a supported claim operation. Any preflight or construction failure
+ * is nonfatal and bounded: no raw error or host path escapes, and the dormant
+ * unavailable controller stays injected. The published runtime status is fixed
+ * from this single outcome, so later status reads never re-preflight,
+ * discover, or spawn.
+ *
+ * The readiness-gated restricted-provider attempt runs independently of the
+ * claim-path selection: a ready provider always builds the host-private
+ * adapter and registers its disposal, the adapter is injected for the
+ * reasoning-assist only when the preflight is ready, and the adversarial
+ * controller is selected exactly when no claim controller was selected. The
+ * structure recorder is built from the already-preflighted claim seam only
+ * when its single guarded capability read reports support. Every attempt
+ * failure is fail-closed and never changes the controller fallback.
+ */
+async function selectReasoningReviewDependencies(
   composition: VibefeldActivationComposition,
   options: RestrictedReviewSelectionOptions = {},
-): Promise<IReasoningReviewController> {
+): Promise<ReasoningReviewSelection> {
   let runtime: ReasoningReviewRuntime =
     composition.state === "composed" ? PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME : DORMANT_REASONING_REVIEW_RUNTIME;
   let claimAvailable = false;
+  let preflightReady = false;
   let claimSeam: ReturnType<typeof createCurrentVibefeldClaimProjectionSeam> | undefined;
   try {
     if (composition.state === "composed") {
       const preflight = await composition.bridge.preflight();
       if (preflight.state === "ready") {
+        preflightReady = true;
         claimSeam = createCurrentVibefeldClaimProjectionSeam(composition.bridge);
         claimAvailable = claimSeam.getCapability().supported;
         runtime = claimAvailable
@@ -837,18 +853,20 @@ async function selectReasoningReviewController(
     // A rejected preflight is nonfatal; the bounded failure status stays.
   }
 
+  let controller: IReasoningReviewController | undefined;
   if (claimAvailable && claimSeam) {
-    return new RuntimeReportingReasoningReviewController(
+    controller = new RuntimeReportingReasoningReviewController(
       new ClaimProjectionReasoningReviewController(claimSeam),
       runtime,
     );
   }
 
-  const model = options.model ?? resolvedRestrictedReviewModel;
-  const createProvider =
-    options.createProvider ??
-    ((pinnedModel: RestrictedReviewModel) => agent?.createRestrictedReviewProvider(pinnedModel));
+  let reasoningAssistAdapter: ReasoningAssistRestrictedReviewAdapter | undefined;
   try {
+    const model = options.model ?? resolvedRestrictedReviewModel;
+    const createProvider =
+      options.createProvider ??
+      ((pinnedModel: RestrictedReviewModel) => agent?.createRestrictedReviewProvider(pinnedModel));
     const provider = model ? createProvider(model) : undefined;
     if (provider && (await provider.checkReadiness())) {
       // Keep the adversarial implementation dormant-by-construction when no
@@ -863,21 +881,44 @@ async function selectReasoningReviewController(
         import("./vibefeld/restricted-review-adapter"),
       ]);
       const adapter = createRestrictedReviewAdapter({ provider });
-      const seam = createAdversarialReviewSeam(adapter);
-      if (seam.getCapability().supported) {
-        restrictedReviewDisposal = adapter.dispose;
-        return new RuntimeReportingReasoningReviewController(
-          new AdversarialReviewReasoningReviewController(seam, {
-            readinessCheck: () => provider.checkReadiness(),
-          }),
-          { state: "available" },
-        );
+      // Every constructed adapter owns host-private lifecycle state, so its
+      // disposal is registered whether it is injected for the assist or only
+      // selected behind the adversarial fallback controller.
+      restrictedReviewDisposal = adapter.dispose;
+      if (preflightReady) reasoningAssistAdapter = adapter;
+      if (!controller) {
+        const seam = createAdversarialReviewSeam(adapter);
+        if (seam.getCapability().supported) {
+          controller = new RuntimeReportingReasoningReviewController(
+            new AdversarialReviewReasoningReviewController(seam, {
+              readinessCheck: () => provider.checkReadiness(),
+            }),
+            { state: "available" },
+          );
+        }
       }
     }
   } catch {
     // Restricted review is optional and fails closed.
+    reasoningAssistAdapter = undefined;
   }
-  return new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), runtime);
+
+  let reasoningAssistStructureRecorder: ReasoningAssistStructureRecorder | undefined;
+  try {
+    // The seam capability is read exactly once above; a throw or unsupported
+    // report leaves the recorder absent instead of failing activation.
+    reasoningAssistStructureRecorder =
+      claimSeam && claimAvailable ? createReasoningAssistStructureRecorder(claimSeam) : undefined;
+  } catch {
+    reasoningAssistStructureRecorder = undefined;
+  }
+
+  return {
+    controller:
+      controller ?? new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), runtime),
+    reasoningAssistAdapter,
+    reasoningAssistStructureRecorder,
+  };
 }
 
 type RestrictedReviewSelectionOptions = Readonly<{
@@ -915,6 +956,17 @@ class LazyChatViewProvider implements vscode.WebviewViewProvider {
 
 export async function deactivate() {
   sandboxController = undefined;
+  // Stop host-private assist work before restricted children and the agent
+  // connection are torn down; a provider without in-flight work is a no-op.
+  const disposeAssist = reasoningAssistDisposal;
+  reasoningAssistDisposal = undefined;
+  if (disposeAssist) {
+    try {
+      disposeAssist();
+    } catch {
+      // Assist cleanup is best effort during shutdown.
+    }
+  }
   const dispose = restrictedReviewDisposal;
   restrictedReviewDisposal = undefined;
   if (dispose) {

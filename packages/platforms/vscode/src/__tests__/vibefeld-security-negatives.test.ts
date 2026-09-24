@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { RESTRICTED_REVIEW_PERMISSION_ATTESTATION } from "../vibefeld/adversarial-review-contract";
 import { createAdversarialReviewSeam, type RestrictedReviewAdapter } from "../vibefeld/adversarial-review-seam";
@@ -13,6 +13,24 @@ import { UnavailableReasoningReviewController } from "../vibefeld/unavailable-re
 import type { AfBridgeOperation } from "../vibefeld/vibefeld-runtime";
 
 const readSource = (relativePath: string): string => readFileSync(new URL(relativePath, import.meta.url), "utf8");
+
+type ProductionSource = Readonly<{ name: string; source: string }>;
+
+/**
+ * Every non-test TypeScript module under the extension `src/` tree, named by
+ * its `src/`-relative path. Test directories and test files are excluded so a
+ * production regression cannot hide behind the suites that assert it.
+ */
+const productionSources = (relativeDirectory: string): readonly ProductionSource[] =>
+  readdirSync(new URL(relativeDirectory, import.meta.url), { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) {
+      if (entry.name === "__tests__" || entry.name === "node_modules") return [];
+      return productionSources(`${relativeDirectory}${entry.name}/`);
+    }
+    if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) return [];
+    const relativePath = `${relativeDirectory}${entry.name}`;
+    return [{ name: relativePath.replace(/^\.\.\//u, ""), source: readSource(relativePath) }];
+  });
 
 const extensionSource = readSource("../extension.ts");
 const chatViewSource = readSource("../chat-view-provider.ts");
@@ -35,6 +53,18 @@ const currentClaimProjectionSource = readSource("../vibefeld/current-vibefeld-cl
 const restrictedOverlaySource = readSource("../../../../agents/opencode/src/restricted-review-overlay.ts");
 const restrictedProviderSource = readSource("../../../../agents/opencode/src/restricted-review-provider.ts");
 const restrictedAdapterSource = readSource("../vibefeld/restricted-review-adapter.ts");
+const reasoningAssistArchitectSource = readSource("../vibefeld/reasoning-assist-architect.ts");
+const reasoningAssistCriticSource = readSource("../vibefeld/reasoning-assist-critic.ts");
+const reasoningAssistOrchestratorSource = readSource("../vibefeld/reasoning-assist-orchestrator.ts");
+const reasoningAssistBriefSource = readSource("../vibefeld/reasoning-assist-brief.ts");
+const reasoningAssistStructureRecorderSource = readSource("../vibefeld/reasoning-assist-structure-recorder.ts");
+const reasoningAssistSources = [
+  reasoningAssistArchitectSource,
+  reasoningAssistCriticSource,
+  reasoningAssistOrchestratorSource,
+  reasoningAssistBriefSource,
+  reasoningAssistStructureRecorderSource,
+];
 const adversarialControllerSource = readSource("../vibefeld/adversarial-review-reasoning-review-controller.ts");
 const hiddenRegistrySource = readSource("../vibefeld/hidden-session-registry.ts");
 const redactionSource = readSource("../vibefeld/adversarial-review-redaction.ts");
@@ -197,7 +227,7 @@ describe("Vibefeld runtime bridge security negatives", () => {
     expect(extensionSource).not.toMatch(/vibefeld-prover|vibefeld-verifier/iu);
     const selectionSource =
       extensionSource.match(
-        /async function selectReasoningReviewController[\s\S]*?\n\}\n\ntype RestrictedReviewSelectionOptions/u,
+        /async function selectReasoningReviewDependencies[\s\S]*?\n\}\n\ntype RestrictedReviewSelectionOptions/u,
       )?.[0] ?? "";
     expect(selectionSource).not.toMatch(
       /configuration\.update|profile.*(?:create|promote)|workspace.*(?:write|mkdir)|proofWorkspace/iu,
@@ -276,11 +306,43 @@ describe("Vibefeld runtime bridge security negatives", () => {
       expect(source).not.toMatch(/(?:runAf|invokeAf|proofRoot|approvedOperations)/u);
     }
 
-    expect(protocolSource).toContain('type: "requestReasoningReview"');
-    expect(protocolSource).toContain('type: "cancelReasoningReview"');
     expect(protocolSource).toContain('type: "reasoningRuntime"');
-    expect(protocolSource).toContain('type: "reasoningReview"');
+    expect(protocolSource).toContain('type: "reasoningReviewPreference"');
+    // The retired completed-message review and feedback discriminants stay out
+    // of both protocol directions.
+    expect(protocolSource).not.toContain('type: "requestReasoningReview"');
+    expect(protocolSource).not.toContain('type: "cancelReasoningReview"');
+    expect(protocolSource).not.toContain('type: "setReasoningReviewFeedback"');
+    expect(protocolSource).not.toMatch(/type: "reasoningReview"/u);
     expect(agentInterfaceSource).not.toMatch(/VibefeldRuntimeBridge|ReasoningReviewController/u);
+  });
+
+  it("has no post-response review route and never compiles completed assistant prose", () => {
+    // The only production route that converted completed visible assistant text
+    // into the private compile grammar is gone.
+    expect(existsSync(new URL("../vibefeld/reasoning-review-source-packet.ts", import.meta.url))).toBe(false);
+    for (const source of [chatViewSource, extensionSource]) {
+      expect(source).not.toMatch(/buildReasoningReviewSourcePacket|reasoning-review-source-packet|compileClaimGraph/u);
+      // No ordinary host route invokes a review controller at all.
+      expect(source).not.toMatch(/\.review\(\{|controller\.review/u);
+    }
+
+    // No production module under src/ references the deleted source packet.
+    const productionSources = readdirSync(new URL("..", import.meta.url))
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => ({ name, source: readSource(`../${name}`) }));
+    for (const { name, source } of productionSources) {
+      expect(source, name).not.toMatch(/buildReasoningReviewSourcePacket|reasoning-review-source-packet/u);
+    }
+
+    // No message handler or retained metadata for a manual or automatic
+    // post-response review remains in the ordinary host routes.
+    expect(chatViewSource).not.toMatch(
+      /requestReasoningReview|cancelReasoningReview|setReasoningReviewFeedback|type: "reasoningReview"|automatic-routing|AutomaticRouting|qualification|routeAutomaticReview/u,
+    );
+    expect(extensionSource).not.toMatch(
+      /automatic-routing|AutomaticRouting|QualificationRecorder|createQualificationFileStore|qualification-recorder|qualification-store/u,
+    );
   });
 
   it("keeps claim projection host-private and out of model-visible authority routes", () => {
@@ -298,8 +360,6 @@ describe("Vibefeld runtime bridge security negatives", () => {
     expect(extensionSource).toContain("ClaimProjectionReasoningReviewController");
     expect(extensionSource).toContain("createCurrentVibefeldClaimProjectionSeam");
     expect(extensionSource).toContain("createRestrictedReviewAdapter");
-    expect(chatViewSource).toContain('invocation: "automatic"');
-    expect(chatViewSource).toContain("controller.review");
     expect(extensionSource).not.toMatch(/fixture-claim-projection|createFixtureOnly|fixtureClaimProjection/u);
     expect(extensionSource).not.toMatch(/vibefeld-prover|vibefeld-verifier/iu);
 
@@ -337,7 +397,7 @@ describe("Vibefeld runtime bridge security negatives", () => {
   it("gates claim-projection selection on a supported claim operation before publishing availability", () => {
     const selectionSource =
       extensionSource.match(
-        /async function selectReasoningReviewController[\s\S]*?\n\}\n\ntype RestrictedReviewSelectionOptions/u,
+        /async function selectReasoningReviewDependencies[\s\S]*?\n\}\n\ntype RestrictedReviewSelectionOptions/u,
       )?.[0] ?? "";
     expect(selectionSource).not.toBe("");
 
@@ -595,7 +655,7 @@ describe("Vibefeld runtime bridge security negatives", () => {
 
   it("keeps ordinary activation dormant and retains the unavailable manual controller", async () => {
     expect(extensionSource).toContain("import { UnavailableReasoningReviewController }");
-    expect(extensionSource).toContain("selectReasoningReviewController(vibefeldActivation)");
+    expect(extensionSource).toContain("selectReasoningReviewDependencies(vibefeldActivation)");
     expect(extensionSource).toContain("reasoningReviewController,");
     expect(extensionSource).not.toMatch(/new\s+VibefeldRuntimeBridge|\.allocate\(\)/u);
     // Exactly one bounded activation preflight; no other module may preflight.
@@ -624,5 +684,199 @@ describe("Vibefeld runtime bridge security negatives", () => {
       invocation: "manual",
       evidenceStatus: "not_assessed",
     });
+  });
+});
+
+describe("Reasoning-assist security negatives", () => {
+  it("keeps the assist surface host-owned with no IAgent or protocol route", () => {
+    // `IAgent` gains no assist member and no assist/architect/critic type, so no
+    // model-visible caller reaches a preflight, stage, or restricted adapter
+    // through the agent contract.
+    expect(agentInterfaceSource).not.toMatch(
+      /reasoningAssist|ReasoningAssist|architect|critic|restrictedReview[\s\S]{0,80}stage|runReasoningAssistStage|ReasoningAssistRestrictedReviewAdapter|compileClaimGraph/iu,
+    );
+
+    // The protocol's assist surface is exactly the three prompt-scoped
+    // host-to-UI messages. The UI-to-host union stays request- and
+    // activation-free, and no architect/critic/stage-text/graph field crosses
+    // the protocol in either direction.
+    const uiToHostUnion = protocolSource.match(
+      /export type UIToHostMessage =([\s\S]*?)\nexport type HostToUIMessage/u,
+    )?.[1];
+    const hostToUiUnion = protocolSource.match(/export type HostToUIMessage =([\s\S]*)$/u)?.[1];
+    expect(uiToHostUnion).toBeDefined();
+    expect(hostToUiUnion).toBeDefined();
+    expect(uiToHostUnion).not.toBe("");
+    expect(hostToUiUnion).not.toBe("");
+    expect(uiToHostUnion).not.toMatch(/reasoningAssist|reasoning-assist|architect|critic/iu);
+    expect([...(hostToUiUnion ?? "").matchAll(/type: "(reasoningAssist\w*)"/gu)].map(([, name]) => name)).toEqual([
+      "reasoningAssistProgress",
+      "reasoningAssistSummary",
+      "reasoningAssistCleared",
+    ]);
+    expect(protocolSource).not.toMatch(/architect|critic|stageText|stage-text|claimGraph|compileClaimGraph/u);
+    expect(protocolSource).not.toMatch(/requestReasoningAssist|cancelReasoningAssist|activateReasoningAssist/u);
+  });
+
+  it("keeps architect, critic, and assist wiring out of model-visible agent, launch, and prompt surfaces", () => {
+    for (const source of [agentSource, launchConfigSource, chatPrompt, writePrompt]) {
+      expect(source).not.toMatch(/architect|critic|reasoningAssist|reasoning-assist/iu);
+    }
+
+    expect(packageSource).not.toMatch(/reasoningAssist|reasoning-assist|architect|critic/iu);
+    // The launch configuration gains no assist/AF option: only the existing
+    // bounded plugin sources and MCP overlay seams remain.
+    expect(launchConfigSource).toMatch(/pluginSources\?:/);
+    expect(launchConfigSource).toMatch(/mcpOverlay\?:/);
+    expect(launchConfigSource).not.toMatch(
+      /(?:reasoningAssist|architect|critic)[\s\S]{0,80}(?:Argv|Executable|Workspace|Environment)/iu,
+    );
+  });
+
+  it("keeps the restricted overlay and assist stages tool-less, in-memory, and permission-free", () => {
+    for (const source of [...reasoningAssistSources, restrictedAdapterSource]) {
+      expect(source, "assist/restricted source").not.toMatch(
+        /pluginSources|mcpOverlay|customTools|agentOverlay|configuration\.update/u,
+      );
+      expect(source, "assist/restricted source").not.toMatch(/\bgrant\b/iu);
+      expect(source, "assist/restricted source").not.toMatch(
+        /\b(?:writeFile|writeFileSync|appendFile|mkdir|rm|unlink|createWriteStream)\s*\(/u,
+      );
+      expect(source, "assist/restricted source").not.toMatch(/node:fs|node:child_process|from ["']vscode["']/u);
+    }
+
+    // The five host-private assist modules add no plugin, MCP, or custom-tool
+    // surface at all; only the retained restricted seam names review roles.
+    for (const source of reasoningAssistSources) {
+      expect(source).not.toMatch(/plugin|mcp|customTool/iu);
+    }
+
+    // The agent-package overlay and provider add no plugin, MCP, overlay, or
+    // permission-grant authority of their own.
+    for (const source of [restrictedOverlaySource, restrictedProviderSource]) {
+      expect(source).not.toMatch(/pluginSources|mcpOverlay|customTools|configuration\.update|\bgrant\b/iu);
+      expect(source).not.toMatch(/\b(?:writeFile|writeFileSync|appendFile|mkdir|unlink|createWriteStream)\s*\(/u);
+    }
+  });
+
+  it("keeps the single delegated worker and the deny-by-default task map as the only delegation route", () => {
+    // Exactly one allow target: the wildcard denies everything else, so no
+    // architect/critic task target can be delegated to.
+    expect(agentSource).toMatch(/task:\s*\{\s*"\*":\s*"deny",\s*"chat-research-worker":\s*"allow",\s*\},/u);
+    expect(agentSource).toMatch(/"chat-research-worker":\s*\{\s*mode:\s*"subagent"/u);
+    expect(agentSource).not.toMatch(/architect|critic|reasoningAssist|reasoning-assist/iu);
+
+    // The worker MCP allow list is exactly the reviewed package prefixes; no AF
+    // or assist MCP/tool prefix is added.
+    const workerBlock = agentSource.match(/"chat-research-worker":\s*\{[\s\S]*?\n {4}\},/u)?.[0] ?? "";
+    expect(workerBlock).not.toBe("");
+    expect([...workerBlock.matchAll(/"([\w-]+_\*)":\s*"allow"/gu)].map(([, prefix]) => prefix)).toEqual([
+      "firecrawl_*",
+      "ctx_*",
+      "context-mode_*",
+      "paper-search_*",
+    ]);
+    expect(workerBlock).not.toMatch(/\baf\b|reasoning|assist|architect|critic/iu);
+  });
+
+  it("registers no architect or critic agent entry in any production source", () => {
+    for (const { name, source } of productionSources("../")) {
+      expect(source, name).not.toMatch(/["']?(?:architect|critic)["']?\s*:\s*\{/iu);
+    }
+    // The visible agent overlay registers exactly the Scout, worker, and Build
+    // agents; any assist stage stays inside the hidden restricted agent.
+    expect(agentSource).toMatch(/scout:\s*\{[\s\S]*?"chat-research-worker":\s*\{[\s\S]*?build:\s*\{/u);
+  });
+
+  it("keeps completed prose away from the claim compiler and builds the assist graph only from parsed architect output", () => {
+    // Every production importer of the completed-prose compiler is accounted
+    // for: the private graph module itself and the retained dormant
+    // adversarial/projection machinery. No assist, dispatch, activation, or
+    // controller module may become a new importer.
+    const retainedClaimCompilerSources = [
+      "vibefeld/adversarial-review-orchestrator.ts",
+      "vibefeld/adversarial-review-reasoning-review-controller.ts",
+      "vibefeld/claim-graph.ts",
+      "vibefeld/claim-projection-reasoning-review-controller.ts",
+    ] as const;
+    const claimCompilerImporters = productionSources("../")
+      .filter(({ source }) => /compileClaimGraph/u.test(source))
+      .map(({ name }) => name)
+      .sort();
+    expect(claimCompilerImporters).toEqual([...retainedClaimCompilerSources].sort());
+
+    // The architect converts only its own parsed JSON result and revalidates it
+    // through the private domain: no compiled prose and no assistant text can
+    // enter the assist graph, and the packet accepts only the three bounded
+    // input keys.
+    expect(reasoningAssistArchitectSource).toContain("validateClaimGraph(");
+    expect(reasoningAssistArchitectSource).not.toContain("compileClaimGraph");
+    expect(reasoningAssistArchitectSource).toContain("JSON.parse(text)");
+    expect(reasoningAssistArchitectSource).toContain("graph: validation.graph");
+    expect(reasoningAssistArchitectSource).toContain(
+      'const PACKET_INPUT_KEYS = new Set(["userText", "recentTurns", "priorSummary"]);',
+    );
+    for (const source of reasoningAssistSources) {
+      expect(source).not.toMatch(/sourceText|assistantResponse|completedMessage|messageText|responseText/iu);
+    }
+  });
+
+  it("keeps the assist wiring to the bounded activation injection and lifecycle hook with no widening", () => {
+    // The extension's assist surface is the bounded activation injection: the
+    // typed adapter and recorder passed straight into the provider options,
+    // plus the provider lifecycle hook and its best-effort deactivation call.
+    // Nothing session-, config-, workspace-, or sandbox-shaped is reachable
+    // through it, and the restricted disposal is registered through the
+    // adapter itself.
+    const assistWiringLines = extensionSource.split("\n").filter((line) => line.includes("reasoningAssist"));
+    const assistWiring = assistWiringLines.join("\n");
+    expect(assistWiring).toContain("cancelAllReasoningAssistWork()");
+    expect(assistWiring).toContain("reasoningAssistAdapter");
+    expect(assistWiring).toContain("reasoningAssistStructureRecorder");
+    expect(assistWiring).not.toMatch(
+      /getConfiguration|configuration\.update|workspace|nono|sandbox|profile|grant|permission|session/iu,
+    );
+
+    // The only assist modules the extension reaches are the two host-private
+    // vibefeld factories: the recorder (type plus factory) and the adapter
+    // (type only; its factory stays behind the readiness-gated dynamic import
+    // shared with the adversarial seam). No architect, critic, orchestrator,
+    // or brief module is imported by activation.
+    expect(extensionSource).toContain('from "./vibefeld/reasoning-assist-structure-recorder"');
+    expect(extensionSource).toContain('from "./vibefeld/restricted-review-adapter"');
+    expect(extensionSource).toMatch(/import\("\.\/vibefeld\/restricted-review-adapter"\)/u);
+    expect(extensionSource).not.toMatch(
+      /from "\.\/vibefeld\/(?:reasoning-assist-(?:architect|critic|orchestrator|brief))"/u,
+    );
+    expect(extensionSource).toMatch(/restrictedReviewDisposal = adapter\.dispose;/u);
+    expect(extensionSource).toContain("let reasoningAssistDisposal: (() => void) | undefined;");
+    expect(extensionSource).toContain(
+      "reasoningAssistDisposal = () => chatViewProvider?.cancelAllReasoningAssistWork();",
+    );
+    expect(extensionSource).toContain("const disposeAssist = reasoningAssistDisposal;");
+    expect(extensionSource).toContain("reasoningAssistDisposal = undefined;");
+
+    // The dispatch path reaches only the host-owned orchestrator and brief
+    // helpers, and appends the brief only to the host-owned system instruction.
+    const assistDispatchBlock =
+      chatViewSource.match(/private async dispatchPrompt[\s\S]*?\n {2}\}\n\n {2}private postMcpPrefs/u)?.[0] ?? "";
+    expect(assistDispatchBlock).not.toBe("");
+    expect(assistDispatchBlock).toContain("runReasoningAssistPreflight");
+    expect(assistDispatchBlock).toContain("appendReasoningAssistBrief");
+    expect(assistDispatchBlock).toMatch(
+      /system: assist \? appendReasoningAssistBrief\(baseSystem, assist\.brief\) : baseSystem/u,
+    );
+    expect(assistDispatchBlock).not.toMatch(
+      /reasoningReviewController|\.review\(|requestReasoningReview|cancelReasoningReview|automatic-routing|qualification|blocked/iu,
+    );
+
+    // The assist modules perform no configuration, workspace, sandbox, profile,
+    // permission, or process work of their own.
+    for (const source of [...reasoningAssistSources, restrictedAdapterSource]) {
+      expect(source).not.toMatch(
+        /getConfiguration|configuration\.update|vscode\.workspace|\bworkspace\b|nono|sandbox-exec|\bprofile\b|\bgrant\b|permission[\s\S]{0,40}(?:allow|true)/iu,
+      );
+      expect(source).not.toMatch(/\b(?:spawn|exec|execFile|fetch)\s*\(/u);
+    }
   });
 });

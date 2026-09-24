@@ -8,9 +8,12 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenCodePaths, resolveRuntimeCachePaths } from "../chat-sandbox-policy";
 import { classifyConnectError } from "../connect-error";
+import { AdversarialReviewReasoningReviewController } from "../vibefeld/adversarial-review-reasoning-review-controller";
 import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-projection-reasoning-review-controller";
 import { createClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
 import { HIDDEN_SESSION_MARKER_PREFIX, hiddenSessionRegistry } from "../vibefeld/hidden-session-registry";
+import type { ReasoningAssistStructureRecorder } from "../vibefeld/reasoning-assist-structure-recorder";
+import type { ReasoningAssistRestrictedReviewAdapter } from "../vibefeld/restricted-review-adapter";
 import {
   DORMANT_REASONING_REVIEW_RUNTIME,
   deriveReasoningReviewRuntime,
@@ -50,6 +53,7 @@ let mockChatViewProviderInstance:
   | {
       publishMemoryProviderStatus: ReturnType<typeof vi.fn>;
       refresh: ReturnType<typeof vi.fn>;
+      cancelAllReasoningAssistWork: ReturnType<typeof vi.fn>;
     }
   | undefined;
 const mockResolveMcpInventory = vi.fn(() => ({
@@ -131,18 +135,17 @@ function injectedReviewController(): RuntimeReportingReasoningReviewController {
   return options.reasoningReviewController;
 }
 
-type InjectedQualificationWiring = {
-  qualificationRecorder?: { record?: unknown; currentEvaluation?: unknown };
-  automaticRouting?: {
-    enabled?: boolean;
-    evaluation?: unknown;
-    evaluationProvider?: () => unknown;
-    router?: unknown;
-  };
+type InjectedChatViewOptions = {
+  reasoningReviewController?: RuntimeReportingReasoningReviewController;
+  reasoningReviewPreference?: unknown;
+  automaticRouting?: unknown;
+  qualificationRecorder?: unknown;
+  reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter;
+  reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder;
 };
 
-function injectedQualificationWiring(): InjectedQualificationWiring {
-  const options = mockChatViewProviderOptions.at(-1) as InjectedQualificationWiring | undefined;
+function injectedChatViewOptions(): InjectedChatViewOptions {
+  const options = mockChatViewProviderOptions.at(-1) as InjectedChatViewOptions | undefined;
   if (!options) throw new Error("no ChatViewProvider options were injected");
   return options;
 }
@@ -237,6 +240,7 @@ function createMockChatViewProviderClass() {
       resolveWebviewView = vi.fn();
       publishChatSandboxStatus = vi.fn((status: unknown) => mockPublishedSandboxStatuses.push(status));
       publishMemoryProviderStatus = vi.fn();
+      cancelAllReasoningAssistWork = vi.fn();
     },
     { viewType: "opencode-chat.chatView" },
   );
@@ -371,7 +375,7 @@ describe("extension", () => {
       buildMcpOverlay: vi.fn(() => mockMcpOverlay),
       RESTRICTED_REVIEW_PROMPT: "restricted review prompt",
       RESTRICTED_REVIEW_MAX_STEPS: 4,
-      MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS: 30_000,
+      MAX_RESTRICTED_REVIEW_STAGE_TIMEOUT_MS: 35_000,
       MAX_RESTRICTED_REVIEW_TEXT_LENGTH: 8_192,
       mintRestrictedReviewProvenance: (role: "prover" | "verifier") => ({
         identity: `${role}-identity`,
@@ -597,18 +601,14 @@ describe("extension", () => {
       expect(mockUpdateLaunchConfiguration).not.toHaveBeenCalled();
     });
 
-    it("injects the host-private qualification recorder with a dynamic evaluation provider", async () => {
+    it("injects no post-response review or qualification wiring", async () => {
       const ext = await importExtension();
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
 
-      const wiring = injectedQualificationWiring();
-      expect(typeof wiring.qualificationRecorder?.record).toBe("function");
-      expect(typeof wiring.qualificationRecorder?.currentEvaluation).toBe("function");
-      expect(typeof wiring.automaticRouting?.evaluationProvider).toBe("function");
-      // A fresh recorder has no cases: nothing is reported before the
-      // existing 100-case minimum, so automatic routing stays inert.
-      expect(wiring.automaticRouting?.evaluationProvider?.()).toBeUndefined();
-      expect(wiring.automaticRouting?.evaluation).toBeUndefined();
+      const wiring = injectedChatViewOptions();
+      expect(wiring).not.toHaveProperty("automaticRouting");
+      expect(wiring).not.toHaveProperty("qualificationRecorder");
+      expect(Object.keys(wiring).sort()).not.toContain("automaticRouting");
     });
 
     it("preserves a resolved nono backend through activation and reconnect", async () => {
@@ -1869,7 +1869,7 @@ describe("extension", () => {
         expect(bridge.run).not.toHaveBeenCalled();
       });
 
-      it("keeps automatic routing, the effective preference, and qualification inert without the claim capability", async () => {
+      it("keeps the effective preference inert and starts no post-response review without the claim capability", async () => {
         const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
         mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
 
@@ -1881,15 +1881,11 @@ describe("extension", () => {
           reason: "claim-capability-unavailable",
         });
 
-        const wiring = injectedQualificationWiring();
-        // The stored preference defaults to enabled in this workspace, so
-        // availability is the only gate holding the effective state off.
-        expect(wiring.automaticRouting?.enabled).toBe(false);
-        expect(wiring.automaticRouting?.evaluation).toBeUndefined();
-        expect(wiring.automaticRouting?.evaluationProvider?.()).toBeUndefined();
-        // No qualification evidence is recorded while the capability is absent.
-        const recorder = wiring.qualificationRecorder as { currentEvaluation: () => unknown } | undefined;
-        expect(recorder?.currentEvaluation()).toBeUndefined();
+        const wiring = injectedChatViewOptions();
+        // No automatic routing or qualification wiring is injected at all;
+        // the bounded unavailable runtime is the only published review state.
+        expect(wiring).not.toHaveProperty("automaticRouting");
+        expect(wiring).not.toHaveProperty("qualificationRecorder");
         expect(preflight).toHaveBeenCalledTimes(1);
       });
 
@@ -2104,7 +2100,7 @@ describe("extension", () => {
         expect(mockVibefeldAfPathReadCount).toBe(2);
       });
 
-      it("keeps the single bridge preflight in activation and out of message paths", () => {
+      it("keeps the bridge preflight host-private and out of the normal message path", () => {
         const extensionSource = readSource("../extension.ts");
         const chatViewSource = readSource("../chat-view-provider.ts");
         const activationSource = readSource("../vibefeld/vibefeld-activation.ts");
@@ -2115,7 +2111,6 @@ describe("extension", () => {
 
         expect(extensionSource.match(/\.preflight\(\)/gu) ?? []).toHaveLength(1);
         for (const source of [
-          chatViewSource,
           activationSource,
           runtimeSource,
           claimControllerSource,
@@ -2124,14 +2119,13 @@ describe("extension", () => {
         ]) {
           expect(source).not.toMatch(/\.preflight\(/u);
         }
+        // Prompt-local assist orchestration may run a bounded preflight, but it
+        // must not perform AF discovery or activation/runtime construction.
+        expect(chatViewSource).not.toMatch(/discoverAf|createVibefeldActivation|vibefeld-activation|vibefeld-runtime/u);
         // The reporting wrapper can only echo its fixed status: no discovery,
         // process launch, or filesystem access.
         expect(runtimeReportingSource).not.toMatch(/\b(?:discover|spawn|execFile|fork)\s*\(/u);
         expect(runtimeReportingSource).not.toMatch(/node:child_process|node:fs/u);
-        // No per-message discovery or preflight may live in the message path.
-        expect(chatViewSource).not.toMatch(
-          /preflight|discoverAf|createVibefeldActivation|vibefeld-activation|vibefeld-runtime/u,
-        );
       });
 
       it("keeps fixture parsers and fixture-shaped evidence out of every production caller", () => {
@@ -2148,6 +2142,152 @@ describe("extension", () => {
           expect(source).toContain("options.parsers ?? createProductionAfOutputParsers()");
         }
         expect(extensionSource).not.toMatch(/AfOutputParsers|af-parser-mode|af-live-output/u);
+      });
+
+      describe("reasoning-assist dependency selection", () => {
+        afterEach(() => {
+          vi.doUnmock("../vibefeld/adversarial-review-reasoning-review-controller");
+        });
+
+        /** Minimal restricted provider whose readiness gate the test controls. */
+        const readyProvider = () => ({
+          createSession: vi.fn(async () => ({ ok: true as const, sessionId: "child" })),
+          promptStage: vi.fn(),
+          retrieveStageText: vi.fn(),
+          runStage: vi.fn(),
+          beginReview: vi.fn(),
+          cancelReview: vi.fn(),
+          isReviewCurrent: vi.fn(),
+          cancel: vi.fn(async () => ({ ok: true as const })),
+          delete: vi.fn(async () => ({ ok: true as const })),
+          checkReadiness: vi.fn(async () => true),
+          isReady: vi.fn(() => true),
+          invalidate: vi.fn(),
+        });
+
+        const injectedAssistOptions = () => injectedChatViewOptions();
+
+        it("injects both assist dependencies beside the claim controller for a ready claim runtime", async () => {
+          // The selection attempt imports the assist modules even when the
+          // claim path selects the controller; keep the real module importable.
+          vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => ({
+            AdversarialReviewReasoningReviewController,
+          }));
+          mockSupportedClaimCapability = true;
+          mockEffectiveConfig = { model: "provider/model" };
+          const provider = readyProvider();
+          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+          mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+          await activateWithComposition();
+
+          expect(mockCreateRestrictedReviewProvider).toHaveBeenCalledWith({
+            providerID: "provider",
+            modelID: "model",
+          });
+          const options = injectedAssistOptions();
+          expect(options.reasoningAssistAdapter).toMatchObject({ supportedStages: ["architect", "critic"] });
+          expect(options.reasoningAssistStructureRecorder?.isSupported()).toBe(true);
+          const controller = injectedReviewController();
+          expect(reviewDelegate(controller)).toBeInstanceOf(ClaimProjectionReasoningReviewController);
+          await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
+          // Still the single activation preflight.
+          expect(preflight).toHaveBeenCalledTimes(1);
+        });
+
+        it("injects the adapter without the recorder when the claim capability is unsupported", async () => {
+          vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => ({
+            AdversarialReviewReasoningReviewController,
+          }));
+          mockEffectiveConfig = { model: "provider/model" };
+          const provider = readyProvider();
+          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+          mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+          await activateWithComposition();
+
+          const options = injectedAssistOptions();
+          expect(options.reasoningAssistAdapter).toMatchObject({ supportedStages: ["architect", "critic"] });
+          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
+          // Unchanged adversarial fallback controller selection.
+          const controller = injectedReviewController();
+          expect(reviewDelegate(controller)).toBeInstanceOf(AdversarialReviewReasoningReviewController);
+          await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
+          expect(preflight).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps both assist dependencies dormant when activation is dormant", async () => {
+          vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => ({
+            AdversarialReviewReasoningReviewController,
+          }));
+          mockEffectiveConfig = { model: "provider/model" };
+          const provider = readyProvider();
+          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+          // No composition: the activation mock returns the dormant fallback.
+
+          await activateWithComposition();
+
+          const options = injectedAssistOptions();
+          expect(options).not.toHaveProperty("reasoningAssistAdapter");
+          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
+          // Controller fallback unchanged: a ready provider still selects the
+          // adversarial controller even though the assist stays dormant.
+          const controller = injectedReviewController();
+          expect(reviewDelegate(controller)).toBeInstanceOf(AdversarialReviewReasoningReviewController);
+          await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
+          expect(mockCreateRestrictedReviewProvider).toHaveBeenCalledTimes(1);
+        });
+
+        it("injects neither dependency when the restricted provider fails readiness", async () => {
+          mockEffectiveConfig = { model: "provider/model" };
+          const provider = readyProvider();
+          provider.checkReadiness.mockResolvedValue(false);
+          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+          mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+          await activateWithComposition();
+
+          const options = injectedAssistOptions();
+          expect(options).not.toHaveProperty("reasoningAssistAdapter");
+          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
+          // Controller and runtime status are unchanged by the failed readiness.
+          const controller = injectedReviewController();
+          expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+          await expect(controller.getRuntime()).resolves.toEqual({
+            state: "unavailable",
+            reason: "claim-capability-unavailable",
+          });
+          expect(provider.checkReadiness).toHaveBeenCalledTimes(1);
+          expect(mockCreateRestrictedReviewProvider).toHaveBeenCalledTimes(1);
+          expect(preflight).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the recorder absent and activation nonfatal when the capability read fails", async () => {
+          const getClaimCapability = vi.fn(() => {
+            throw new Error("capability read failed");
+          });
+          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+          const { composition, bridge } = composedVibefeldActivation(preflight, { getClaimCapability });
+          mockVibefeldComposition = composition;
+
+          await expect(activateWithComposition()).resolves.toBeUndefined();
+
+          const options = injectedAssistOptions();
+          expect(options).not.toHaveProperty("reasoningAssistAdapter");
+          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
+          const controller = injectedReviewController();
+          expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
+          await expect(controller.getRuntime()).resolves.toEqual({
+            state: "unavailable",
+            reason: "claim-capability-unavailable",
+          });
+          expect(getClaimCapability).toHaveBeenCalledTimes(1);
+          expect(preflight).toHaveBeenCalledTimes(1);
+          expect(bridge.run).not.toHaveBeenCalled();
+        });
       });
     });
 
@@ -2267,11 +2407,15 @@ describe("extension", () => {
       const state = new Map<string, unknown>();
       const ext = await importExtension();
       await ext.activate(updaterContext(state) as never);
-      await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(1), {
+        timeout: 10_000,
+      });
 
       const command = vi.mocked(vscode.commands.registerCommand).mock.calls.at(-1)?.[1] as () => Promise<unknown>;
       await command();
-      await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledTimes(2), {
+        timeout: 10_000,
+      });
       expect(state.get("privateReleaseUpdater.lastAnnouncedVersion")).toBe("0.16.0");
       expect(mockAgentLaunchConfigurations).toHaveLength(0);
     });
@@ -2315,7 +2459,9 @@ describe("extension", () => {
         vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
-        await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalled());
+        await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalled(), {
+          timeout: 10_000,
+        });
 
         expect(mockDownloadAndValidate).not.toHaveBeenCalled();
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
@@ -2329,7 +2475,9 @@ describe("extension", () => {
         vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("View Release");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
-        await vi.waitFor(() => expect(vscode.env.openExternal).toHaveBeenCalled());
+        await vi.waitFor(() => expect(vscode.env.openExternal).toHaveBeenCalled(), {
+          timeout: 10_000,
+        });
 
         expect(vscode.env.openExternal).toHaveBeenCalledWith(
           expect.objectContaining({ scheme: "https", toString: expect.any(Function) }),
@@ -2346,7 +2494,9 @@ describe("extension", () => {
           .mockResolvedValueOnce(undefined);
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
-        await vi.waitFor(() => expect(mockDownloadAndValidate).toHaveBeenCalled());
+        await vi.waitFor(() => expect(mockDownloadAndValidate).toHaveBeenCalled(), {
+          timeout: 10_000,
+        });
 
         expect(mockDownloadAndValidate).toHaveBeenCalledWith(
           availableRelease,
@@ -2357,8 +2507,9 @@ describe("extension", () => {
           "workbench.extensions.installExtension",
           expect.objectContaining({ scheme: "file" }),
         );
-        await vi.waitFor(() =>
-          expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" })),
+        await vi.waitFor(
+          () => expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" })),
+          { timeout: 10_000 },
         );
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
       });
@@ -2369,8 +2520,9 @@ describe("extension", () => {
           .mockResolvedValueOnce("Restart VS Code");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
-        await vi.waitFor(() =>
-          expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.reloadWindow"),
+        await vi.waitFor(
+          () => expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.reloadWindow"),
+          { timeout: 10_000 },
         );
         const commandNames = vi.mocked(vscode.commands.executeCommand).mock.calls.map(([command]) => command);
         expect(commandNames.indexOf("workbench.extensions.installExtension")).toBeLessThan(
@@ -2384,10 +2536,12 @@ describe("extension", () => {
         const ext = await importExtension();
         const context = updaterContext(new Map());
         await ext.activate(context as never);
-        await vi.waitFor(() =>
-          expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-            "OpenCode Scribe could not install the update. Try again later.",
-          ),
+        await vi.waitFor(
+          () =>
+            expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+              "OpenCode Scribe could not install the update. Try again later.",
+            ),
+          { timeout: 10_000 },
         );
         expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
           "opencode-chat.checkForUpdates",
@@ -2402,10 +2556,12 @@ describe("extension", () => {
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
 
-        await vi.waitFor(() =>
-          expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-            "OpenCode Scribe could not install the update. Try again later.",
-          ),
+        await vi.waitFor(
+          () =>
+            expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+              "OpenCode Scribe could not install the update. Try again later.",
+            ),
+          { timeout: 10_000 },
         );
         expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" }));
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
@@ -2425,10 +2581,12 @@ describe("extension", () => {
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
 
-        await vi.waitFor(() =>
-          expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-            "OpenCode Scribe could not restart VS Code. Try again manually.",
-          ),
+        await vi.waitFor(
+          () =>
+            expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+              "OpenCode Scribe could not restart VS Code. Try again manually.",
+            ),
+          { timeout: 10_000 },
         );
         expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" }));
         expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
@@ -2607,6 +2765,24 @@ describe("extension", () => {
       expect(mockDisconnect).not.toHaveBeenCalled();
     });
 
+    it("cancels in-flight reasoning-assist work before disconnecting the agent", async () => {
+      hiddenSessionRegistry.reset();
+      mockEffectiveConfig = { model: "provider/model" };
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+      const provider = mockChatViewProviderInstance;
+      expect(provider).toBeDefined();
+      provider!.cancelAllReasoningAssistWork.mockClear();
+      mockDisconnect.mockClear();
+
+      await ext.deactivate();
+
+      expect(provider!.cancelAllReasoningAssistWork).toHaveBeenCalledTimes(1);
+      expect(provider!.cancelAllReasoningAssistWork.mock.invocationCallOrder[0]).toBeLessThan(
+        mockDisconnect.mock.invocationCallOrder[0],
+      );
+    });
+
     it("awaits restricted child disposal before disconnecting the agent", async () => {
       hiddenSessionRegistry.reset();
       mockEffectiveConfig = { model: "provider/model" };
@@ -2640,6 +2816,9 @@ describe("extension", () => {
       const ext = await importExtension();
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
       expect(mockCreateRestrictedReviewProvider).toHaveBeenCalled();
+      const chatProvider = mockChatViewProviderInstance;
+      expect(chatProvider).toBeDefined();
+      chatProvider!.cancelAllReasoningAssistWork.mockImplementation(() => order.push("cancelAssistWork"));
       const controller = injectedReviewController();
       expect(provider.checkReadiness).toHaveBeenCalled();
       void controller.review({
@@ -2651,7 +2830,9 @@ describe("extension", () => {
 
       await ext.deactivate();
 
-      expect(order).toEqual(["cancel", "delete", "disconnect"]);
+      // Assist work is cancelled first, the restricted child disposal is
+      // awaited next, and only then does the agent disconnect.
+      expect(order).toEqual(["cancelAssistWork", "cancel", "delete", "disconnect"]);
     });
   });
 

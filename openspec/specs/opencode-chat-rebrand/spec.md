@@ -1,7 +1,9 @@
 # opencode-chat-rebrand Specification
 
 ## Purpose
-TBD - created by archiving change rebrand-opencode-chat. Update Purpose after archive.
+
+Defines the product rebrand from the internal `opencode-gui` working copy to the published OpenCode Scribe extension: renaming surfaces, identifiers, and marketplace identity without disrupting the original workspace or its upstream workflow.
+
 ## Requirements
 ### Requirement: Preserve Existing opencode-gui Workspace
 

@@ -30,90 +30,34 @@ or source-packet content through the shared contract or webview protocol.
 - **AND** the webview SHALL not receive provider-private paths, commands, or raw
   provider data
 
-### Requirement: Accept only authorized manual review requests
-
-The system SHALL accept a manual reasoning-review request only for a completed
-assistant message in the requested active session. Before invoking the review
-controller, the host SHALL verify the session and message association and derive
-a bounded source packet from visible assistant text only. The source packet
-SHALL exclude reasoning parts, tool inputs and outputs, attachments, permission
-metadata, and raw prompts.
-
-#### Scenario: User reviews a completed assistant response
-
-- **WHEN** the user requests a review for a completed assistant message in the
-  active session
-- **THEN** the host SHALL invoke the review controller with that message's
-  bounded visible assistant text
-- **AND** the resulting summary SHALL identify the reviewed message
-
-#### Scenario: Request targets another session or an invalid message
-
-- **WHEN** a review request names an inactive session, an unknown message, a
-  non-assistant message, or an incomplete assistant message
-- **THEN** the host SHALL reject the request
-- **AND** the review controller SHALL not be invoked
-- **AND** no message, tool, or session data from the invalid target SHALL be
-  published to the webview
-
 ### Requirement: Keep review state scoped to its session and message
 
-The system SHALL associate each review result with exactly one session and one
-assistant message. It SHALL ignore a result that no longer belongs to the active
-session and SHALL clear review state when its session is deleted. Cancelling a
-review SHALL prevent a later result for that request from replacing current
-state.
+The system SHALL associate a valid reasoning-assist summary with exactly one
+session, one submitted user prompt, and the resulting assistant response. It
+SHALL ignore progress or summaries that no longer belong to the active session
+or prompt generation and SHALL clear them when their session is deleted.
+Cancelling or superseding assistance SHALL prevent a later result from replacing
+the current prompt state.
 
 #### Scenario: Result arrives after navigating away
-
-- **WHEN** a review result arrives after the user has switched to another
-  session
+- **WHEN** a reasoning-assist result arrives after the user has switched to
+  another session
 - **THEN** the result SHALL not render in the newly active session
-- **AND** it SHALL not be associated with any message outside its original
-  session
+- **AND** it SHALL not be associated with a prompt or response outside its
+  original session
 
 #### Scenario: User cancels an in-flight review
-
-- **WHEN** the user cancels an in-flight review for a message
-- **THEN** the system SHALL preserve ordinary message content
-- **AND** a later completion from the cancelled request SHALL not overwrite the
-  message's current review state
+- **WHEN** a user submits, retries, or cancels a prompt that supersedes an
+  in-flight reasoning assist
+- **THEN** the host SHALL preserve ordinary prompt and message content
+- **AND** a later completion from the superseded assist SHALL not overwrite the
+  current prompt state
 
 #### Scenario: User deletes a reviewed session
-
-- **WHEN** the user deletes a session containing review summaries
-- **THEN** the system SHALL clear those summaries from host and webview state
+- **WHEN** the user deletes a session containing reasoning-assist summaries
+- **THEN** the system SHALL clear those summaries and pending progress from host
+  and webview state
 - **AND** subsequent sessions SHALL not display them
-
-### Requirement: Present review results separately from model reasoning
-
-The webview SHALL provide a localized `Review argument` action for a completed
-assistant message and render a compact reasoning-review card below only its
-matching message. The card SHALL visibly distinguish unavailable, reviewing,
-structurally checked, conditional, unresolved, refuted, blocked, and audit
-failed states. It SHALL remain separate from streamed model reasoning content.
-
-#### Scenario: Unavailable scaffold review is requested
-
-- **WHEN** the user selects `Review argument` while the unavailable controller
-  is active
-- **THEN** the webview SHALL render an unavailable review card below the selected
-  assistant message
-- **AND** the card SHALL not imply that the original response was reviewed before
-  delivery
-
-#### Scenario: Review belongs to another assistant message
-
-- **WHEN** a summary is published for one assistant message
-- **THEN** the card SHALL render below that message only
-- **AND** it SHALL not alter or appear inside another message's streamed
-  reasoning view
-
-#### Scenario: User changes locale
-
-- **WHEN** the webview renders the review action or card in a supported locale
-- **THEN** every user-visible review string SHALL be resolved through that
-  locale's dictionary
 
 ### Requirement: Preserve existing authority boundaries in the scaffold
 
@@ -138,3 +82,30 @@ The scaffold contract itself SHALL NOT discover or launch an external runtime, c
 - **WHEN** the activation change supplies the dynamic review controller and its host-owned wiring
 - **THEN** only the documented discovery, direct-execution, parser, storage, preference, and qualified-routing paths SHALL be present
 - **AND** plugin sources, MCP selection, custom tools, agent overlays, agent permissions, sandbox policy, and the independent TUI SHALL remain unchanged
+
+### Requirement: Present reasoning assistance separately from model reasoning
+
+The webview SHALL not provide a completed-message `Review argument` action or
+render a generic post-response reasoning-review card. For a prompt with a valid
+reasoning-assist brief, it SHALL render a localized compact row associated with
+that prompt and resulting response. The row SHALL remain separate from streamed
+model reasoning and expose only bounded user-facing progress and artifacts.
+
+#### Scenario: A valid assist summary is available
+- **WHEN** the host publishes a valid prompt-scoped reasoning-assist summary
+- **THEN** the webview SHALL render its compact row only for that prompt and
+  resulting response
+- **AND** the user MAY expand or collapse the existing summary without starting
+  further review work
+
+#### Scenario: A normal response has no assist summary
+- **WHEN** an ordinary, invalid, unavailable, or cancelled preflight produces no
+  valid reasoning-assist brief
+- **THEN** the webview SHALL render neither a `Review argument` action nor a
+  persistent review card for that response
+
+#### Scenario: User changes locale
+- **WHEN** the webview renders reasoning-assist progress or summary content in a
+  supported locale
+- **THEN** every user-visible assist string SHALL be resolved through that
+  locale's dictionary

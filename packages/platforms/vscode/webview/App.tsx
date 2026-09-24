@@ -27,7 +27,8 @@ import { useMessages } from "./hooks/useMessages";
 import { usePermissions } from "./hooks/usePermissions";
 import { useProviders } from "./hooks/useProviders";
 import { useQuestions } from "./hooks/useQuestions";
-import type { ReasoningReviewFeedback, ReasoningReviewPreferencePatch } from "./hooks/useReasoningReview";
+import { useReasoningAssist } from "./hooks/useReasoningAssist";
+import type { ReasoningReviewPreferencePatch } from "./hooks/useReasoningReview";
 import { useReasoningReview } from "./hooks/useReasoningReview";
 import { useSession } from "./hooks/useSession";
 import { useSoundNotification } from "./hooks/useSoundNotification";
@@ -77,41 +78,39 @@ export function App() {
   const locale = useLocale();
   const fileChanges = useFileChanges(activeSessionRef);
   const sound = useSoundNotification(activeSessionRef);
-  const review = useReasoningReview(activeSessionRef);
+  const review = useReasoningReview();
   const {
     runtime: reasoningReviewRuntime,
     preference: reasoningReviewPreference,
-    summaries: reasoningReviewSummaries,
-    getSummary: getReasoningReviewSummary,
     updatePreference: updateReasoningReviewPreference,
     handleHostMessage: handleReasoningReviewHostMessage,
-    handleSessionEvent: handleReasoningReviewSessionEvent,
-    clearSessionState: clearReasoningReviewSessionState,
   } = review;
-  const handleRequestReasoningReview = useCallback(
-    (messageId: string) => {
-      if (session.activeSession) review.startReview(session.activeSession.id, messageId);
-    },
-    [review.startReview, session.activeSession],
-  );
-  const handleCancelReasoningReview = useCallback(
-    (messageId: string) => {
-      if (session.activeSession) review.cancelReview(session.activeSession.id, messageId);
-    },
-    [review.cancelReview, session.activeSession],
-  );
   const handleReasoningReviewPreferenceChange = useCallback(
     (patch: ReasoningReviewPreferencePatch) => {
       updateReasoningReviewPreference(patch);
     },
     [updateReasoningReviewPreference],
   );
-  const handleSubmitReasoningReviewFeedback = useCallback(
-    (sessionId: string, messageId: string, value: ReasoningReviewFeedback) => {
-      review.submitFeedback(sessionId, messageId, value);
-    },
-    [review.submitFeedback],
-  );
+  const assist = useReasoningAssist();
+  const {
+    handleHostMessage: handleReasoningAssistHostMessage,
+    clearPendingOnSessionChange: clearPendingReasoningAssist,
+    anchorUnanchoredRows: anchorUnanchoredReasoningAssistRows,
+  } = assist;
+  // セッション切替時は未確定のアシスト行を破棄し、適用済みの要約行だけを残す
+  useEffect(() => {
+    clearPendingReasoningAssist();
+  }, [session.activeSession?.id, clearPendingReasoningAssist]);
+  // プリフライトは送信直後に進捗を公開するため、その時点では対応するユーザー
+  // メッセージがまだ届いていないことがある。プロンプトが届いたら、アンカーの
+  // 無い行をそのメッセージへ固定する（対象が無ければ state は変わらない）。
+  useEffect(() => {
+    const sessionId = session.activeSession?.id;
+    if (!sessionId) return;
+    const lastMessage = msg.messages[msg.messages.length - 1];
+    if (lastMessage?.info.role !== "user") return;
+    anchorUnanchoredReasoningAssistRows(sessionId, lastMessage.info.id);
+  }, [session.activeSession?.id, msg.messages, anchorUnanchoredReasoningAssistRows]);
   const [showAllThinking, setShowAllThinking] = useState(() => getPersistedState()?.showAllThinking ?? false);
   const handleShowAllThinkingChange = useCallback((value: boolean) => {
     setShowAllThinking(value);
@@ -212,7 +211,6 @@ export function App() {
   const handleEvent = useCallback(
     (event: AgentEvent) => {
       session.handleSessionEvent(event);
-      handleReasoningReviewSessionEvent(event);
       msg.handleMessageEvent(event);
       perm.handlePermissionEvent(event);
       quest.handleQuestionEvent(event);
@@ -346,7 +344,6 @@ export function App() {
             setQueuedPromptCount(0);
           }
           if (changedNonNullSession) {
-            clearReasoningReviewSessionState(previousSessionId);
             msg.clearSessionState();
             fileChanges.clearDiffs();
             perm.clearPermissions();
@@ -364,7 +361,6 @@ export function App() {
             postMessage({ type: "getSessionTodos", sessionId: data.session.id });
             postMessage({ type: "getChildSessions", sessionId: data.session.id });
           } else {
-            clearReasoningReviewSessionState(previousSessionId);
             msg.clearSessionState();
             fileChanges.clearDiffs();
             perm.clearPermissions();
@@ -483,9 +479,25 @@ export function App() {
           break;
         case "reasoningRuntime":
         case "reasoningReviewPreference":
-        case "reasoningReview":
           handleReasoningReviewHostMessage(data);
           break;
+        case "reasoningAssistProgress":
+        case "reasoningAssistSummary":
+        case "reasoningAssistCleared": {
+          // アシストは送信直後に公開されるため、新しいユーザーメッセージが
+          // まだ届いていない場合がある。従って末尾がユーザーメッセージのとき
+          // だけそれをアンカーにし、末尾がアシスタント応答ならアンカーを渡さない。
+          // アンカーが無い行は最後のユーザーメッセージ直後に表示され、新しい
+          // プロンプトが届くとその下へ移動する。
+          const currentMessages = messagesRef.current;
+          const lastMessage = currentMessages[currentMessages.length - 1];
+          const pendingUserMessage = lastMessage?.info.role === "user" ? lastMessage : undefined;
+          handleReasoningAssistHostMessage(
+            data,
+            pendingUserMessage ? { anchorMessageId: pendingUserMessage.info.id } : undefined,
+          );
+          break;
+        }
       }
     };
     window.addEventListener("message", handler);
@@ -511,9 +523,8 @@ export function App() {
     perm.clearPermissions,
     quest.clearQuestions,
     session.clearSessionState,
-    handleReasoningReviewSessionEvent,
-    clearReasoningReviewSessionState,
     handleReasoningReviewHostMessage,
+    handleReasoningAssistHostMessage,
   ]);
 
   // Cross-cutting action handlers (span multiple hooks)
@@ -758,14 +769,6 @@ export function App() {
     childSessions,
     onNavigateToChild: handleNavigateToChild,
     onNavigateToParent: handleNavigateToParent,
-    reasoningReviewRuntime,
-    reasoningReviewSummaries,
-    getReasoningReviewSummary,
-    getReasoningReviewFeedback: review.getFeedback,
-    isReasoningReviewing: review.isReviewing,
-    onRequestReasoningReview: handleRequestReasoningReview,
-    onCancelReasoningReview: handleCancelReasoningReview,
-    onSubmitReasoningReviewFeedback: handleSubmitReasoningReviewFeedback,
     chatSandboxStatus,
     onChatSandboxSettingsChange: handleChatSandboxSettingsChange,
   };
@@ -804,6 +807,7 @@ export function App() {
                 activeSessionId={session.activeSession.id}
                 showAllThinking={showAllThinking}
                 questions={quest.questions}
+                reasoningAssistRows={assist.rowsForSession(session.activeSession?.id ?? "")}
                 onEditAndResend={handleEditAndResend}
                 onRevertToCheckpoint={handleRevertToCheckpoint}
                 onForkFromCheckpoint={handleForkFromCheckpoint}

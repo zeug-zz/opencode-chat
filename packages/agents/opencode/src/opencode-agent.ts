@@ -79,6 +79,20 @@ const DIAGNOSTIC_LOG_LENGTH = 4_096;
 const SANDBOX_TERMINATION_GRACE_MS = 1_000;
 const SANDBOX_TERMINATION_ESCALATION_MS = 1_000;
 const MAX_RESTRICTED_REVIEW_MODEL_PART_LENGTH = 256;
+const EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT = 16;
+const EVENT_DELIVERY_DIAGNOSTIC_TYPE_LENGTH = 64;
+
+/** Bounds a diagnostic fragment (event type or error name) against oversized server-supplied values. */
+function boundEventDeliveryText(value: string): string {
+  return value.length > EVENT_DELIVERY_DIAGNOSTIC_TYPE_LENGTH
+    ? value.slice(0, EVENT_DELIVERY_DIAGNOSTIC_TYPE_LENGTH)
+    : value;
+}
+
+/** Extracts the bounded event type string for event-delivery diagnostics, or undefined when absent. */
+function boundedEventDeliveryType(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? boundEventDeliveryText(value) : undefined;
+}
 
 function isRestrictedReviewModel(value: RestrictedReviewModel): boolean {
   return (
@@ -593,6 +607,10 @@ export class OpenCodeAgent implements IAgent {
   private sandboxChildExit: SandboxChildExit | undefined;
   private reconnectPromise: Promise<void> | undefined;
   private connectionGeneration = 0;
+  /** Distinct event types already reported as payload-less (bounded per instance). */
+  private payloadlessEventTypes: Set<string> = new Set();
+  /** Distinct event types already reported for listener failures (bounded per instance). */
+  private listenerFailureEventTypes: Set<string> = new Set();
 
   constructor(launchConfiguration?: OpenCodeLaunchConfiguration) {
     this.launchConfiguration = launchConfiguration;
@@ -1023,9 +1041,16 @@ export class OpenCodeAgent implements IAgent {
         for await (const globalEvent of result.stream) {
           const event = (globalEvent as { payload: Event }).payload;
           if (!event) continue;
+          this.recordPayloadlessEventDiagnostic(event);
           const mapped = mapEvent(event);
           for (const listener of this.listeners) {
-            listener(mapped);
+            // A listener failure must never terminate the stream: isolate it,
+            // record a bounded diagnostic, and keep delivering.
+            try {
+              listener(mapped);
+            } catch (error) {
+              this.recordListenerFailureDiagnostic(mapped, error);
+            }
           }
         }
       } catch (error) {
@@ -1036,6 +1061,36 @@ export class OpenCodeAgent implements IAgent {
         throw error;
       }
     })();
+  }
+
+  /**
+   * Bounded diagnostic for a raw event delivered without any payload (no
+   * `properties` key and no truthy `data`). Logs only the event type — never
+   * payload contents — at most once per distinct type up to
+   * EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT.
+   */
+  private recordPayloadlessEventDiagnostic(rawEvent: unknown): void {
+    if (typeof rawEvent !== "object" || rawEvent === null) return;
+    if ("properties" in rawEvent || (rawEvent as { data?: unknown }).data) return;
+    const type = boundedEventDeliveryType((rawEvent as { type?: unknown }).type);
+    if (!type || this.payloadlessEventTypes.has(type)) return;
+    if (this.payloadlessEventTypes.size >= EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT) return;
+    this.payloadlessEventTypes.add(type);
+    console.error(`[opencode-chat] OpenCode event delivered without a payload (type=${type})`);
+  }
+
+  /**
+   * Bounded diagnostic for an event listener that threw. Logs only the event
+   * type and the error name — never payload contents — at most once per
+   * distinct type up to the same EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT.
+   */
+  private recordListenerFailureDiagnostic(event: unknown, error: unknown): void {
+    const type = boundedEventDeliveryType((event as { type?: unknown } | undefined)?.type);
+    if (!type || this.listenerFailureEventTypes.has(type)) return;
+    if (this.listenerFailureEventTypes.size >= EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT) return;
+    this.listenerFailureEventTypes.add(type);
+    const errorName = boundEventDeliveryText(error instanceof Error ? error.name : typeof error);
+    console.error(`[opencode-chat] OpenCode event listener failed (type=${type}, error=${errorName})`);
   }
 
   // --- Sessions (common) ---

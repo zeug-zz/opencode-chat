@@ -99,19 +99,19 @@ The host SHALL derive the live output parsers from sanitized real `af version --
 
 ### Requirement: Compose activation once in the extension host and publish runtime state
 
-`extension.ts` SHALL construct the runtime bridge and the proof store beneath `context.globalStorageUri`, SHALL preflight the bridge at most once per extension activation, and SHALL inject `ClaimProjectionReasoningReviewController` only when the runtime is ready and the bridge reports an explicitly supported claim operation. When direct execution is ready but the bridge reports no supported claim operation, the host SHALL inject `UnavailableReasoningReviewController` and publish the bounded `{ state: "unavailable", reason: "claim-capability-unavailable" }` status without compiling a claim graph or claiming availability. The host SHALL publish the existing bounded runtime status so the review card distinguishes `unavailable`, `checking`, `incompatible`, and `available`, and MUST NOT publish `available` without a supported claim operation. When the runtime is dormant, ordinary Chat, Write, Scout, worker, MCP, sandbox, and TUI behavior MUST remain unchanged, no per-message discovery or preflight may occur, and an activation failure MUST be nonfatal.
+`extension.ts` SHALL construct the runtime bridge and the proof store beneath `context.globalStorageUri`, SHALL preflight the bridge at most once per extension activation, and SHALL inject `ClaimProjectionReasoningReviewController` only when the runtime is ready and the bridge reports an explicitly supported claim operation. When direct execution is ready but the bridge reports no supported claim operation, the host SHALL inject `UnavailableReasoningReviewController` and publish the bounded `{ state: "unavailable", reason: "claim-capability-unavailable" }` status without compiling a claim graph or claiming availability. The host SHALL publish the existing bounded runtime status so the availability-gated preference reflects `unavailable`, `checking`, `incompatible`, and `available`, and MUST NOT publish `available` without a supported claim operation. When the runtime is dormant, ordinary Chat, Write, Scout, worker, MCP, sandbox, and TUI behavior MUST remain unchanged, no per-message discovery or preflight may occur, and an activation failure MUST be nonfatal.
 
 #### Scenario: A ready runtime with a supported claim capability selects the projection controller
 
 - **WHEN** discovery, the compatibility contract, direct execution readiness, the storage preflight, and an explicitly supported claim operation all succeed during extension activation
 - **THEN** the host SHALL inject `ClaimProjectionReasoningReviewController` and publish an available runtime status
-- **AND** manual review requests SHALL use the existing bounded source-packet and publication paths
+- **AND** no completed-message review request SHALL be offered
 
 #### Scenario: A compatible runtime without claim projection stays review-unavailable
 
 - **WHEN** discovery, the compatibility contract, direct execution readiness, and the storage preflight succeed but the bridge reports no supported claim operation
 - **THEN** the host SHALL inject `UnavailableReasoningReviewController` and publish the bounded `{ state: "unavailable", reason: "claim-capability-unavailable" }` status
-- **AND** no claim graph SHALL compile, no claim operation SHALL run, no review affordance SHALL render, automatic routing SHALL stay inactive, and no qualification evidence SHALL be recorded
+- **AND** no claim graph SHALL compile, no claim operation SHALL run, and no reasoning-assist preflight SHALL claim availability
 
 #### Scenario: A dormant runtime keeps the unavailable controller
 
@@ -121,7 +121,7 @@ The host SHALL derive the live output parsers from sanitized real `af version --
 
 #### Scenario: Preflight runs at most once per activation
 
-- **WHEN** multiple manual review requests, session switches, or ordinary messages occur during one activation
+- **WHEN** multiple prompts, session switches, or ordinary messages occur during one activation
 - **THEN** discovery and preflight SHALL NOT run again for ordinary messages
 - **AND** runtime status SHALL be reused until the extension deactivates
 
@@ -147,81 +147,9 @@ The reasoning-review preference SHALL be stored through VS Code configuration at
 - **THEN** it SHALL use translated keys and bounded text
 - **AND** no unlocalized key SHALL reach the user
 
-### Requirement: Gate the per-message review affordance on availability and toggle the review result
-
-The per-message review affordance SHALL render only for a completed assistant message while the review runtime is `available`. When the runtime is absent, `unavailable`, `checking`, or `incompatible`, the affordance MUST NOT render and MUST NOT be replaced by a non-functional control. When a completed review summary exists, the affordance SHALL toggle the result card open and closed instead of starting another review: it SHALL present a hide action while the card is open and a show action while the card is collapsed, SHALL NOT start, repeat, or refresh a review when toggled, and SHALL expose the expanded or collapsed state to assistive technology. While a review is in flight, the affordance SHALL remain the existing cancel action. Every label added for the toggle SHALL exist in every webview locale dictionary.
-
-#### Scenario: A dormant or incompatible runtime renders no affordance
-
-- **WHEN** a completed assistant message is displayed while the runtime is absent, `unavailable`, `checking`, or `incompatible`
-- **THEN** no per-message review affordance SHALL render
-- **AND** the host SHALL receive no review request from the message
-
-#### Scenario: A completed review toggles without another review
-
-- **WHEN** a review summary is displayed and the user activates the affordance
-- **THEN** the card SHALL collapse and the host SHALL receive no new review request
-- **AND** activating the affordance again SHALL expand the existing summary without starting, repeating, or refreshing the review
-
-#### Scenario: An in-flight review keeps the cancel action
-
-- **WHEN** a review is in flight for the message
-- **THEN** the affordance SHALL remain the existing cancel action
-- **AND** SHALL NOT offer the open/close toggle until the review completes or is cancelled
-
-### Requirement: Enable automatic routing only from a validated qualified evaluation
-
-Automatic routing SHALL remain fail-closed. The host MUST NOT select an automatic review unless the injected evaluation is reported qualified by the existing qualification validator, the review runtime is available, the enable flag is set with policy signals passing, and the existing selection policy returns a selection. The existing thresholds, work-mode exclusions, post-response semantics, duplicate suppression, and bounded rationale contract MUST remain unchanged. Automatic routing MUST never withhold, rewrite, or release the original response.
-
-#### Scenario: A qualified evaluation enables selection
-
-- **WHEN** activation supplies a qualified evaluation, the runtime is available, the enable flag is set, and the existing policy signals select an eligible response
-- **THEN** the host SHALL make at most one post-response automatic review request with the existing bounded rationale
-- **AND** the original response SHALL remain published unchanged
-
-#### Scenario: Unqualified or stale evaluation produces no selection
-
-- **WHEN** the evaluation is missing, stale, malformed, non-finite, below the case minimum, or above a target
-- **THEN** the host SHALL make no automatic selection and invoke no review controller
-- **AND** it SHALL not retry with weaker thresholds or enable routing without a qualified result
-
-#### Scenario: Prior routing behavior is preserved
-
-- **WHEN** automatic routing is considered for an ordinary, incomplete, inactive-session, duplicate, or manually reviewed response
-- **THEN** the existing non-selection reasons SHALL apply unchanged
-- **AND** no response-gate, child-model, plugin, MCP, or nested-sandbox path SHALL be involved
-
-### Requirement: Qualify with a hybrid host-private aggregate pipeline
-
-Qualification SHALL use a versioned adjudicated seed corpus of 30–50 cases, committed as a repository artifact, to validate the pipeline, and SHALL then accumulate host-private live outcome capture to the existing 100-case minimum before reporting qualified. Every qualification aggregate MUST remain host-private and MUST NOT contain prompts, source packets, review text, response text, or paths. Live capture SHALL record latency automatically, SHALL derive `challenged` from the review status, and SHALL collect `correct` and `falseChallenge` only through a bounded local review-card feedback control. The pipeline MUST NOT call Hindsight or any memory provider at runtime, MUST NOT automatically ingest review content into memory, and MUST provide escape hatches that disable recording and automatic routing.
-
-#### Scenario: The seed corpus validates the pipeline
-
-- **WHEN** the versioned 30–50 case adjudicated seed corpus runs through the measurement and qualification path
-- **THEN** the pipeline SHALL produce aggregate-only metrics accepted by the existing qualification validator
-- **AND** the corpus SHALL contain no user content, paths, prompts, or review text
-
-#### Scenario: Live capture accumulates to the case minimum
-
-- **WHEN** reviews complete on a host with a ready runtime
-- **THEN** latency SHALL be recorded automatically, `challenged` SHALL be derived from the review status, and `correct`/`falseChallenge` SHALL be collected only from bounded local review-card feedback
-- **AND** qualification SHALL be reported no earlier than the existing 100-case minimum
-
-#### Scenario: Aggregates stay host-private and uncoupled
-
-- **WHEN** aggregates are recorded, stored, or validated
-- **THEN** they SHALL contain only version, corpus identity, case count, and aggregate metrics
-- **AND** no prompt, source packet, review text, path, or memory-provider call SHALL be involved
-
-#### Scenario: Escape hatches disable accumulation
-
-- **WHEN** the user opts out for the workspace or disables reasoning review
-- **THEN** live capture and automatic routing SHALL stop
-- **AND** no further aggregate SHALL be recorded until the user enables the capability again
-
 ### Requirement: Retain every model-visible and broader-authority prohibition
 
-Activation SHALL permit only the constrained wiring: host-owned discovery, direct execution, mode-selected live parsers, proof storage beneath extension global storage, one preflight, dynamic controller selection, the availability-gated preference, and the qualified routing and qualification paths. AF MUST NOT be added as an OpenCode plugin, `pluginSources` entry, MCP server, custom tool, agent overlay, or task target; `IAgent` and the webview protocol MUST NOT gain AF fields; and callers MUST NOT supply arbitrary argv, executable paths, workspaces, or environment overrides. No response gate, adversarial prover/verifier, restricted child-model context, Hindsight runtime call, Windows policy, model-visible AF, nono invocation or profile mutation, nested sandbox, or TUI/global configuration change SHALL be introduced. Security-negative tests SHALL be amended only through the explicit MODIFIED requirements carried by this change, and every retained prohibition SHALL keep failing closed under test.
+Activation SHALL permit only the constrained wiring: host-owned discovery, direct execution, mode-selected live parsers, proof storage beneath extension global storage, one preflight, dynamic controller selection, and the availability-gated preference. AF MUST NOT be added as an OpenCode plugin, `pluginSources` entry, MCP server, custom tool, agent overlay, or task target; `IAgent` and the webview protocol MUST NOT gain AF fields; and callers MUST NOT supply arbitrary argv, executable paths, workspaces, or environment overrides. No response gate, adversarial prover/verifier, restricted child-model context, Hindsight runtime call, Windows policy, model-visible AF, nono invocation or profile mutation, nested sandbox, or TUI/global configuration change SHALL be introduced. Security-negative tests SHALL be amended only through the explicit MODIFIED requirements carried by this change, and every retained prohibition SHALL keep failing closed under test.
 
 #### Scenario: Broader authority surfaces stay absent
 
@@ -232,7 +160,7 @@ Activation SHALL permit only the constrained wiring: host-owned discovery, direc
 #### Scenario: Deferred capabilities remain unactivated
 
 - **WHEN** the extension activates with a ready runtime
-- **THEN** the response gate SHALL remain a fixture-level contract, adversarial review SHALL remain deferred, and no prover/verifier agent, tool, or plugin SHALL exist
+- **THEN** the response gate SHALL remain a fixture-level contract and no prover/verifier agent, tool, or plugin SHALL exist
 - **AND** Hindsight SHALL remain an offline developer aid with no runtime routing or ingestion path
 
 #### Scenario: Security negatives fail closed on attempted widening
@@ -240,3 +168,32 @@ Activation SHALL permit only the constrained wiring: host-owned discovery, direc
 - **WHEN** the amended security-negative suites run
 - **THEN** they SHALL permit only the constrained wiring and SHALL fail on any plugin, MCP, custom-tool, agent-overlay, permission, nested-sandbox, nono-invocation, or arbitrary-argv widening
 - **AND** ordinary Chat, Write, Scout, worker, sandbox, and TUI boundaries SHALL remain pinned
+
+### Requirement: Select host-private reasoning-assist dependencies during activation
+
+During the single activation composition the host MAY additionally resolve, fail
+closed and nonfatally, a readiness-gated restricted review adapter and - only
+when the already-preflighted bridge reports an explicitly supported claim
+operation - a structure recorder over the current claim projection seam, and
+SHALL inject both into the chat view provider. This selection SHALL NOT run a
+second bridge preflight, SHALL NOT expose any model-visible authority, and SHALL
+leave dormant activation, ordinary Chat, Write, Scout, worker, sandbox, and TUI
+behavior unchanged. The assist stays dormant whenever a dependency is absent.
+
+#### Scenario: Ready runtime with a supported claim operation injects both dependencies
+
+- **WHEN** the activation preflight is ready, the bridge reports a supported
+  claim operation, and a pinned restricted review model passes readiness
+- **THEN** the host SHALL inject the restricted review adapter and the structure
+  recorder into the chat view provider
+- **AND** eligible prompts SHALL run the bounded preflight and dispatch with the
+  appended assist brief
+
+#### Scenario: Dormant or partial activation keeps the assist dormant
+
+- **WHEN** the runtime is dormant, the claim operation is unsupported, or the
+  restricted provider fails readiness
+- **THEN** the host SHALL omit the unavailable dependency, publish the existing
+  bounded runtime status, and dispatch every prompt unchanged
+- **AND** no second preflight, no new configuration key, and no broader
+  authority SHALL exist
