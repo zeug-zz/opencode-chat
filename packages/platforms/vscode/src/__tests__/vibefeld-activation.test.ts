@@ -101,6 +101,7 @@ describe("Vibefeld activation composition", () => {
       rmdir: vi.fn(),
     };
     const composition = createVibefeldActivation({
+      platform: "darwin" as NodeJS.Platform,
       globalStoragePath: boundaries.globalStoragePath,
       repositoryPath: boundaries.repositoryPath,
       homePath: boundaries.homePath,
@@ -123,6 +124,7 @@ describe("Vibefeld activation composition", () => {
     const resolveExecutable = vi.fn(async () => boundaries.executablePath);
     const policy = readyPolicy();
     const composition = createVibefeldActivation({
+      platform: "darwin" as NodeJS.Platform,
       globalStoragePath: boundaries.globalStoragePath,
       repositoryPath: boundaries.repositoryPath,
       homePath: boundaries.homePath,
@@ -143,6 +145,7 @@ describe("Vibefeld activation composition", () => {
   it("resolves every session root under global storage and never under a protected boundary", async () => {
     const boundaries = await createBoundaries();
     const composition = createVibefeldActivation({
+      platform: "darwin" as NodeJS.Platform,
       globalStoragePath: boundaries.globalStoragePath,
       repositoryPath: boundaries.repositoryPath,
       homePath: boundaries.homePath,
@@ -183,6 +186,7 @@ describe("Vibefeld activation composition", () => {
     async (boundary) => {
       const boundaries = await createBoundaries();
       const composition = createVibefeldActivation({
+        platform: "darwin" as NodeJS.Platform,
         globalStoragePath: path.join(boundaries[boundary], "storage"),
         repositoryPath: boundaries.repositoryPath,
         homePath: boundaries.homePath,
@@ -205,6 +209,7 @@ describe("Vibefeld activation composition", () => {
       schema: await liveFixture("schema.json"),
     });
     const composition = createVibefeldActivation({
+      platform: "darwin" as NodeJS.Platform,
       globalStoragePath: boundaries.globalStoragePath,
       repositoryPath: boundaries.repositoryPath,
       homePath: boundaries.homePath,
@@ -231,6 +236,7 @@ describe("Vibefeld activation composition", () => {
     const manifest = await fixtureManifest();
     const { adapter } = liveCapturePolicy({ version: manifest, schema: manifest });
     const composition = createVibefeldActivation({
+      platform: "darwin" as NodeJS.Platform,
       globalStoragePath: boundaries.globalStoragePath,
       repositoryPath: boundaries.repositoryPath,
       homePath: boundaries.homePath,
@@ -254,6 +260,7 @@ describe("Vibefeld activation composition", () => {
       schema: await liveFixture("schema.json"),
     });
     const composition = createVibefeldActivation({
+      platform: "darwin" as NodeJS.Platform,
       globalStoragePath: boundaries.globalStoragePath,
       repositoryPath: boundaries.repositoryPath,
       homePath: boundaries.homePath,
@@ -271,6 +278,7 @@ describe("Vibefeld activation composition", () => {
     await teardownVibefeldActivation(composition);
 
     const dormant = createVibefeldActivation({
+      platform: "darwin" as NodeJS.Platform,
       globalStoragePath: boundaries.globalStoragePath,
       repositoryPath: boundaries.repositoryPath,
       homePath: boundaries.homePath,
