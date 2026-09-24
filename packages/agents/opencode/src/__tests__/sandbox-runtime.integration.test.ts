@@ -108,6 +108,7 @@ function compatibilityFilesystemConfig(
   };
 
   const filesystem = {
+    denyRead: [],
     allowWrite: [workspacePath, ...supportedWritePaths],
     denyWrite: [deniedPath],
   };

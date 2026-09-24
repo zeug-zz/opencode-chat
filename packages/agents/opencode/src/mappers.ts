@@ -16,6 +16,7 @@ import type {
   McpStatus as SdkMcpStatus,
   Path as SdkPath,
   Session,
+  SnapshotFileDiff,
   Todo,
 } from "@opencode-ai/sdk/v2";
 
@@ -115,11 +116,11 @@ export function mapProviders(providers: Provider[]): ProviderInfo[] {
 // FileDiff
 // ============================================================
 
-export function mapFileDiff(diff: SdkFileDiff): FileDiff {
+export function mapFileDiff(diff: SdkFileDiff | SnapshotFileDiff): FileDiff {
   return diff as unknown as FileDiff;
 }
 
-export function mapFileDiffs(diffs: SdkFileDiff[]): FileDiff[] {
+export function mapFileDiffs(diffs: Array<SdkFileDiff | SnapshotFileDiff>): FileDiff[] {
   return diffs.map(mapFileDiff);
 }
 
@@ -147,7 +148,9 @@ export function mapAgents(agents: Agent[]): AgentInfo[] {
   return agents.map(mapAgent);
 }
 
-export function mapSkills(skills: Array<{ name: string; description: string; location: string }>): SkillInfo[] {
+export function mapSkills(
+  skills: Array<{ name: string; description?: string; location: string; content: string }>,
+): SkillInfo[] {
   return skills.map((skill) => ({
     name: skill.name,
     description: skill.description,
