@@ -77,8 +77,8 @@ importers:
         specifier: ^0.18.7
         version: 0.18.7
       marked-katex-extension:
-        specifier: ^5.1.12
-        version: 5.1.12(katex@0.18.7)(marked@18.0.13)
+        specifier: ^5.1.13
+        version: 5.1.13(katex@0.18.7)(marked@18.0.13)
       mermaid:
         specifier: ^12.0.0
         version: 12.0.0
@@ -1613,8 +1613,8 @@ packages:
   magic-string@1.4.1:
     resolution: {integrity: sha512-8lyCu36ErXR0J9uaGKlKQoiLZKmtI63YGLE8G2o9jyRPdr4X47LusSOwgOJOzcVtp81fTAAjxR7BwKz682Jhow==}
 
-  marked-katex-extension@5.1.12:
-    resolution: {integrity: sha512-DgfH0CFrOuVwVEXNJ+rTtYOtZZECpHhA0bu7xBiACAJI4geeaCZfDq+hiJ1yJx780fDh2HWHlr+NySxuc2DD1w==}
+  marked-katex-extension@5.1.13:
+    resolution: {integrity: sha512-+6gVygGg5at9g+YsuIQZk7XcAc6Pg1P0grEJKEWvF7DAwceZ7ZIvU0fhQe6auUqSbnPmSjJxZuICdSCdbGaFRw==}
     peerDependencies:
       katex: '>=0.16 <0.19'
       marked: '>=4 <19'
@@ -3427,7 +3427,7 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  marked-katex-extension@5.1.12(katex@0.18.7)(marked@18.0.13):
+  marked-katex-extension@5.1.13(katex@0.18.7)(marked@18.0.13):
     dependencies:
       katex: 0.18.7
       marked: 18.0.13
