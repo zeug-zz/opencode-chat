@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import {
@@ -46,6 +46,43 @@ describe("vibefeld-settings preference", () => {
     expect(VIBEFELD_ENABLED_SETTING).toBe("vibefeld.enabled");
     expect(VIBEFELD_WORKSPACE_OPT_OUT_SETTING).toBe("vibefeld.workspaceOptOut");
     expect(VIBEFELD_AF_PATH_SETTING).toBe("vibefeld.afPath");
+  });
+
+  it("registers both persisted preferences with their compatible VS Code scopes", () => {
+    const manifest = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+      contributes: { configuration: { properties: Record<string, Record<string, unknown>> } };
+    };
+    const properties = manifest.contributes.configuration.properties;
+
+    expect(properties).toMatchObject({
+      "opencode-chat.vibefeld.enabled": {
+        type: "boolean",
+        default: true,
+        scope: "application",
+        description: "%configuration.vibefeldEnabled%",
+      },
+      "opencode-chat.vibefeld.workspaceOptOut": {
+        type: "boolean",
+        default: false,
+        scope: "window",
+        description: "%configuration.vibefeldWorkspaceOptOut%",
+      },
+    });
+
+    const localeFiles = readdirSync(new URL("../../", import.meta.url)).filter((file) =>
+      /^package\.nls(?:\..+)?\.json$/.test(file),
+    );
+    expect(localeFiles.length).toBeGreaterThan(1);
+    for (const file of localeFiles) {
+      const locale = JSON.parse(readFileSync(new URL(`../../${file}`, import.meta.url), "utf8")) as Record<
+        string,
+        unknown
+      >;
+      expect(locale, file).toMatchObject({
+        "configuration.vibefeldEnabled": expect.any(String),
+        "configuration.vibefeldWorkspaceOptOut": expect.any(String),
+      });
+    }
   });
 
   it.each([

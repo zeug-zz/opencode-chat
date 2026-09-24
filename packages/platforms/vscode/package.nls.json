@@ -2,6 +2,8 @@
   "displayName": "OpenCode Scribe",
   "description": "[Experimental / Unofficial] A VS Code research and report-writing extension for OpenCode, designed to run alongside the OpenCode TUI. This extension is developed primarily through AI-assisted coding and provided as-is without warranty. Not affiliated with or endorsed by the OpenCode project.",
   "configuration.nonoProfile": "Optional workspace-scoped custom nono profile override for Chat; enabled sandboxing uses the validated built-in opencode profile by default, and Scribe stores only an explicit name.",
+  "configuration.vibefeldEnabled": "Enable Vibefeld reasoning review when a compatible runtime is available.",
+  "configuration.vibefeldWorkspaceOptOut": "Opt out of Vibefeld reasoning review for this workspace.",
   "command.selectNonoProfile": "OpenCode Scribe: Select nono profile",
   "command.checkForUpdates": "OpenCode Scribe: Check for Updates"
 }
