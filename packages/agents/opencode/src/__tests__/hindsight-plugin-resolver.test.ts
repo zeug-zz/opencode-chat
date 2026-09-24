@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   APPROVED_HINDSIGHT_PACKAGE,
   type HindsightPackageMetadata,
+  readEffectiveOpenCodeConfiguration,
   readHindsightPackageMetadata,
   resolveHindsightPlugin,
 } from "../hindsight-plugin-resolver";
@@ -16,6 +17,34 @@ const approvedMetadata: HindsightPackageMetadata = {
 };
 
 describe("resolveHindsightPlugin", () => {
+  it("reads bounded model layers while preserving plugin behavior", () => {
+    const root = resolve(process.cwd(), "tmp/effective-opencode-config");
+    const globalConfig = resolve(root, "global");
+    const projectConfig = resolve(root, "project");
+    mkdirSync(globalConfig, { recursive: true });
+    mkdirSync(resolve(projectConfig, ".git"), { recursive: true });
+    writeFileSync(
+      resolve(globalConfig, "opencode.json"),
+      JSON.stringify({ model: "global/provider", plugin: ["global"] }),
+    );
+    writeFileSync(resolve(projectConfig, "opencode.jsonc"), '{ "model": "project/provider", "plugin": ["project"], }');
+
+    expect(readEffectiveOpenCodeConfiguration(globalConfig, projectConfig)).toEqual({
+      model: "project/provider",
+      plugin: ["global", "project"],
+    });
+
+    writeFileSync(
+      resolve(projectConfig, "opencode.jsonc"),
+      JSON.stringify({ model: " ", plugin: { malformed: true } }),
+    );
+    expect(readEffectiveOpenCodeConfiguration(globalConfig, projectConfig)).toEqual({
+      model: "global/provider",
+      plugin: ["global"],
+    });
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("finds exact package metadata from an absolute file entry through bounded parents", () => {
     const pluginFile = resolve(process.cwd(), "tmp/hindsight-plugin-fixture/dist/index.js");
     const packageRoot = resolve(process.cwd(), "tmp/hindsight-plugin-fixture");

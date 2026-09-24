@@ -137,6 +137,31 @@ export const ja: LocaleSchema = {
   "config.sandboxApplying": "サンドボックス設定を適用中…",
   "config.sandboxError": (error: string) => `サンドボックスエラー: ${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "推論レビュー",
+  "config.reasoningReviewEnable": "推論レビューを有効にする",
+  "config.reasoningReviewWorkspaceOptOut": "このワークスペースでは使用しない",
+  "config.reasoningReviewDescription":
+    "推論レビューのランタイムが利用可能なとき、このホストで応答をレビューします。ワークスペースのオプトアウトは、このワークスペースのグローバル設定より優先されます。",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "このワークスペースで有効" : "このワークスペースでは無効",
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "推論アシスト",
+  "reasoningAssist.stage.assessing": "プロンプトを評価中",
+  "reasoningAssist.stage.mapping": "議論を整理中",
+  "reasoningAssist.stage.recording": "構造を記録中",
+  "reasoningAssist.stage.critiquing": "反論を確認中",
+  "reasoningAssist.stage.preparing": "回答を準備中",
+  "reasoningAssist.stage.applied": "アシストを適用済み",
+  "reasoningAssist.toggleDetails": "推論アシストの詳細を展開または折りたたむ",
+  "reasoningAssist.candidateConclusion": "候補となる結論",
+  "reasoningAssist.assumptions": "前提",
+  "reasoningAssist.evidenceBoundary": "証拠の範囲",
+  "reasoningAssist.criticObjections": "対処する反論",
+  "reasoningAssist.afRecordedStructure": "AFに記録された構造",
+  "reasoningAssist.afNotAvailable": "AFの構造は利用できません",
+
   // Language setting
   "config.language": "言語",
   "config.langAuto": "自動 (VS Code)",

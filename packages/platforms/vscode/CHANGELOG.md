@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-25
+
+### Added
+
+- Added the prompt-scoped reasoning assist: for eligible Scout text prompts, the host runs one bounded, host-owned preflight — an architect maps the argument, an optional critic raises bounded objections, and the Vibefeld `af` bridge records the structure — then quietly appends a bounded brief to the response's system instructions, with a compact expandable progress row showing safe ordered progress and only validated summary fields.
+- Added gated live architect/critic proofs to the restricted-review disposable proof harness.
+
+### Changed
+
+- Replaced the post-response raw-audit review pipeline with the reasoning-assist pipeline and retired the automatic-routing capability.
+- Delivered the assist brief through the per-message system instruction, preserving the original prompt, model, primary agent, files, skill, command, effort, queue behavior, and streamed answer path.
+
+### Fixed
+
+- Payload-less OpenCode events (e.g. `sync`) can no longer terminate companion event delivery; failing event listeners are isolated with bounded, once-per-type diagnostics.
+- Hidden stage results are read only after the assistant reply completes (message-level or per-part completion markers with a bounded stability fallback), so partial streamed replies can no longer reach schema validation.
+- Hardened the updater lifecycle's load-sensitive `vi.waitFor` timeouts and repaired the sandbox-runtime integration test's vitest 5 API drift.
+
+### Security
+
+- Extended security-negative suites to prove no AF, architect, or critic model-visible route exists through `IAgent`, tasks, plugins, MCP, Scout, Write, the research worker, or the TUI, and that no configuration, profile, workspace, permission, or sandbox widening occurs.
+- Added bounded preflight outcome diagnostics (reason, schema sub-reason, numeric stage text length, elapsed stage time) with no payload or identifier logging.
+
+### Deferred
+
+- Moving the assist brief to a synthetic, webview-hidden message part for OpenCode servers that ignore per-request system instructions in agent-mode sessions.
+
 ## [0.16.0] - 2026-09-15
 
 ### Added

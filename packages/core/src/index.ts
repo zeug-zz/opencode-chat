@@ -5,3 +5,5 @@ export * from "./domain";
 export * from "./model-effort";
 export * from "./platform.interface";
 export * from "./protocol";
+export * from "./reasoning-assist";
+export * from "./reasoning-review";

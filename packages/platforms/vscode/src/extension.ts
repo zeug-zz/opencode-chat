@@ -5,6 +5,9 @@ import {
   detectMemoryProvider,
   OpenCodeAgent,
   type OpenCodeLaunchConfiguration,
+  RESTRICTED_REVIEW_MAX_STEPS,
+  RESTRICTED_REVIEW_PROMPT,
+  type RestrictedReviewModel,
   readEffectiveOpenCodeConfiguration,
   readHindsightPackageMetadata,
   resolveHindsightPlugin,
@@ -15,6 +18,7 @@ import type {
   ChatSandboxSettings,
   ChatSandboxStatus,
   MemoryProviderStatus,
+  ReasoningReviewRuntime,
 } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import { type BundledResource, loadBundledResearchResources } from "./bundled-research-resources";
@@ -38,9 +42,40 @@ import {
   checkForPrivateReleaseUpdates,
   downloadAndValidatePrivateRelease,
 } from "./private-release-updater";
+import { resolveAfRuntime } from "./vibefeld/af-runtime-resolution";
+import { ClaimProjectionReasoningReviewController } from "./vibefeld/claim-projection-reasoning-review-controller";
+import { createCurrentVibefeldClaimProjectionSeam } from "./vibefeld/current-vibefeld-claim-projection";
+import { HIDDEN_SESSION_MARKER_PREFIX } from "./vibefeld/hidden-session-registry";
+import {
+  createReasoningAssistStructureRecorder,
+  type ReasoningAssistStructureRecorder,
+} from "./vibefeld/reasoning-assist-structure-recorder";
+import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
+import type { ReasoningAssistRestrictedReviewAdapter } from "./vibefeld/restricted-review-adapter";
+import {
+  DORMANT_REASONING_REVIEW_RUNTIME,
+  deriveReasoningReviewRuntime,
+  PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME,
+  RuntimeReportingReasoningReviewController,
+} from "./vibefeld/runtime-reporting-reasoning-review-controller";
+import { UnavailableReasoningReviewController } from "./vibefeld/unavailable-reasoning-review-controller";
+import {
+  createVibefeldActivation,
+  teardownVibefeldActivation,
+  type VibefeldActivationComposition,
+} from "./vibefeld/vibefeld-activation";
+import {
+  readVibefeldAfPath,
+  readVibefeldPreference,
+  updateVibefeldEnabled,
+  updateVibefeldWorkspaceOptOut,
+} from "./vibefeld/vibefeld-settings";
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent!: OpenCodeAgent;
+let restrictedReviewDisposal: (() => Promise<void>) | undefined;
+let reasoningAssistDisposal: (() => void) | undefined;
+let resolvedRestrictedReviewModel: RestrictedReviewModel | undefined;
 let chatInitialization: Promise<ChatViewProvider | undefined> | undefined;
 let sandboxController: ChatSandboxController<ChatSandboxStatus> | undefined;
 let memoryProviderStatus: MemoryProviderStatus = {
@@ -51,6 +86,7 @@ let memoryProviderStatus: MemoryProviderStatus = {
 };
 const MCP_INVENTORY_ERROR_MESSAGE =
   "OpenCode Scribe could not resolve its MCP inventory. Repair the OpenCode configuration and reload the extension.";
+const MAX_STARTUP_HIDDEN_SESSION_SCAVENGE = 8;
 
 class McpInventoryError extends Error {
   constructor() {
@@ -205,15 +241,18 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   const openCodePaths = resolveOpenCodePaths();
   let inheritedPluginSources: OpenCodeLaunchConfiguration["pluginSources"] = [];
   let hindsightResolution: Awaited<ReturnType<typeof resolveHindsightPlugin>>;
+  let resolvedModel: string | undefined;
   let hindsightResolutionFailed = false;
   try {
     const effectiveConfig = readEffectiveOpenCodeConfiguration(openCodePaths.config, workspaceFolder);
+    resolvedModel = effectiveConfig.model;
     inheritedPluginSources = (effectiveConfig.plugin ?? []) as OpenCodeLaunchConfiguration["pluginSources"];
     hindsightResolution = await resolveHindsightPlugin(effectiveConfig, readHindsightPackageMetadata);
   } catch {
     hindsightResolutionFailed = true;
     hindsightResolution = undefined;
   }
+  resolvedRestrictedReviewModel = parseRestrictedReviewModel(resolvedModel);
   // The preflight launch must keep provider hooks disabled. Exact observed
   // inventory verification below is the gate that activates lifecycle
   // retention on the final launch.
@@ -317,6 +356,15 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
         : {}),
       ...(hindsightIntegration && providerPathsAvailable
         ? { hindsightCompanionIntegration: hindsightIntegration }
+        : {}),
+      ...(resolvedRestrictedReviewModel
+        ? {
+            restrictedReview: {
+              model: `${resolvedRestrictedReviewModel.providerID}/${resolvedRestrictedReviewModel.modelID}`,
+              prompt: RESTRICTED_REVIEW_PROMPT,
+              maxSteps: RESTRICTED_REVIEW_MAX_STEPS,
+            },
+          }
         : {}),
     };
   };
@@ -425,6 +473,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   } else {
     try {
       await connectAgent(sandboxSettings.enabled);
+      await scavengeLeftoverRestrictedReviewSessions();
     } catch (error) {
       const kind = classifyConnectError(error);
       if (kind === "not-found") {
@@ -521,7 +570,55 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
 
   const memoryRetentionStatus = resolveMemoryRetentionStatus(memoryRetentionSettings, memoryProviderStatus);
 
+  // Host-private runtime resolution. Discovery runs once here and the
+  // composition stays dormant unless the resolution is ready, so no executable
+  // resolver or direct-execution adapter is ever supplied to a dormant host.
+  //
+  // A context without extension global storage cannot compose at all, so the
+  // host resolution is skipped there rather than running a bounded process for
+  // a composition that stays dormant.
+  const globalStoragePath = context.globalStorageUri?.fsPath ?? "";
+  const afRuntimeResolution = globalStoragePath
+    ? await (async () => {
+        const explicitExecutable = readVibefeldAfPath(workspaceUri);
+        return explicitExecutable ? resolveAfRuntime({ explicitExecutable }) : resolveAfRuntime();
+      })()
+    : undefined;
+
+  // Host-private activation composition. Construction is dormant and free of
+  // side effects; preflight and controller selection are separate steps. A
+  // lightweight host-test context may omit global storage, which keeps the
+  // composition dormant instead of failing activation.
+  const vibefeldActivation = createVibefeldActivation({
+    globalStoragePath,
+    repositoryPath: workspaceFolder,
+    ...(afRuntimeResolution?.state === "ready"
+      ? {
+          resolveExecutable: afRuntimeResolution.resolveExecutable,
+          policy: afRuntimeResolution.policy,
+        }
+      : {}),
+  });
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      void teardownVibefeldActivation(vibefeldActivation).catch(() => undefined);
+    }),
+  );
+
   const platformServices = new VscodePlatformServices();
+  // Dynamic selection: the composition above is constructed once and this is
+  // the only bridge preflight of the extension activation. Ordinary messages,
+  // session switches, and later view resolves reuse the injected controller.
+  const {
+    controller: reasoningReviewController,
+    reasoningAssistAdapter,
+    reasoningAssistStructureRecorder,
+  } = await selectReasoningReviewDependencies(vibefeldActivation);
+  const reasoningReviewPreference = {
+    read: () => readVibefeldPreference(workspaceUri),
+    setUserEnabled: (value: boolean) => updateVibefeldEnabled(value, workspaceUri),
+    setWorkspaceOptOut: (value: boolean) => updateVibefeldWorkspaceOptOut(value, workspaceUri),
+  };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("opencode-chat.selectNonoProfile", () => selectNonoProfile(workspaceUri)),
@@ -533,6 +630,16 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     chatMcpPrefs,
     memoryProviderStatus,
     memoryRetentionStatus,
+    reasoningReviewController,
+    // Host-private reasoning-assist dependencies selected by the single
+    // activation composition above; both are optional and the assist stays
+    // dormant whenever either is absent.
+    ...(reasoningAssistAdapter ? { reasoningAssistAdapter } : {}),
+    ...(reasoningAssistStructureRecorder ? { reasoningAssistStructureRecorder } : {}),
+    // Availability-gated preference seam: the user toggle writes the Global
+    // target and the workspace opt-out writes the Workspace target for this
+    // workspace. Reads and writes stay within the two bounded boolean keys.
+    reasoningReviewPreference,
     bundledResources: bundledResourceMetadata,
     bundledCommandNames: bundledCommands.map((resource) => resource.name),
     setChatSandboxSettings: async (settings: ChatSandboxSettings) => {
@@ -556,6 +663,9 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
       }
     },
   });
+  // The assist preflight holds host-private lifecycle state: deactivation must
+  // stop every in-flight preflight before adapters and sessions are torn down.
+  reasoningAssistDisposal = () => chatViewProvider?.cancelAllReasoningAssistWork();
   sandboxController = new ChatSandboxController<ChatSandboxStatus>({
     stop: () => agent.stopForReconnect(),
     start: async (settings) => {
@@ -652,6 +762,185 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   return chatViewProvider;
 }
 
+async function scavengeLeftoverRestrictedReviewSessions(): Promise<void> {
+  try {
+    const sessions = await agent.listSessions();
+    let deleted = 0;
+    for (const session of sessions) {
+      if (deleted >= MAX_STARTUP_HIDDEN_SESSION_SCAVENGE) break;
+      if (!session.title?.startsWith(HIDDEN_SESSION_MARKER_PREFIX)) continue;
+      try {
+        await agent.deleteSession(session.id);
+        deleted += 1;
+      } catch {
+        // Startup scavenging is best effort and must not block activation.
+      }
+    }
+  } catch {
+    // A failed session listing is nonfatal; no configuration is changed.
+  }
+}
+
+/**
+ * Bounded runtime status for a ready runtime whose bridge reports no supported
+ * claim operation. Availability is never published from compatibility or
+ * direct-execution readiness alone.
+ */
+const CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME: ReasoningReviewRuntime = {
+  state: "unavailable",
+  reason: "claim-capability-unavailable",
+};
+
+/**
+ * The bounded set of host-private review dependencies selected by the single
+ * activation composition. The assist dependencies stay optional and are
+ * omitted whenever their runtime gate fails.
+ */
+type ReasoningReviewSelection = Readonly<{
+  controller: IReasoningReviewController;
+  reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter;
+  reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder;
+}>;
+
+/**
+ * Runs the one bounded activation preflight and selects the review
+ * dependencies. A dormant composition is never inspected. A composed bridge is
+ * preflighted exactly once, and the claim seam is then constructed once from
+ * the settled preflight without touching the bridge. Only a ready preflight
+ * whose seam reports an explicitly supported claim operation selects the
+ * claim-projection controller; a ready runtime without that capability keeps
+ * the unavailable controller and publishes the bounded
+ * `claim-capability-unavailable` status, so `available` is never published
+ * without a supported claim operation. Any preflight or construction failure
+ * is nonfatal and bounded: no raw error or host path escapes, and the dormant
+ * unavailable controller stays injected. The published runtime status is fixed
+ * from this single outcome, so later status reads never re-preflight,
+ * discover, or spawn.
+ *
+ * The readiness-gated restricted-provider attempt runs independently of the
+ * claim-path selection: a ready provider always builds the host-private
+ * adapter and registers its disposal, the adapter is injected for the
+ * reasoning-assist only when the preflight is ready, and the adversarial
+ * controller is selected exactly when no claim controller was selected. The
+ * structure recorder is built from the already-preflighted claim seam only
+ * when its single guarded capability read reports support. Every attempt
+ * failure is fail-closed and never changes the controller fallback.
+ */
+async function selectReasoningReviewDependencies(
+  composition: VibefeldActivationComposition,
+  options: RestrictedReviewSelectionOptions = {},
+): Promise<ReasoningReviewSelection> {
+  let runtime: ReasoningReviewRuntime =
+    composition.state === "composed" ? PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME : DORMANT_REASONING_REVIEW_RUNTIME;
+  let claimAvailable = false;
+  let preflightReady = false;
+  let claimSeam: ReturnType<typeof createCurrentVibefeldClaimProjectionSeam> | undefined;
+  try {
+    if (composition.state === "composed") {
+      const preflight = await composition.bridge.preflight();
+      if (preflight.state === "ready") {
+        preflightReady = true;
+        claimSeam = createCurrentVibefeldClaimProjectionSeam(composition.bridge);
+        claimAvailable = claimSeam.getCapability().supported;
+        runtime = claimAvailable
+          ? deriveReasoningReviewRuntime(preflight)
+          : CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME;
+      } else {
+        runtime = deriveReasoningReviewRuntime(preflight);
+      }
+    }
+  } catch {
+    // A rejected preflight is nonfatal; the bounded failure status stays.
+  }
+
+  let controller: IReasoningReviewController | undefined;
+  if (claimAvailable && claimSeam) {
+    controller = new RuntimeReportingReasoningReviewController(
+      new ClaimProjectionReasoningReviewController(claimSeam),
+      runtime,
+    );
+  }
+
+  let reasoningAssistAdapter: ReasoningAssistRestrictedReviewAdapter | undefined;
+  try {
+    const model = options.model ?? resolvedRestrictedReviewModel;
+    const createProvider =
+      options.createProvider ??
+      ((pinnedModel: RestrictedReviewModel) => agent?.createRestrictedReviewProvider(pinnedModel));
+    const provider = model ? createProvider(model) : undefined;
+    if (provider && (await provider.checkReadiness())) {
+      // Keep the adversarial implementation dormant-by-construction when no
+      // host-pinned model/provider exists on the current host.
+      const [
+        { AdversarialReviewReasoningReviewController },
+        { createAdversarialReviewSeam },
+        { createRestrictedReviewAdapter },
+      ] = await Promise.all([
+        import("./vibefeld/adversarial-review-reasoning-review-controller"),
+        import("./vibefeld/adversarial-review-seam"),
+        import("./vibefeld/restricted-review-adapter"),
+      ]);
+      const adapter = createRestrictedReviewAdapter({ provider });
+      // Every constructed adapter owns host-private lifecycle state, so its
+      // disposal is registered whether it is injected for the assist or only
+      // selected behind the adversarial fallback controller.
+      restrictedReviewDisposal = adapter.dispose;
+      if (preflightReady) reasoningAssistAdapter = adapter;
+      if (!controller) {
+        const seam = createAdversarialReviewSeam(adapter);
+        if (seam.getCapability().supported) {
+          controller = new RuntimeReportingReasoningReviewController(
+            new AdversarialReviewReasoningReviewController(seam, {
+              readinessCheck: () => provider.checkReadiness(),
+            }),
+            { state: "available" },
+          );
+        }
+      }
+    }
+  } catch {
+    // Restricted review is optional and fails closed.
+    reasoningAssistAdapter = undefined;
+  }
+
+  let reasoningAssistStructureRecorder: ReasoningAssistStructureRecorder | undefined;
+  try {
+    // The seam capability is read exactly once above; a throw or unsupported
+    // report leaves the recorder absent instead of failing activation.
+    reasoningAssistStructureRecorder =
+      claimSeam && claimAvailable ? createReasoningAssistStructureRecorder(claimSeam) : undefined;
+  } catch {
+    reasoningAssistStructureRecorder = undefined;
+  }
+
+  return {
+    controller:
+      controller ?? new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), runtime),
+    reasoningAssistAdapter,
+    reasoningAssistStructureRecorder,
+  };
+}
+
+type RestrictedReviewSelectionOptions = Readonly<{
+  model?: RestrictedReviewModel;
+  createProvider?: (model: RestrictedReviewModel) => ReturnType<OpenCodeAgent["createRestrictedReviewProvider"]>;
+}>;
+
+function parseRestrictedReviewModel(value: string | undefined): RestrictedReviewModel | undefined {
+  if (
+    !value ||
+    value.length > 256 ||
+    [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+  )
+    return undefined;
+  const separator = value.indexOf("/");
+  if (separator <= 0 || separator === value.length - 1) return undefined;
+  const providerID = value.slice(0, separator);
+  const modelID = value.slice(separator + 1);
+  if (!providerID || !modelID || providerID.length > 128 || modelID.length > 256) return undefined;
+  return { providerID, modelID };
+}
+
 class LazyChatViewProvider implements vscode.WebviewViewProvider {
   constructor(private readonly resolveProvider: () => Promise<ChatViewProvider | undefined>) {}
 
@@ -665,8 +954,28 @@ class LazyChatViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
-export function deactivate() {
+export async function deactivate() {
   sandboxController = undefined;
+  // Stop host-private assist work before restricted children and the agent
+  // connection are torn down; a provider without in-flight work is a no-op.
+  const disposeAssist = reasoningAssistDisposal;
+  reasoningAssistDisposal = undefined;
+  if (disposeAssist) {
+    try {
+      disposeAssist();
+    } catch {
+      // Assist cleanup is best effort during shutdown.
+    }
+  }
+  const dispose = restrictedReviewDisposal;
+  restrictedReviewDisposal = undefined;
+  if (dispose) {
+    try {
+      await dispose();
+    } catch {
+      // Restricted child cleanup is best effort during shutdown.
+    }
+  }
   agent?.disconnect();
 }
 

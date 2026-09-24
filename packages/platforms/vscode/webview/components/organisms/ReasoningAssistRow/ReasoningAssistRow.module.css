@@ -1,0 +1,98 @@
+.root {
+  margin: 2px 0 6px;
+  border-radius: 6px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.title {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.stage {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.toggle:hover:not(:disabled) {
+  color: var(--vscode-foreground);
+  background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chevron {
+  display: flex;
+  transition: transform 0.15s;
+}
+
+.chevronExpanded {
+  transform: rotate(90deg);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 8px 6px 14px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.label {
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+}
+
+.text {
+  margin: 0;
+  color: var(--vscode-foreground);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.list {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--vscode-foreground);
+}
+
+.list li {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}

@@ -8,7 +8,28 @@ import type { MessageWithParts } from "../../../App";
 import { MessagesArea } from "../../../components/organisms/MessagesArea";
 import { AppContextProvider, type AppContextValue } from "../../../contexts/AppContext";
 import * as autoScrollHook from "../../../hooks/useAutoScroll";
+import type { ReasoningAssistRowState } from "../../../hooks/useReasoningAssist";
 import { createMessage, createTextPart } from "../../factories";
+
+function createAssistRow(overrides: Partial<ReasoningAssistRowState> = {}): ReasoningAssistRowState {
+  return {
+    sessionId: "session-1",
+    promptToken: "assist-token",
+    stage: "mapping",
+    applied: false,
+    ...overrides,
+  };
+}
+
+/** ドキュメント順で `later` が `earlier` の後に来るかを返す。 */
+function documentOrder(earlier: Node, later: Node): "after" | "before" {
+  return (earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 ? "after" : "before";
+}
+
+/** `middle` がドキュメント順で `before` と `after` の間に表示されるかを返す。 */
+function rendersBetween(before: Node, middle: Node, after: Node): boolean {
+  return documentOrder(before, middle) === "after" && documentOrder(middle, after) === "after";
+}
 
 /** AppContext 必須の値を最小限で提供するラッパー */
 function createContextWrapper() {
@@ -193,6 +214,164 @@ describe("MessagesArea", () => {
       const msgs: MessageWithParts[] = [{ info: createMessage({ role: "user" }), parts: [createTextPart("Hello")] }];
       render(<MessagesArea {...defaultProps} messages={msgs} />, { wrapper });
       expect(screen.queryByText("Fork from here")).not.toBeInTheDocument();
+    });
+  });
+
+  // reasoning-assist row placement
+  context("reasoning assist 行がある場合", () => {
+    const msgs: MessageWithParts[] = [
+      { info: createMessage({ role: "user", id: "usr-1" }), parts: [createTextPart("First prompt")] },
+      { info: createMessage({ role: "assistant", id: "ast-1" }), parts: [createTextPart("First reply")] },
+      { info: createMessage({ role: "user", id: "usr-2" }), parts: [createTextPart("Second prompt")] },
+    ];
+
+    // renders the anchored row directly after its user message and before the reply
+    it("アンカーのユーザーメッセージ直後に行をレンダリングすること", () => {
+      render(
+        <MessagesArea
+          {...defaultProps}
+          messages={msgs}
+          reasoningAssistRows={[createAssistRow({ promptToken: "token-anchored", anchorMessageId: "usr-1" })]}
+        />,
+        { wrapper },
+      );
+
+      const firstPrompt = screen.getByText("First prompt");
+      const reply = screen.getByText("First reply");
+      const row = screen.getByText("Reasoning assist");
+
+      expect(firstPrompt.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(row.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    // renders anchor-less rows after the final message, not inside the previous turn
+    it("末尾がアシスタント応答の場合、アンカーが無い行を前のターン内ではなく最終メッセージの後にレンダリングすること", () => {
+      const previousTurn: MessageWithParts[] = [
+        { info: createMessage({ role: "user", id: "usr-1" }), parts: [createTextPart("First prompt")] },
+        { info: createMessage({ role: "assistant", id: "ast-1" }), parts: [createTextPart("First reply")] },
+      ];
+      render(
+        <MessagesArea
+          {...defaultProps}
+          messages={previousTurn}
+          reasoningAssistRows={[createAssistRow({ promptToken: "token-trailing" })]}
+        />,
+        { wrapper },
+      );
+
+      const prompt = screen.getByText("First prompt");
+      const reply = screen.getByText("First reply");
+      const row = screen.getByText("Reasoning assist");
+
+      expect(documentOrder(reply, row)).toBe("after");
+      expect(rendersBetween(prompt, row, reply)).toBe(false);
+      expect(documentOrder(prompt, reply)).toBe("after");
+    });
+
+    // renders anchor-less rows after the last user message while it is the final message
+    it("アンカーが無い行を最後のユーザーメッセージの後にレンダリングすること", () => {
+      render(
+        <MessagesArea
+          {...defaultProps}
+          messages={msgs}
+          reasoningAssistRows={[
+            createAssistRow({ promptToken: "token-anchored", anchorMessageId: "usr-1" }),
+            createAssistRow({ promptToken: "token-trailing" }),
+          ]}
+        />,
+        { wrapper },
+      );
+
+      const [anchoredRow, trailingRow] = screen.getAllByText("Reasoning assist");
+      const secondPrompt = screen.getByText("Second prompt");
+
+      expect(documentOrder(secondPrompt, trailingRow)).toBe("after");
+      expect(documentOrder(anchoredRow, trailingRow)).toBe("after");
+    });
+
+    // renders anchor-less rows after the final message when the session has no user message
+    it("ユーザーメッセージが無い場合は最終メッセージの後にレンダリングすること", () => {
+      render(
+        <MessagesArea
+          {...defaultProps}
+          messages={[assistantMsg]}
+          reasoningAssistRows={[createAssistRow({ promptToken: "token-only" })]}
+        />,
+        { wrapper },
+      );
+
+      const reply = screen.getByText("Hi there");
+      const row = screen.getByText("Reasoning assist");
+
+      expect(documentOrder(reply, row)).toBe("after");
+    });
+
+    // renders anchor-less rows while the first prompt's preflight runs before any message exists
+    it("メッセージが無い場合もアンカー無しの行をレンダリングすること", () => {
+      render(
+        <MessagesArea
+          {...defaultProps}
+          messages={[]}
+          reasoningAssistRows={[createAssistRow({ promptToken: "token-empty" })]}
+        />,
+        { wrapper },
+      );
+
+      expect(screen.getByText("Reasoning assist")).toBeInTheDocument();
+      expect(screen.getByText("Mapping argument")).toBeInTheDocument();
+    });
+
+    // renders nothing when no row is published
+    it("行が無い場合は何もレンダリングしないこと", () => {
+      render(<MessagesArea {...defaultProps} messages={msgs} reasoningAssistRows={[]} />, { wrapper });
+
+      expect(screen.queryByText("Reasoning assist")).not.toBeInTheDocument();
+    });
+
+    // an ordinary (cleared) preflight leaves neither a row nor the removed review surfaces
+    it("クリア済みの通常フローでは行もレビューカードも思考面も表示しないこと", () => {
+      const { container } = render(<MessagesArea {...defaultProps} messages={msgs} reasoningAssistRows={[]} />, {
+        wrapper,
+      });
+
+      expect(screen.queryByText("Reasoning assist")).not.toBeInTheDocument();
+      expect(container.querySelector(".reviewCard")).toBeNull();
+      expect(container.querySelector(".reasoningPart")).toBeNull();
+      expect(container.querySelector(".reasoningHeader")).toBeNull();
+      expect(screen.queryByRole("region", { name: "Reasoning review" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Thought")).not.toBeInTheDocument();
+      expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+    });
+
+    // a pending row removed by cleared leaves no row, spinner, review card, or blocked surface
+    it("保留行がクリアされると行もスピナーもカードも blocked も残さないこと", () => {
+      const { container, rerender } = render(
+        <MessagesArea
+          {...defaultProps}
+          messages={msgs}
+          reasoningAssistRows={[
+            createAssistRow({ promptToken: "token-pending", stage: "recording", anchorMessageId: "usr-1" }),
+          ]}
+        />,
+        { wrapper },
+      );
+      expect(screen.getByText("Reasoning assist")).toBeInTheDocument();
+      expect(screen.getByText("Recording structure")).toBeInTheDocument();
+
+      rerender(<MessagesArea {...defaultProps} messages={msgs} reasoningAssistRows={[]} />);
+
+      expect(screen.queryByText("Reasoning assist")).not.toBeInTheDocument();
+      expect(container.textContent).not.toContain("blocked");
+      expect(container.querySelector("[data-testid='streaming-indicator']")).toBeNull();
+      expect(container.querySelector(".reviewCard")).toBeNull();
+      expect(container.querySelector(".reasoningPart")).toBeNull();
+      expect(container.querySelector(".reasoningHeader")).toBeNull();
+      expect(screen.queryByText("Thought")).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Reasoning review" })).not.toBeInTheDocument();
+      // 通常のトランスクリプトは影響を受けない
+      expect(screen.getByText("First prompt")).toBeInTheDocument();
+      expect(screen.getByText("First reply")).toBeInTheDocument();
+      expect(screen.getByText("Second prompt")).toBeInTheDocument();
     });
   });
 

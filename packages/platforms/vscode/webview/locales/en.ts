@@ -126,6 +126,31 @@ export const en = {
   "config.sandboxApplying": "Applying sandbox settings…",
   "config.sandboxError": (error: string) => `Sandbox error: ${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Reasoning review",
+  "config.reasoningReviewEnable": "Enable reasoning review",
+  "config.reasoningReviewWorkspaceOptOut": "Opt out in this workspace",
+  "config.reasoningReviewDescription":
+    "Reviews responses on this host when the reasoning-review runtime is available. The workspace opt-out overrides the global preference for this workspace.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Active in this workspace" : "Inactive in this workspace",
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "Reasoning assist",
+  "reasoningAssist.stage.assessing": "Assessing prompt",
+  "reasoningAssist.stage.mapping": "Mapping argument",
+  "reasoningAssist.stage.recording": "Recording structure",
+  "reasoningAssist.stage.critiquing": "Reviewing objections",
+  "reasoningAssist.stage.preparing": "Preparing answer",
+  "reasoningAssist.stage.applied": "Assist applied",
+  "reasoningAssist.toggleDetails": "Expand or collapse reasoning assist",
+  "reasoningAssist.candidateConclusion": "Candidate conclusion",
+  "reasoningAssist.assumptions": "Assumptions",
+  "reasoningAssist.evidenceBoundary": "Evidence boundary",
+  "reasoningAssist.criticObjections": "Critic objections to address",
+  "reasoningAssist.afRecordedStructure": "AF recorded structure",
+  "reasoningAssist.afNotAvailable": "AF structure not available",
+
   // Language setting
   "config.language": "Language",
   "config.langAuto": "Auto (VS Code)",

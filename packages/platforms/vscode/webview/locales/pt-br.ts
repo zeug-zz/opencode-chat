@@ -137,6 +137,31 @@ export const ptBr: LocaleSchema = {
   "config.sandboxApplying": "Aplicando configurações de sandbox…",
   "config.sandboxError": (error: string) => `Erro de sandbox: ${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Revisão de raciocínio",
+  "config.reasoningReviewEnable": "Ativar revisão de raciocínio",
+  "config.reasoningReviewWorkspaceOptOut": "Optar por não participar neste workspace",
+  "config.reasoningReviewDescription":
+    "Revisa respostas neste host quando o runtime de revisão de raciocínio está disponível. A opção de não participação do workspace substitui a preferência global neste workspace.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Ativa neste workspace" : "Inativa neste workspace",
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "Assistência de raciocínio",
+  "reasoningAssist.stage.assessing": "Avaliando o prompt",
+  "reasoningAssist.stage.mapping": "Mapeando o argumento",
+  "reasoningAssist.stage.recording": "Registrando a estrutura",
+  "reasoningAssist.stage.critiquing": "Revisando objeções",
+  "reasoningAssist.stage.preparing": "Preparando a resposta",
+  "reasoningAssist.stage.applied": "Assistência aplicada",
+  "reasoningAssist.toggleDetails": "Expandir ou recolher a assistência de raciocínio",
+  "reasoningAssist.candidateConclusion": "Conclusão candidata",
+  "reasoningAssist.assumptions": "Suposições",
+  "reasoningAssist.evidenceBoundary": "Limite das evidências",
+  "reasoningAssist.criticObjections": "Objeções a abordar",
+  "reasoningAssist.afRecordedStructure": "Estrutura registrada no AF",
+  "reasoningAssist.afNotAvailable": "Estrutura do AF indisponível",
+
   // Language setting
   "config.language": "Idioma",
   "config.langAuto": "Automático (VS Code)",

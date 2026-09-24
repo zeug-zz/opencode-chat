@@ -72,7 +72,7 @@ export function getCopyableAssistantMarkdownSource(
   return getAssistantMarkdownSource(parts);
 }
 
-function MessageItemInner({ message, activeSessionId, showAllThinking = false, questions, onEditAndResend }: Props) {
+function MessageItemInner({ message, showAllThinking = false, questions, onEditAndResend }: Props) {
   const t = useLocale();
   const { isShellMessage, childSessions, onNavigateToChild } = useAppContext();
   const { info, parts } = message;

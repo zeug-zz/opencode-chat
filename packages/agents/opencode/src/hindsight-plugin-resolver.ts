@@ -7,6 +7,7 @@ export type HindsightPluginEntry = string | readonly [string, ...(readonly unkno
 
 export type EffectiveOpenCodeConfiguration = {
   readonly plugin?: readonly unknown[];
+  readonly model?: string;
 };
 
 export type HindsightPackageMetadata = {
@@ -30,6 +31,7 @@ export type HindsightPluginResolution = Readonly<{
 
 const MAX_CONFIG_BYTES = 256 * 1024;
 const MAX_METADATA_BYTES = 64 * 1024;
+const MAX_MODEL_LENGTH = 256;
 
 function parseJsonc(source: string): Record<string, unknown> | undefined {
   if (source.length > MAX_CONFIG_BYTES) return undefined;
@@ -102,11 +104,20 @@ export function readEffectiveOpenCodeConfiguration(
   workspaceRoot: string,
 ): EffectiveOpenCodeConfiguration {
   const plugin: unknown[] = [];
+  let model: string | undefined;
   const read = (directory: string): void => {
     for (const name of ["opencode.json", "opencode.jsonc"]) {
       try {
         const config = parseJsonc(readFileSync(join(directory, name), "utf8"));
         if (Array.isArray(config?.plugin)) plugin.push(...config.plugin);
+        const configuredModel = config?.model;
+        if (
+          typeof configuredModel === "string" &&
+          configuredModel.trim().length > 0 &&
+          configuredModel.length <= MAX_MODEL_LENGTH
+        ) {
+          model = configuredModel.trim();
+        }
       } catch {
         // Missing and malformed optional layers are ignored by the preflight.
       }
@@ -114,7 +125,7 @@ export function readEffectiveOpenCodeConfiguration(
   };
   read(globalConfigDir);
   for (const directory of projectConfigDirectories(workspaceRoot)) read(directory);
-  return { plugin };
+  return { plugin, ...(model === undefined ? {} : { model }) };
 }
 
 /** Safe default reader for local entries. Only package identity and paths escape. */

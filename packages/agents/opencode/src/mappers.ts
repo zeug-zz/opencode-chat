@@ -78,14 +78,25 @@ export function mapMessagesWithParts(data: Array<{ info: Message; parts: Part[] 
 // Event
 // ============================================================
 
+function isEventPayloadObject(value: unknown): boolean {
+  return typeof value === "object" && value !== null;
+}
+
 export function mapEvent(event: Event): AgentEvent {
-  const e = event as Record<string, unknown>;
+  // The stream can deliver unexpected shapes (e.g. a serialized
+  // `server.connected` without its empty `properties`); no property read here
+  // may throw on them.
+  const e = (event && typeof event === "object" ? event : {}) as Record<string, unknown>;
   // V2Event format uses `data`, v1 Event format uses `properties`.
-  // Normalize to v1 format so all downstream code can use `event.properties`.
-  if (e.data && !e.properties) {
+  // Normalize to v1 format so all downstream code can use `event.properties`,
+  // and guarantee `properties` is always a defined non-null object.
+  if (isEventPayloadObject(e.properties)) {
+    return e as unknown as AgentEvent;
+  }
+  if (isEventPayloadObject(e.data)) {
     return { ...e, properties: e.data } as unknown as AgentEvent;
   }
-  return e as unknown as AgentEvent;
+  return { ...e, properties: {} } as unknown as AgentEvent;
 }
 
 // ============================================================

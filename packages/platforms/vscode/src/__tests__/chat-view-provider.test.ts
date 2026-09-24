@@ -23,7 +23,18 @@ import * as fs from "node:fs/promises";
 import type { IAgent, IPlatformServices, MemoryProviderStatus } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "../chat-mcp-prefs";
+import type { ReasoningReviewPreferenceSeam } from "../chat-view-provider";
 import { ChatViewProvider, MEMORY_RETENTION_CONFIRMATION_TTL_MS } from "../chat-view-provider";
+import {
+  composeReasoningAssistBrief,
+  REASONING_ASSIST_BRIEF_DELIMITER,
+  type ReasoningAssistBriefInput,
+} from "../vibefeld/reasoning-assist-brief";
+import type { ReasoningAssistStructureRecorder } from "../vibefeld/reasoning-assist-structure-recorder";
+import type { IReasoningReviewController } from "../vibefeld/reasoning-review-controller";
+import type { ReasoningAssistRestrictedReviewAdapter } from "../vibefeld/restricted-review-adapter";
+import { RuntimeReportingReasoningReviewController } from "../vibefeld/runtime-reporting-reasoning-review-controller";
+import { UnavailableReasoningReviewController } from "../vibefeld/unavailable-reasoning-review-controller";
 
 // --- Helper: IAgent のモック ---
 
@@ -166,6 +177,10 @@ function setupProvider(
   bundledCommandNames?: string[],
   memoryProviderStatus?: MemoryProviderStatus,
   memoryRetentionStatus?: import("@opencode-chat/core").MemoryRetentionStatus,
+  reasoningReviewController?: IReasoningReviewController,
+  reasoningReviewPreference?: ReasoningReviewPreferenceSeam,
+  reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter,
+  reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder,
 ) {
   const extensionUri = { fsPath: "/ext" };
   const ps = mockPlatformServices ?? createMockPlatformServices();
@@ -176,6 +191,10 @@ function setupProvider(
     bundledCommandNames,
     memoryProviderStatus,
     memoryRetentionStatus,
+    reasoningReviewController,
+    reasoningReviewPreference,
+    reasoningAssistAdapter,
+    reasoningAssistStructureRecorder,
   });
   const mock = createMockWebviewView();
   provider.resolveWebviewView(
@@ -278,6 +297,1226 @@ describe("ChatViewProvider", () => {
   });
 
   // ============================================================
+  // post-response review removal
+  // ============================================================
+
+  describe("post-response review removal", () => {
+    /**
+     * Regression guard for the retired completed-message route: ordinary
+     * assistant prose must never reach a review controller, whose only
+     * production input used to be a compiled visible-response packet.
+     */
+    it("never reviews completed assistant prose on busy, idle, cancellation, or preference changes", async () => {
+      const review = vi.fn();
+      const cancel = vi.fn();
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" }),
+        review,
+        cancel,
+      };
+      const preferenceSeam: ReasoningReviewPreferenceSeam = {
+        read: () => ({ userEnabled: true, workspaceOptOut: false }),
+        setUserEnabled: vi.fn(async () => undefined),
+        setWorkspaceOptOut: vi.fn(async () => undefined),
+      };
+      const completedMessage = {
+        info: {
+          id: "completed-message",
+          sessionID: "session-a",
+          role: "assistant" as const,
+          time: { created: 1, completed: 2 },
+        },
+        parts: [
+          { type: "text" as const, text: "Ordinary visible assistant prose" },
+          { type: "reasoning" as const, text: "Private model reasoning" },
+        ],
+      };
+      mockAgent.getSession.mockResolvedValue({ id: "session-a" });
+      mockAgent.getMessages.mockResolvedValue([completedMessage]);
+
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        preferenceSeam,
+      );
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "selectSession", sessionId: "session-a" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "session-a",
+        text: "Why compare these options?",
+        primaryAgent: "scout",
+      });
+      // A stale webview request shape must also stay inert.
+      await sendMessage({
+        type: "requestReasoningReview",
+        sessionId: "session-a",
+        messageId: "completed-message",
+      } as never);
+      eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "session-a", status: { type: "idle" } } });
+      await sendMessage({ type: "setReasoningReviewPreference", preference: { userEnabled: true } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(review).not.toHaveBeenCalled();
+      expect(cancel).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReview" }));
+      // The ordinary dispatch path still delivers the unchanged prompt.
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "session-a",
+        "Why compare these options?",
+        expect.objectContaining({ primaryAgent: "scout" }),
+      );
+    });
+
+    it("keeps ordinary dispatch, queueing, and runtime publication unchanged", async () => {
+      const runtime = { state: "available" as const };
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue(runtime),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "ready" });
+      expect(postMessage).toHaveBeenCalledWith({ type: "reasoningRuntime", runtime });
+
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "ordinary prompt", primaryAgent: "scout" });
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "ordinary prompt",
+        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+      );
+      expect(controller.review).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // reasoning assist preflight (3.1 host integration)
+  // ============================================================
+
+  describe("reasoning assist preflight", () => {
+    const ARGUMENT_TEXT = JSON.stringify({
+      kind: "argument",
+      conclusionId: "claim-conclusion",
+      claims: [
+        {
+          id: "claim-premise",
+          class: "empirical",
+          statement: "A bounded observation was recorded for this case.",
+          dependsOn: [],
+        },
+        {
+          id: "claim-conclusion",
+          class: "deductive",
+          statement: "The conclusion follows from the recorded premise.",
+          dependsOn: ["claim-premise"],
+        },
+      ],
+      assumptions: [
+        { id: "assumption-1", claimId: "claim-conclusion", statement: "The premise applies to this case." },
+      ],
+      evidenceNeeds: [{ claimId: "claim-premise", sourceKind: "observation", status: "source_recorded" }],
+      uncertainty: ["The observation is bounded to one case."],
+    });
+
+    function createPreferenceSeam(initial: { userEnabled: boolean; workspaceOptOut: boolean }) {
+      const state = { ...initial };
+      const seam: ReasoningReviewPreferenceSeam = {
+        read: () => ({ ...state }),
+        setUserEnabled: vi.fn(async (value: boolean) => {
+          state.userEnabled = value;
+        }),
+        setWorkspaceOptOut: vi.fn(async (value: boolean) => {
+          state.workspaceOptOut = value;
+        }),
+      };
+      return { seam };
+    }
+
+    function availableController(): IReasoningReviewController {
+      return {
+        getRuntime: vi.fn().mockResolvedValue({ state: "available" }),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+    }
+
+    function makeAssistAdapter(
+      overrides: {
+        run?: (role: "architect" | "critic", signal?: AbortSignal, packetText?: string) => Promise<unknown>;
+        supportedStages?: readonly ("architect" | "critic")[];
+      } = {},
+    ) {
+      const context = {
+        handle: "assist-handle",
+        provenance: { identity: "assist-identity", role: "architect" as const, contextNumber: 1 as const },
+      };
+      const cancelReasoningAssistContext = vi.fn(async () => undefined);
+      const adapter: ReasoningAssistRestrictedReviewAdapter = {
+        supportedStages: overrides.supportedStages ?? ["architect"],
+        createReasoningAssistContext: vi.fn(async () => context),
+        runReasoningAssistStage: vi.fn(
+          async (_context: unknown, packetText: string, role: "architect" | "critic", signal?: AbortSignal) =>
+            overrides.run
+              ? overrides.run(role, signal, packetText)
+              : { ok: true, role: "architect" as const, text: '{"kind":"ordinary"}' },
+        ),
+        cancelReasoningAssistContext,
+      };
+      return { adapter, context, cancelReasoningAssistContext };
+    }
+
+    /**
+     * A run override whose stage calls stay pending until the test resolves
+     * them, so cancellation and supersession can be delivered mid-preflight.
+     */
+    function deferredStages() {
+      const pending: Array<{
+        role: "architect" | "critic";
+        packetText: string;
+        signal: AbortSignal | undefined;
+        stage: ReturnType<typeof deferred<unknown>>;
+      }> = [];
+      const run = async (role: "architect" | "critic", signal?: AbortSignal, packetText = "") => {
+        const stage = deferred<unknown>();
+        pending.push({ role, packetText, signal, stage });
+        return stage.promise;
+      };
+      const calls = (role: "architect" | "critic") => pending.filter((entry) => entry.role === role);
+      const callFor = (userText: string) => {
+        const call = pending.find((entry) => entry.packetText.includes(userText));
+        if (!call) throw new Error(`expected a pending preflight stage for '${userText}'`);
+        return call;
+      };
+      return { run, calls, callFor };
+    }
+
+    function makeStructureRecorder(recordResult: "recorded" | "not-available" = "recorded") {
+      const isSupported = vi.fn(() => true);
+      const record = vi.fn(async () => recordResult);
+      const recorder: ReasoningAssistStructureRecorder = { isSupported, record };
+      return { recorder, isSupported, record };
+    }
+
+    function reasoningAssistPosts(postMessage: ReturnType<typeof vi.fn>) {
+      return postMessage.mock.calls
+        .map(([message]) => message as { type?: string })
+        .filter((message) => typeof message?.type === "string" && message.type.startsWith("reasoningAssist"));
+    }
+
+    function setupEligible(options: {
+      adapter?: ReasoningAssistRestrictedReviewAdapter;
+      structureRecorder?: ReasoningAssistStructureRecorder;
+      preference?: { userEnabled: boolean; workspaceOptOut: boolean };
+      controller?: IReasoningReviewController;
+    }) {
+      const seam = createPreferenceSeam(options.preference ?? { userEnabled: true, workspaceOptOut: false });
+      return setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        options.controller ?? availableController(),
+        seam.seam,
+        options.adapter,
+        options.structureRecorder,
+      );
+    }
+
+    /**
+     * The exact validated facts the architect parser produces for
+     * `ARGUMENT_TEXT`; both the expected brief and summary derive from it.
+     */
+    const EXPECTED_FACTS = {
+      conclusion: { class: "deductive" as const, statement: "The conclusion follows from the recorded premise." },
+      assumptions: ["The premise applies to this case."],
+      evidenceNeeds: [{ sourceKind: "observation" as const, status: "source_recorded" as const }],
+      uncertainty: ["The observation is bounded to one case."],
+    };
+
+    const EXPECTED_OBJECTIONS = [
+      {
+        target: { kind: "assumption" as const, id: "assumption-1" },
+        severity: "material" as const,
+        objection: "The premise applies only to a narrower case.",
+      },
+    ];
+
+    const CRITIC_TEXT = JSON.stringify({
+      objections: [
+        {
+          target: { kind: "assumption", id: "assumption-1" },
+          severity: "material",
+          reason: "The premise applies only to a narrower case.",
+        },
+      ],
+    });
+
+    function argumentAssistInput(afState: "recorded" | "not_available"): ReasoningAssistBriefInput {
+      return { facts: EXPECTED_FACTS, afState, objections: EXPECTED_OBJECTIONS };
+    }
+
+    function expectedArgumentBrief(afState: "recorded" | "not_available"): string {
+      const brief = composeReasoningAssistBrief(argumentAssistInput(afState));
+      if (!brief) throw new Error("expected a composed reasoning-assist brief");
+      return brief;
+    }
+
+    const EXPECTED_SUMMARY = {
+      candidateConclusion: "The conclusion follows from the recorded premise.",
+      assumptions: ["The premise applies to this case."],
+      evidenceBoundary: "1 source recorded; The observation is bounded to one case.",
+      criticObjections: [{ target: "assumption", objection: "The premise applies only to a narrower case." }],
+      afFact: "absent",
+    };
+
+    /** Architect plus critic run: the standard argument outcome with objections. */
+    const argumentAdapterOverrides = {
+      supportedStages: ["architect", "critic"] as const,
+      run: async (role: "architect" | "critic") =>
+        role === "critic"
+          ? { ok: true, role: "critic" as const, text: CRITIC_TEXT }
+          : { ok: true, role: "architect" as const, text: ARGUMENT_TEXT },
+    };
+
+    it("posts token-scoped progress then cleared around an eligible dispatch", async () => {
+      const { adapter } = makeAssistAdapter();
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Should this hold?", primaryAgent: "scout" });
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect(posts.map((message) => (message as { stage?: string }).stage)).toEqual(["assessing", undefined]);
+      expect(posts[0]).toMatchObject({ sessionId: "sess-1", stage: "assessing" });
+      expect((posts[0] as { promptToken: string }).promptToken.length).toBeGreaterThan(0);
+      expect((posts[1] as { promptToken: string }).promptToken).toBe((posts[0] as { promptToken: string }).promptToken);
+      expect(adapter.createReasoningAssistContext).toHaveBeenCalledWith("architect");
+      expect(adapter.cancelReasoningAssistContext).toHaveBeenCalledTimes(1);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Should this hold?",
+        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+      );
+    });
+
+    it("composes the brief and posts preparing, summary, and applied around a valid argument dispatch", async () => {
+      const { adapter } = makeAssistAdapter(argumentAdapterOverrides);
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual([
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistSummary",
+        "reasoningAssistProgress",
+      ]);
+      expect(posts.map((message) => (message as { stage?: string }).stage)).toEqual([
+        "assessing",
+        "mapping",
+        "critiquing",
+        "preparing",
+        undefined,
+        "applied",
+      ]);
+      const tokens = posts.map((message) => (message as { promptToken?: string }).promptToken);
+      expect(new Set(tokens).size).toBe(1);
+
+      const summaryPost = posts.find((message) => message.type === "reasoningAssistSummary");
+      expect(summaryPost).toMatchObject({ sessionId: "sess-1", summary: EXPECTED_SUMMARY });
+      // The compact summary carries validated fields only: no ids, handles,
+      // provenance identities, or raw critic envelope.
+      const serialized = JSON.stringify(summaryPost);
+      expect(serialized).not.toContain("assumption-1");
+      expect(serialized).not.toContain("claim-");
+      expect(serialized).not.toContain("assist-handle");
+      expect(serialized).not.toContain("assist-identity");
+      expect(serialized).not.toContain("severity");
+
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({
+          primaryAgent: "scout",
+          system: `chat prompt${REASONING_ASSIST_BRIEF_DELIMITER}${expectedArgumentBrief("not_available")}`,
+        }),
+      );
+    });
+
+    it("posts applied only after the dispatch promise resolves", async () => {
+      const dispatch = deferred<void>();
+      mockAgent.sendMessage.mockImplementationOnce(() => dispatch.promise);
+      const { adapter } = makeAssistAdapter(argumentAdapterOverrides);
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+
+      const before = reasoningAssistPosts(postMessage);
+      expect(before.map((message) => (message as { stage?: string }).stage)).toEqual([
+        "assessing",
+        "mapping",
+        "critiquing",
+        "preparing",
+        undefined,
+      ]);
+      expect(before.some((message) => (message as { stage?: string }).stage === "applied")).toBe(false);
+
+      dispatch.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const after = reasoningAssistPosts(postMessage);
+      expect(after.map((message) => (message as { stage?: string }).stage)).toEqual([
+        "assessing",
+        "mapping",
+        "critiquing",
+        "preparing",
+        undefined,
+        "applied",
+      ]);
+      const tokens = after.map((message) => (message as { promptToken?: string }).promptToken);
+      expect(new Set(tokens).size).toBe(1);
+    });
+
+    it("appends the brief to default and explicit system instructions while preserving dispatch options", async () => {
+      const { adapter } = makeAssistAdapter(argumentAdapterOverrides);
+      const { sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue the case.",
+        model: { providerID: "anthropic", modelID: "claude-4" },
+        effort: { id: "high" },
+        primaryAgent: "scout",
+        skill: "research-skill",
+      });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-2",
+        text: "Argue the case again.",
+        agent: "scout",
+        primaryAgent: "scout",
+        system: "caller prompt",
+      });
+
+      const brief = expectedArgumentBrief("not_available");
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
+        1,
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({
+          model: { providerID: "anthropic", modelID: "claude-4" },
+          effort: { id: "high" },
+          files: undefined,
+          agent: undefined,
+          primaryAgent: "scout",
+          skill: "research-skill",
+          system: `chat prompt${REASONING_ASSIST_BRIEF_DELIMITER}${brief}`,
+        }),
+      );
+      expect(mockAgent.sendMessage).toHaveBeenNthCalledWith(
+        2,
+        "sess-2",
+        "Argue the case again.",
+        expect.objectContaining({
+          agent: "scout",
+          primaryAgent: "scout",
+          system: `caller prompt${REASONING_ASSIST_BRIEF_DELIMITER}${brief}`,
+        }),
+      );
+    });
+
+    it("passes an injected structure recorder through and reports only recorded structure", async () => {
+      const { adapter } = makeAssistAdapter(argumentAdapterOverrides);
+      const { recorder, isSupported, record } = makeStructureRecorder("recorded");
+      const { postMessage, sendMessage } = setupEligible({ adapter, structureRecorder: recorder });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => (message as { stage?: string }).stage)).toEqual([
+        "assessing",
+        "mapping",
+        "recording",
+        "critiquing",
+        "preparing",
+        undefined,
+        "applied",
+      ]);
+      const summaryPost = posts.find((message) => message.type === "reasoningAssistSummary");
+      expect(summaryPost).toMatchObject({ summary: { afFact: "recorded_structure" } });
+      expect(isSupported).toHaveBeenCalled();
+      expect(record).toHaveBeenCalledTimes(1);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({
+          system: `chat prompt${REASONING_ASSIST_BRIEF_DELIMITER}${expectedArgumentBrief("recorded")}`,
+        }),
+      );
+    });
+
+    it("posts nothing and dispatches unchanged when the preflight goes stale", async () => {
+      const { adapter } = makeAssistAdapter({
+        run: async () => {
+          // Deleting mid-flight cancels the preflight and orphans the prompt
+          // state, so the next staleness gate must drop the late valid argument
+          // without another terminal message.
+          await sendMessage({ type: "deleteSession", sessionId: "sess-1" });
+          return { ok: true, role: "architect", text: ARGUMENT_TEXT };
+        },
+      });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+      // The reentrant deleteSession adds one extra macrotask before the assist
+      // gate resolves and dispatch resumes.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const stalePosts = reasoningAssistPosts(postMessage);
+      // The deletion hook is the only terminal message: one token-scoped
+      // cleared for the in-flight row, and the stale gate adds nothing.
+      expect(stalePosts.map((message) => message.type)).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect(stalePosts.map((message) => (message as { stage?: string }).stage)).toEqual(["assessing", undefined]);
+      expect((stalePosts[1] as { promptToken: string }).promptToken).toBe(
+        (stalePosts[0] as { promptToken: string }).promptToken,
+      );
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+      );
+    });
+
+    it("performs no assist work when no adapter is injected", async () => {
+      const { postMessage, sendMessage } = setupEligible({});
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Hello", primaryAgent: "scout" });
+
+      expect(reasoningAssistPosts(postMessage)).toEqual([]);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Hello",
+        expect.objectContaining({ primaryAgent: "scout" }),
+      );
+    });
+
+    it.each<{
+      label: string;
+      text: string;
+      message: Record<string, unknown>;
+      preference?: { userEnabled: boolean; workspaceOptOut: boolean };
+      controller?: boolean;
+      withBundledCommandNames?: boolean;
+    }>([
+      {
+        label: "attachment",
+        text: "Hello",
+        message: { files: [{ filePath: "/a.ts", fileName: "a.ts" }] },
+      },
+      {
+        label: "bundled command",
+        text: "Hello",
+        message: { bundledCommand: { name: "write-report", arguments: "" } },
+        withBundledCommandNames: true,
+      },
+      { label: "non-scout primaryAgent", text: "Hello", message: { primaryAgent: "build" } },
+      { label: "non-scout agent", text: "Hello", message: { agent: "build" } },
+      {
+        label: "workspace opt-out",
+        text: "Hello",
+        message: { primaryAgent: "scout" },
+        preference: { userEnabled: true, workspaceOptOut: true },
+      },
+      {
+        label: "user preference disabled",
+        text: "Hello",
+        message: { primaryAgent: "scout" },
+        preference: { userEnabled: false, workspaceOptOut: false },
+      },
+      {
+        label: "runtime unavailable",
+        text: "Hello",
+        message: { primaryAgent: "scout" },
+        controller: true,
+      },
+    ])(
+      "does no assist work for an ineligible $label prompt",
+      async ({ text, message, preference, controller, withBundledCommandNames }) => {
+        const { adapter } = makeAssistAdapter();
+        const seam = createPreferenceSeam(preference ?? { userEnabled: true, workspaceOptOut: false });
+        const controllerImpl: IReasoningReviewController = controller
+          ? { getRuntime: vi.fn().mockResolvedValue({ state: "unavailable" }), review: vi.fn(), cancel: vi.fn() }
+          : availableController();
+        const { postMessage, sendMessage } = setupProvider(
+          mockAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          withBundledCommandNames ? ["write-report"] : undefined,
+          undefined,
+          undefined,
+          controllerImpl,
+          seam.seam,
+          adapter,
+        );
+        await sendMessage({ type: "ready" });
+        await sendMessage({ type: "sendMessage", sessionId: "sess-1", text, ...message });
+
+        expect(reasoningAssistPosts(postMessage)).toEqual([]);
+        expect(adapter.createReasoningAssistContext).not.toHaveBeenCalled();
+        expect(adapter.runReasoningAssistStage).not.toHaveBeenCalled();
+        expect(adapter.cancelReasoningAssistContext).not.toHaveBeenCalled();
+        // The system instruction stays exactly the pre-existing host behavior.
+        const expectedSystem =
+          message.primaryAgent === "scout"
+            ? "chat prompt"
+            : message.primaryAgent === "build"
+              ? "write prompt"
+              : undefined;
+        expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+          "sess-1",
+          text,
+          expect.objectContaining({ ...message, system: expectedSystem }),
+        );
+      },
+    );
+
+    it("runs one fresh preflight per dispatch attempt when a failed prompt is retried", async () => {
+      const { adapter, cancelReasoningAssistContext } = makeAssistAdapter();
+      mockAgent.sendMessage.mockRejectedValueOnce(new Error("dispatch failed"));
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Retry me.", primaryAgent: "scout" });
+
+      // The rejected dispatch retained the prompt at the queue head; its own
+      // preflight already settled and discarded its context before the throw.
+      expect(adapter.createReasoningAssistContext).toHaveBeenCalledTimes(1);
+      expect(adapter.runReasoningAssistStage).toHaveBeenCalledTimes(1);
+      expect(cancelReasoningAssistContext).toHaveBeenCalledTimes(1);
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1);
+
+      // A busy -> idle transition re-dispatches the retained prompt.
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(adapter.createReasoningAssistContext).toHaveBeenCalledTimes(2);
+      expect(adapter.runReasoningAssistStage).toHaveBeenCalledTimes(2);
+      expect(cancelReasoningAssistContext).toHaveBeenCalledTimes(2);
+      expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2);
+      expect(mockAgent.sendMessage).toHaveBeenLastCalledWith(
+        "sess-1",
+        "Retry me.",
+        expect.objectContaining({ primaryAgent: "scout" }),
+      );
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual([
+        "reasoningAssistProgress",
+        "reasoningAssistCleared",
+        "reasoningAssistProgress",
+        "reasoningAssistCleared",
+      ]);
+      const tokens = posts.map((message) => (message as { promptToken?: string }).promptToken);
+      expect(new Set(tokens).size).toBe(2);
+      expect(tokens[1]).toBe(tokens[0]);
+      expect(tokens[3]).toBe(tokens[2]);
+      expect(tokens[2]).not.toBe(tokens[0]);
+    });
+
+    it("cancels an in-flight preflight on abort and dispatches the prompt unchanged", async () => {
+      const stages = deferredStages();
+      const { adapter, context, cancelReasoningAssistContext } = makeAssistAdapter({ run: stages.run });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      const dispatch = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Should this hold?",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(1));
+
+      const promptToken = (reasoningAssistPosts(postMessage)[0] as { promptToken: string }).promptToken;
+
+      await sendMessage({ type: "abort", sessionId: "sess-1" });
+
+      const inFlight = stages.callFor("Should this hold?");
+      expect(inFlight.signal?.aborted).toBe(true);
+
+      inFlight.stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1));
+      await dispatch;
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect((posts[1] as { promptToken: string }).promptToken).toBe(promptToken);
+      expect(posts.some((message) => (message as { stage?: string }).stage === "preparing")).toBe(false);
+      expect(posts.some((message) => (message as { stage?: string }).stage === "applied")).toBe(false);
+      expect(cancelReasoningAssistContext).toHaveBeenCalledWith(context);
+      expect(mockAgent.abortSession).toHaveBeenCalledWith("sess-1");
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Should this hold?",
+        expect.objectContaining({ primaryAgent: "scout", system: "chat prompt" }),
+      );
+    });
+
+    it("cancels an in-flight preflight on session deletion and keeps the queue-clear behavior", async () => {
+      const stages = deferredStages();
+      const { adapter } = makeAssistAdapter({ run: stages.run });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      const dispatch = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue the case.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(1));
+
+      const promptToken = (reasoningAssistPosts(postMessage)[0] as { promptToken: string }).promptToken;
+
+      await sendMessage({ type: "deleteSession", sessionId: "sess-1" });
+
+      expect(stages.callFor("Argue the case.").signal?.aborted).toBe(true);
+      expect(mockAgent.deleteSession).toHaveBeenCalledWith("sess-1");
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 0 });
+
+      stages.callFor("Argue the case.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1));
+      await dispatch;
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect((posts[1] as { promptToken: string }).promptToken).toBe(promptToken);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({ system: "chat prompt" }),
+      );
+    });
+
+    it("cancels an in-flight preflight on a session.deleted event", async () => {
+      const stages = deferredStages();
+      const { adapter } = makeAssistAdapter({ run: stages.run });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      await sendMessage({ type: "ready" });
+      const dispatch = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue the case.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(1));
+
+      const promptToken = (reasoningAssistPosts(postMessage)[0] as { promptToken: string }).promptToken;
+
+      eventCallback({ type: "session.deleted", properties: { info: { id: "sess-1" } } });
+
+      expect(stages.callFor("Argue the case.").signal?.aborted).toBe(true);
+      expect(postMessage).toHaveBeenCalledWith({ type: "queuedPrompts", sessionId: "sess-1", count: 0 });
+
+      stages.callFor("Argue the case.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1));
+      await dispatch;
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect((posts[1] as { promptToken: string }).promptToken).toBe(promptToken);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({ system: "chat prompt" }),
+      );
+    });
+
+    it("cancels in-flight preflight work on a reconnect and drops late critic objections", async () => {
+      const stages = deferredStages();
+      const { adapter, context, cancelReasoningAssistContext } = makeAssistAdapter({
+        run: stages.run,
+        supportedStages: ["architect", "critic"],
+      });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      await sendMessage({ type: "ready" });
+      const dispatch = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue the case.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(1));
+
+      stages.callFor("Argue the case.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(stages.calls("critic")).toHaveLength(1));
+
+      const before = reasoningAssistPosts(postMessage);
+      expect(before.map((message) => (message as { stage?: string }).stage)).toEqual([
+        "assessing",
+        "mapping",
+        "critiquing",
+      ]);
+      const promptToken = (before[0] as { promptToken: string }).promptToken;
+
+      // A reconnect invalidates the preflight that started on the old stream.
+      eventCallback({ type: "server.connected", properties: {} });
+
+      expect(stages.calls("critic")[0].signal?.aborted).toBe(true);
+
+      stages.calls("critic")[0].stage.resolve({ ok: true, role: "critic", text: CRITIC_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1));
+      await dispatch;
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual([
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistCleared",
+      ]);
+      expect((posts[3] as { promptToken: string }).promptToken).toBe(promptToken);
+      expect(cancelReasoningAssistContext).toHaveBeenCalledWith(context);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({ system: "chat prompt" }),
+      );
+    });
+
+    it("cancels an in-flight preflight before an edit-and-resend proceeds", async () => {
+      const stages = deferredStages();
+      const { adapter } = makeAssistAdapter({ run: stages.run });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      const dispatch = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue the case.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(1));
+
+      const promptToken = (reasoningAssistPosts(postMessage)[0] as { promptToken: string }).promptToken;
+
+      await sendMessage({
+        type: "editAndResend",
+        sessionId: "sess-1",
+        messageId: "msg-1",
+        text: "Revised",
+      });
+
+      expect(mockAgent.revertSession).toHaveBeenCalledWith("sess-1", "msg-1");
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith("sess-1", "Revised", expect.objectContaining({}));
+      expect(stages.callFor("Argue the case.").signal?.aborted).toBe(true);
+
+      const afterEdit = reasoningAssistPosts(postMessage);
+      expect(afterEdit.map((message) => message.type)).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect((afterEdit[1] as { promptToken: string }).promptToken).toBe(promptToken);
+
+      // The superseded preflight's late valid argument never becomes a brief.
+      stages.callFor("Argue the case.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2));
+      await dispatch;
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.filter((message) => message.type === "reasoningAssistSummary")).toEqual([]);
+      expect(posts.some((message) => (message as { stage?: string }).stage === "applied")).toBe(false);
+      expect(mockAgent.sendMessage).toHaveBeenLastCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({ system: "chat prompt" }),
+      );
+    });
+
+    it("keeps in-flight preflight work isolated per session", async () => {
+      const stages = deferredStages();
+      const { adapter } = makeAssistAdapter({ run: stages.run });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      const first = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Session one argument.",
+        primaryAgent: "scout",
+      });
+      const second = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-2",
+        text: "Session two argument.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(2));
+
+      const before = reasoningAssistPosts(postMessage);
+      expect(before).toHaveLength(2);
+      expect(before.map((message) => (message as { sessionId: string }).sessionId).sort()).toEqual([
+        "sess-1",
+        "sess-2",
+      ]);
+      expect(before.every((message) => (message as { stage?: string }).stage === "assessing")).toBe(true);
+
+      // Deleting sess-1 cancels only sess-1 and never clears sess-2's row.
+      await sendMessage({ type: "deleteSession", sessionId: "sess-1" });
+
+      expect(stages.callFor("Session two argument.").signal?.aborted).toBe(false);
+      const afterDelete = reasoningAssistPosts(postMessage);
+      expect(afterDelete.filter((message) => message.type === "reasoningAssistCleared")).toEqual([
+        expect.objectContaining({ sessionId: "sess-1" }),
+      ]);
+
+      stages.callFor("Session one argument.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      stages.callFor("Session two argument.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2));
+      await Promise.all([first, second]);
+
+      const finalPosts = reasoningAssistPosts(postMessage);
+      const typesFor = (sessionId: string) =>
+        finalPosts
+          .filter((message) => (message as { sessionId: string }).sessionId === sessionId)
+          .map((message) => message.type);
+      expect(typesFor("sess-1")).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect(typesFor("sess-2")).toEqual([
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistSummary",
+        "reasoningAssistProgress",
+      ]);
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Session one argument.",
+        expect.objectContaining({ system: "chat prompt" }),
+      );
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-2",
+        "Session two argument.",
+        expect.objectContaining({ system: expect.stringContaining(REASONING_ASSIST_BRIEF_DELIMITER) }),
+      );
+    });
+
+    it("drops a late valid argument after cancellation and dispatches the original prompt unchanged", async () => {
+      const stages = deferredStages();
+      const { adapter } = makeAssistAdapter({ run: stages.run });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      const dispatch = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue the case.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(1));
+
+      const promptToken = (reasoningAssistPosts(postMessage)[0] as { promptToken: string }).promptToken;
+
+      await sendMessage({ type: "revertToMessage", sessionId: "sess-1", messageId: "msg-3" });
+
+      expect(mockAgent.revertSession).toHaveBeenCalledWith("sess-1", "msg-3");
+      expect(stages.callFor("Argue the case.").signal?.aborted).toBe(true);
+
+      stages.callFor("Argue the case.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1));
+      await dispatch;
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+      expect((posts[1] as { promptToken: string }).promptToken).toBe(promptToken);
+      expect(posts.some((message) => (message as { stage?: string }).stage === "preparing")).toBe(false);
+      expect(posts.some((message) => (message as { stage?: string }).stage === "applied")).toBe(false);
+      // The unchanged base instruction proves no brief was appended.
+      expect(mockAgent.sendMessage).toHaveBeenCalledWith(
+        "sess-1",
+        "Argue the case.",
+        expect.objectContaining({ system: "chat prompt" }),
+      );
+    });
+
+    it("runs a fresh preflight with a new token for a later prompt after a cancellation", async () => {
+      const stages = deferredStages();
+      const { adapter } = makeAssistAdapter({ run: stages.run });
+      const { postMessage, sendMessage } = setupEligible({ adapter });
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      const first = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "First argument.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(1));
+
+      await sendMessage({ type: "abort", sessionId: "sess-1" });
+      stages.callFor("First argument.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(1));
+      await first;
+
+      // The cancelled session still accepts a new prompt and preflights it.
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Second argument.",
+        primaryAgent: "scout",
+      });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(2));
+
+      stages.callFor("Second argument.").stage.resolve({ ok: true, role: "architect", text: '{"kind":"ordinary"}' });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2));
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.map((message) => message.type)).toEqual([
+        "reasoningAssistProgress",
+        "reasoningAssistCleared",
+        "reasoningAssistProgress",
+        "reasoningAssistCleared",
+      ]);
+      const tokens = posts.map((message) => (message as { promptToken: string }).promptToken);
+      expect(tokens[1]).toBe(tokens[0]);
+      expect(tokens[3]).toBe(tokens[2]);
+      expect(tokens[2]).not.toBe(tokens[0]);
+      expect(mockAgent.sendMessage).toHaveBeenLastCalledWith(
+        "sess-1",
+        "Second argument.",
+        expect.objectContaining({ system: "chat prompt" }),
+      );
+    });
+
+    it("cancels every in-flight preflight through cancelAllReasoningAssistWork", async () => {
+      const stages = deferredStages();
+      const { adapter } = makeAssistAdapter({ run: stages.run, supportedStages: ["architect", "critic"] });
+      const { provider, postMessage, sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      const first = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Session one argument.",
+        primaryAgent: "scout",
+      });
+      const second = sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-2",
+        text: "Session two argument.",
+        primaryAgent: "scout",
+      });
+      await vi.waitFor(() => expect(stages.calls("architect")).toHaveLength(2));
+
+      // sess-1 advances to the optional critic stage while sess-2 still awaits.
+      stages.callFor("Session one argument.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(stages.calls("critic")).toHaveLength(1));
+
+      provider.cancelAllReasoningAssistWork();
+
+      expect(stages.calls("architect").every((call) => call.signal?.aborted === true)).toBe(true);
+      expect(stages.calls("critic")[0].signal?.aborted).toBe(true);
+
+      stages.callFor("Session one argument.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      stages.calls("critic")[0].stage.resolve({ ok: true, role: "critic", text: CRITIC_TEXT });
+      stages.callFor("Session two argument.").stage.resolve({ ok: true, role: "architect", text: ARGUMENT_TEXT });
+      await vi.waitFor(() => expect(mockAgent.sendMessage).toHaveBeenCalledTimes(2));
+      await Promise.all([first, second]);
+
+      const posts = reasoningAssistPosts(postMessage);
+      expect(posts.filter((message) => message.type === "reasoningAssistSummary")).toEqual([]);
+      expect(posts.some((message) => (message as { stage?: string }).stage === "applied")).toBe(false);
+      const typesFor = (sessionId: string) =>
+        posts
+          .filter((message) => (message as { sessionId: string }).sessionId === sessionId)
+          .map((message) => message.type);
+      expect(typesFor("sess-1")).toEqual([
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistProgress",
+        "reasoningAssistCleared",
+      ]);
+      expect(typesFor("sess-2")).toEqual(["reasoningAssistProgress", "reasoningAssistCleared"]);
+    });
+
+    it("logs a repeated preflight outcome reason exactly once per instance", async () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { adapter } = makeAssistAdapter();
+      const { sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Should this hold?", primaryAgent: "scout" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Should this hold too?",
+        primaryAgent: "scout",
+      });
+
+      const outcomeLines = logSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("Reasoning assist preflight outcome"));
+      expect(outcomeLines).toEqual(["[opencode-chat] Reasoning assist preflight outcome (ordinary)"]);
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it("logs the invalid-result outcome once with its parse sub-reason and stage text length", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { adapter } = makeAssistAdapter({
+        run: async () => ({ ok: true, role: "architect" as const, text: "not json" }),
+      });
+      const { sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue it again.",
+        primaryAgent: "scout",
+      });
+
+      const outcomeLines = errorSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("Reasoning assist preflight outcome"));
+      expect(outcomeLines).toEqual([
+        "[opencode-chat] Reasoning assist preflight outcome (invalid-result/malformed) stageTextLength=8",
+      ]);
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("logs the stage-failed-timeout outcome once with its numeric elapsed stage time", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { adapter } = makeAssistAdapter({
+        run: async () => ({ ok: false, role: "architect" as const, reason: "timeout" }),
+      });
+      const { sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue it again.",
+        primaryAgent: "scout",
+      });
+
+      const outcomeLines = errorSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("Reasoning assist preflight outcome"));
+      // One line for the repeated reason, and it carries only the numeric
+      // elapsed stage time.
+      expect(outcomeLines).toHaveLength(1);
+      expect(outcomeLines[0]).toMatch(
+        /^\[opencode-chat\] Reasoning assist preflight outcome \(stage-failed-timeout\) stageElapsedMs=\d+$/,
+      );
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("logs each distinct invalid-result parse sub-reason once and repeats none", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const invalidClaimClassText = JSON.stringify({
+        kind: "argument",
+        conclusionId: "claim-c1",
+        claims: [{ id: "claim-c1", class: "mystery", statement: "A bounded statement.", dependsOn: [] }],
+        assumptions: [],
+        evidenceNeeds: [],
+        uncertainty: [],
+      });
+      const texts = ["not json", invalidClaimClassText, "not json"] as const;
+      let stageCall = 0;
+      const { adapter } = makeAssistAdapter({
+        run: async () => {
+          const text = texts[stageCall % texts.length] ?? "not json";
+          stageCall += 1;
+          return { ok: true, role: "architect" as const, text };
+        },
+      });
+      const { sendMessage } = setupEligible({ adapter });
+      // Same-session prompts queue behind the mock agent's synthetic busy/idle
+      // cycle, so pump the queue between preflights like the other tests do.
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "selectSession", sessionId: "sess-1" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue it again.", primaryAgent: "scout" });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue it once more.",
+        primaryAgent: "scout",
+      });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } });
+      eventCallback({ type: "session.status", properties: { sessionID: "sess-1", status: { type: "idle" } } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const outcomeLines = errorSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("Reasoning assist preflight outcome"));
+      expect(outcomeLines).toEqual([
+        "[opencode-chat] Reasoning assist preflight outcome (invalid-result/malformed) stageTextLength=8",
+        `[opencode-chat] Reasoning assist preflight outcome (invalid-result/invalid-claim-class) stageTextLength=${invalidClaimClassText.length}`,
+      ]);
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("logs the argument-map diagnostic once per instance across argument preflights", async () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { adapter } = makeAssistAdapter(argumentAdapterOverrides);
+      const { sendMessage } = setupEligible({ adapter });
+      await sendMessage({ type: "ready" });
+      await sendMessage({ type: "sendMessage", sessionId: "sess-1", text: "Argue the case.", primaryAgent: "scout" });
+      await sendMessage({
+        type: "sendMessage",
+        sessionId: "sess-1",
+        text: "Argue it again.",
+        primaryAgent: "scout",
+      });
+
+      const argumentLines = logSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("Reasoning assist preflight produced an argument map"));
+      expect(argumentLines).toEqual(["[opencode-chat] Reasoning assist preflight produced an argument map"]);
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
   // SSE イベント転送
   // ============================================================
 
@@ -291,6 +1530,34 @@ describe("ChatViewProvider", () => {
       eventCallback(event);
 
       expect(postMessage).toHaveBeenCalledWith({ type: "event", event });
+    });
+
+    it("should forward a payload-less event without throwing", () => {
+      const { postMessage } = setupProvider(mockAgent);
+
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0] as (
+        event: unknown,
+      ) => void;
+      const event = { type: "session.updated" };
+
+      expect(() => eventCallback(event)).not.toThrow();
+      expect(postMessage).toHaveBeenCalledWith({ type: "event", event });
+    });
+
+    it("should apply reconnect invalidation for a payload-less server.connected event", () => {
+      const { provider, postMessage } = setupProvider(mockAgent);
+
+      const eventCallback = (mockAgent.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0] as (
+        event: unknown,
+      ) => void;
+      const cancelAllReasoningAssistWork = vi.spyOn(provider, "cancelAllReasoningAssistWork");
+      const event = { type: "server.connected" };
+
+      expect(() => eventCallback(event)).not.toThrow();
+      expect(postMessage).toHaveBeenCalledWith({ type: "event", event });
+      // The reconnect invalidation branch stays reachable even when the event
+      // is serialized without its empty properties.
+      expect(cancelAllReasoningAssistWork).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -456,6 +1723,75 @@ describe("ChatViewProvider", () => {
   // ============================================================
 
   describe("ready", () => {
+    it("publishes the injected review runtime and keeps initialization alive when lookup fails", async () => {
+      const runtime = { state: "available" as const };
+      const controller: IReasoningReviewController = {
+        getRuntime: vi.fn().mockResolvedValue(runtime),
+        review: vi.fn(),
+        cancel: vi.fn(),
+      };
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "reasoningRuntime", runtime });
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "init" }));
+
+      postMessage.mockClear();
+      controller.getRuntime = vi.fn().mockRejectedValue(new Error("private provider failure"));
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningRuntime" }));
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "init" }));
+    });
+
+    it.each([
+      { label: "available", runtime: { state: "available" as const } },
+      {
+        label: "incompatible",
+        runtime: { state: "incompatible" as const, reason: "runtime-mismatch" as const },
+      },
+      {
+        label: "dormant",
+        runtime: { state: "unavailable" as const, reason: "runtime-unavailable" as const },
+      },
+    ])("publishes the fixed $label runtime status over reasoningRuntime", async ({ runtime }) => {
+      const controller = new RuntimeReportingReasoningReviewController(
+        new UnavailableReasoningReviewController(),
+        runtime,
+      );
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({ type: "reasoningRuntime", runtime });
+      const runtimeMessages = postMessage.mock.calls.filter(
+        ([message]) => (message as { type?: string }).type === "reasoningRuntime",
+      );
+      expect(runtimeMessages).toHaveLength(1);
+      expect(JSON.stringify(runtimeMessages)).not.toContain("compatibility");
+    });
+
     it("should send init, sessions, activeSession, providers, and activeEditor", async () => {
       const sessions = [{ id: "s1" }, { id: "s2" }];
       mockAgent.listSessions.mockResolvedValue(sessions);
@@ -703,6 +2039,227 @@ describe("ChatViewProvider", () => {
       await sendMessage({ type: "ready" });
 
       expect(postMessage).toHaveBeenCalledWith({ type: "mcpPrefs", prefs: { selected: true }, locked: [] });
+    });
+  });
+
+  describe("reasoning review preference", () => {
+    function createPreferenceSeam(initial: { userEnabled: boolean; workspaceOptOut: boolean }) {
+      const state = { ...initial };
+      const setUserEnabled = vi.fn(async (value: boolean) => {
+        state.userEnabled = value;
+      });
+      const setWorkspaceOptOut = vi.fn(async (value: boolean) => {
+        state.workspaceOptOut = value;
+      });
+      const seam: ReasoningReviewPreferenceSeam = {
+        read: () => ({ ...state }),
+        setUserEnabled,
+        setWorkspaceOptOut,
+      };
+      return { seam, setUserEnabled, setWorkspaceOptOut };
+    }
+
+    function availableController() {
+      return new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), {
+        state: "available",
+      });
+    }
+
+    it("publishes the effective preference from the already-published runtime on ready", async () => {
+      const { seam } = createPreferenceSeam({ userEnabled: true, workspaceOptOut: false });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        seam,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: true },
+      });
+      const preferenceMessages = postMessage.mock.calls.filter(
+        ([message]) => (message as { type?: string }).type === "reasoningReviewPreference",
+      );
+      expect(preferenceMessages).toHaveLength(1);
+      expect(JSON.stringify(preferenceMessages)).not.toMatch(/executable|workspacePath|command|argv|proof/i);
+    });
+
+    it.each([
+      { label: "checking", runtime: { state: "checking" as const } },
+      { label: "incompatible", runtime: { state: "incompatible" as const, reason: "runtime-mismatch" } },
+      { label: "unavailable", runtime: { state: "unavailable" as const, reason: "runtime-unavailable" } },
+    ])("keeps effective false for a $label runtime", async ({ runtime }) => {
+      const { seam } = createPreferenceSeam({ userEnabled: true, workspaceOptOut: false });
+      const controller = new RuntimeReportingReasoningReviewController(
+        new UnavailableReasoningReviewController(),
+        runtime,
+      );
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller,
+        seam,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: false },
+      });
+    });
+
+    it("publishes effective false when no review runtime is injected", async () => {
+      const { seam } = createPreferenceSeam({ userEnabled: true, workspaceOptOut: true });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        seam,
+      );
+
+      await sendMessage({ type: "ready" });
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: true, effective: false },
+      });
+    });
+
+    it("writes only the Global key for the user toggle and republishes the effective state", async () => {
+      const { seam, setUserEnabled, setWorkspaceOptOut } = createPreferenceSeam({
+        userEnabled: true,
+        workspaceOptOut: false,
+      });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        seam,
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({ type: "setReasoningReviewPreference", preference: { userEnabled: false } });
+
+      expect(setUserEnabled).toHaveBeenCalledTimes(1);
+      expect(setUserEnabled).toHaveBeenCalledWith(false);
+      expect(setWorkspaceOptOut).not.toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: false, workspaceOptOut: false, effective: false },
+      });
+    });
+
+    it("writes only the Workspace key for the opt-out and republishes the effective state", async () => {
+      const { seam, setUserEnabled, setWorkspaceOptOut } = createPreferenceSeam({
+        userEnabled: true,
+        workspaceOptOut: false,
+      });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        seam,
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({ type: "setReasoningReviewPreference", preference: { workspaceOptOut: true } });
+
+      expect(setWorkspaceOptOut).toHaveBeenCalledTimes(1);
+      expect(setWorkspaceOptOut).toHaveBeenCalledWith(true);
+      expect(setUserEnabled).not.toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: true, effective: false },
+      });
+    });
+
+    it("ignores non-boolean preference values without writing configuration", async () => {
+      const { seam, setUserEnabled, setWorkspaceOptOut } = createPreferenceSeam({
+        userEnabled: true,
+        workspaceOptOut: false,
+      });
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+        seam,
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({
+        type: "setReasoningReviewPreference",
+        preference: { userEnabled: "yes", workspaceOptOut: 1 },
+      } as never);
+
+      expect(setUserEnabled).not.toHaveBeenCalled();
+      expect(setWorkspaceOptOut).not.toHaveBeenCalled();
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "reasoningReviewPreference",
+        preference: { userEnabled: true, workspaceOptOut: false, effective: true },
+      });
+    });
+
+    it("stays inert without an injected preference seam", async () => {
+      const { postMessage, sendMessage } = setupProvider(
+        mockAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        availableController(),
+      );
+      await sendMessage({ type: "ready" });
+      postMessage.mockClear();
+
+      await sendMessage({ type: "setReasoningReviewPreference", preference: { userEnabled: false } });
+
+      expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reasoningReviewPreference" }));
     });
   });
 

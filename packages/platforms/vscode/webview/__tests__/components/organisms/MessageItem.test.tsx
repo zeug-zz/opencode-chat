@@ -159,6 +159,18 @@ describe("MessageItem", () => {
       const { container } = render(<MessageItem {...defaultProps} message={assistantMsg} />, { wrapper });
       expect(container.querySelector(".root")).toBeInTheDocument();
     });
+
+    it("完了済み assistant にレビュー操作もレビューカードも表示しないこと", () => {
+      const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
+      const { container } = render(<MessageItem {...defaultProps} message={completed} />, { wrapper });
+
+      expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Cancel review" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Show review" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Hide review" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Reasoning review" })).not.toBeInTheDocument();
+      expect(container.querySelector(".reviewActions")).not.toBeInTheDocument();
+    });
   });
 
   describe("ReasoningPartView の全体表示", () => {

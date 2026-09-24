@@ -1,0 +1,17 @@
+{
+  "fixtureSchema": "af-runtime-fixture-1",
+  "observations": {
+    "invalid-node": {
+      "argv": ["af", "get", "missing", "--dir", "<fixture-workspace>", "--format", "json"],
+      "outcome": "failure",
+      "exitCode": 1,
+      "output": { "error": "invalid-node-id" }
+    },
+    "missing-workspace": {
+      "argv": ["af", "status", "--dir", "<missing-workspace>", "--format", "json"],
+      "outcome": "failure",
+      "exitCode": 3,
+      "output": { "error": "missing-proof-directory" }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "fixtureSchema": "af-runtime-fixture-1",
+  "argv": ["af", "schema", "--format", "json"],
+  "workspaceFormat": "1.0",
+  "schema": {
+    "inference_types": [],
+    "node_types": [],
+    "workflow_states": [],
+    "epistemic_states": [],
+    "taint_states": [],
+    "challenge_targets": []
+  },
+  "exitCode": 0
+}

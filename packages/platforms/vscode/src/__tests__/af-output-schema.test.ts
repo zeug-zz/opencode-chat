@@ -1,0 +1,158 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import {
+  AF_FIXTURE_RUNTIME_FACTS,
+  AF_FIXTURE_SCHEMA_VERSION,
+  AF_FIXTURE_WORKSPACE_FORMAT,
+  parseAfClaimOutput,
+  parseAfInitOutput,
+  parseAfRefineOutput,
+  parseAfSchemaOutput,
+  parseAfStatusOutput,
+  parseAfVersionOutput,
+} from "../vibefeld/af-output-schema";
+
+const fixture = (name: string) => readFileSync(new URL(`./fixtures/vibefeld/${name}`, import.meta.url), "utf8");
+
+const liveFixture = (name: string) =>
+  readFileSync(new URL(`./fixtures/vibefeld/live/af-0.1.11/${name}`, import.meta.url), "utf8");
+
+describe("AF output schema", () => {
+  it("normalizes the pinned version fixture without exposing raw output", () => {
+    const result = parseAfVersionOutput(fixture("version.json"));
+    expect(result).toEqual({
+      ok: true,
+      facts: {
+        fixtureSchema: AF_FIXTURE_SCHEMA_VERSION,
+        runtime: AF_FIXTURE_RUNTIME_FACTS,
+        operatingSystem: "darwin",
+        architecture: "arm64",
+      },
+      structuralStatus: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("version.json");
+  });
+
+  it("keeps the synthetic envelope as an explicit test double", () => {
+    expect(AF_FIXTURE_SCHEMA_VERSION).toBe("af-runtime-fixture-1");
+    expect(AF_FIXTURE_WORKSPACE_FORMAT).toBe("1.0");
+    expect(AF_FIXTURE_RUNTIME_FACTS.version).toBe("0.1.7");
+    expect(parseAfVersionOutput(liveFixture("version.json"))).toMatchObject({
+      ok: false,
+      failure: { outcome: "unavailable" },
+    });
+    expect(parseAfSchemaOutput(liveFixture("schema.json"))).toMatchObject({
+      ok: false,
+      failure: { outcome: "unavailable" },
+    });
+  });
+
+  it("keeps the fixture-mode claim and refine parsers closed", () => {
+    const unavailableUnknown = {
+      ok: false,
+      failure: { outcome: "unavailable", reason: "unknown", structuralStatus: null },
+    } as const;
+    // No synthetic claim or refine shape exists, so the closed test-only parsers
+    // reject fixture envelopes and live captures alike instead of inventing facts.
+    const syntheticClaim = JSON.stringify({
+      fixtureSchema: AF_FIXTURE_SCHEMA_VERSION,
+      node_id: "1",
+      owner: "capture",
+      role: "prover",
+      status: "claimed",
+    });
+    const results = [
+      parseAfClaimOutput(syntheticClaim, { exitCode: 0 }),
+      parseAfClaimOutput(liveFixture("claim.json"), { exitCode: 0 }),
+      parseAfRefineOutput(fixture("status.json")),
+      parseAfRefineOutput(liveFixture("refine.json"), { exitCode: 0 }),
+    ];
+    for (const result of results) expect(result).toEqual(unavailableUnknown);
+    const serialized = JSON.stringify(results);
+    expect(serialized).not.toContain("af-runtime-fixture");
+    expect(serialized).not.toContain("fixtureSchema");
+  });
+
+  it("normalizes schema, initialization, and status while dropping content and paths", () => {
+    expect(parseAfSchemaOutput(fixture("schema.json"))).toMatchObject({
+      ok: true,
+      facts: {
+        workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT,
+        schemaKeys: [
+          "inference_types",
+          "node_types",
+          "workflow_states",
+          "epistemic_states",
+          "taint_states",
+          "challenge_targets",
+        ],
+      },
+      structuralStatus: null,
+    });
+    expect(parseAfInitOutput(fixture("workspace-init.json"))).toMatchObject({
+      ok: true,
+      facts: { workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT, entryCount: 9, directoryCount: 7, fileCount: 2 },
+      structuralStatus: null,
+    });
+    const status = parseAfStatusOutput(fixture("status.json"));
+    expect(status).toMatchObject({
+      ok: true,
+      facts: {
+        workspaceFormat: AF_FIXTURE_WORKSPACE_FORMAT,
+        rootState: "pending",
+        rootResolution: "unresolved",
+        nodeCount: 1,
+        challengeCount: 0,
+        statistics: { totalNodes: 1, pendingNodes: 1, unresolvedNodes: 1 },
+      },
+      structuralStatus: null,
+    });
+    expect(JSON.stringify(status)).not.toContain("fixture-conjecture");
+    expect(JSON.stringify(status)).not.toContain("contentHash");
+  });
+
+  it.each([
+    ["non-zero", { exitCode: 1 }, "non-zero"],
+    ["timeout", { timedOut: true }, "timeout"],
+    ["cancelled", { cancelled: true }, "cancelled"],
+    ["signal", { signal: "SIGTERM" }, "signaled"],
+  ] as const)("classifies %s as bounded unavailable", (_name, execution, reason) => {
+    const result = parseAfVersionOutput(fixture("version.json"), execution);
+    expect(result).toEqual({ ok: false, failure: { outcome: "unavailable", reason, structuralStatus: null } });
+  });
+
+  it("rejects malformed, oversized, mismatched, and unsafe output without echoing payloads", () => {
+    expect(parseAfVersionOutput('{"raw":"')).toEqual({
+      ok: false,
+      failure: { outcome: "unavailable", reason: "malformed", structuralStatus: null },
+    });
+    const oversizedSecret = "credential-value".repeat(3_000);
+    const oversized = parseAfVersionOutput(oversizedSecret);
+    expect(oversized).toEqual({
+      ok: false,
+      failure: { outcome: "unavailable", reason: "oversized", structuralStatus: null },
+    });
+    expect(JSON.stringify(oversized)).not.toContain(oversizedSecret);
+
+    const version = JSON.parse(fixture("version.json")) as Record<string, unknown>;
+    expect(
+      parseAfVersionOutput(
+        JSON.stringify({ ...version, runtime: { ...(version.runtime as object), version: "0.1.8" } }),
+      ),
+    ).toEqual({
+      ok: false,
+      failure: { outcome: "unavailable", reason: "unknown", structuralStatus: null },
+    });
+
+    const init = JSON.parse(fixture("workspace-init.json")) as Record<string, unknown>;
+    const workspace = init.workspace as Record<string, unknown>;
+    expect(
+      parseAfInitOutput(
+        JSON.stringify({ ...init, workspace: { ...workspace, entries: [{ path: "../escape", kind: "file" }] } }),
+      ),
+    ).toEqual({
+      ok: false,
+      failure: { outcome: "audit-failed", reason: "audit-failure", structuralStatus: null },
+    });
+  });
+});

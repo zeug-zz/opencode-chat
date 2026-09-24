@@ -30,6 +30,8 @@ import type {
   SkillInfo,
   TodoItem,
 } from "./domain";
+import type { ReasoningAssistStage, ReasoningAssistSummary } from "./reasoning-assist";
+import type { ReasoningReviewRuntime } from "./reasoning-review";
 
 // ============================================================
 // UI -> Host
@@ -100,6 +102,17 @@ export type UIToHostMessage =
       system?: string;
     }
   | { type: "abort"; sessionId: string }
+
+  // --- Reasoning review preference ---
+  | {
+      type: "setReasoningReviewPreference";
+      /**
+       * Bounded preference patch. Only the present keys are written: the user
+       * toggle writes the Global preference and the workspace opt-out writes
+       * the Workspace target. No runtime, executable, or path data is carried.
+       */
+      preference: { userEnabled?: boolean; workspaceOptOut?: boolean };
+    }
 
   // --- Shell (via agent) ---
   | {
@@ -249,4 +262,35 @@ export type HostToUIMessage =
   | { type: "mcpPrefs"; prefs: Record<string, boolean>; locked: string[] }
 
   // --- Chat sandbox ---
-  | { type: "chatSandboxStatus"; status: ChatSandboxStatus };
+  | { type: "chatSandboxStatus"; status: ChatSandboxStatus }
+
+  // --- Reasoning review runtime and preference ---
+  | { type: "reasoningRuntime"; runtime: ReasoningReviewRuntime }
+  | {
+      type: "reasoningReviewPreference";
+      /**
+       * Host-resolved bounded preference. `effective` is the composed
+       * `userEnabled && !workspaceOptOut && runtime available` state.
+       */
+      preference: { userEnabled: boolean; workspaceOptOut: boolean; effective: boolean };
+    }
+
+  // --- Prompt-scoped reasoning assist ---
+  | {
+      type: "reasoningAssistProgress";
+      sessionId: string;
+      promptToken: string;
+      stage: ReasoningAssistStage;
+    }
+  | {
+      type: "reasoningAssistSummary";
+      sessionId: string;
+      promptToken: string;
+      summary: ReasoningAssistSummary;
+    }
+  /** The token prevents a stale preflight from clearing a newer prompt row. */
+  | {
+      type: "reasoningAssistCleared";
+      sessionId: string;
+      promptToken: string;
+    };

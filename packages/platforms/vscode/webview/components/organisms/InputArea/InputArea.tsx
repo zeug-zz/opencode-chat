@@ -6,6 +6,7 @@ import type {
   McpStatus,
   ModelVariantRef,
   ProviderInfo,
+  ReasoningReviewRuntime,
   SkillInfo,
   SoundEventSetting,
   SoundEventType,
@@ -14,6 +15,7 @@ import type {
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useClickOutside } from "../../../hooks/useClickOutside";
 import { useInputHistory } from "../../../hooks/useInputHistory";
+import type { ReasoningReviewPreference, ReasoningReviewPreferencePatch } from "../../../hooks/useReasoningReview";
 import type { LocaleSetting } from "../../../locales";
 import { useLocale } from "../../../locales";
 import type { AllProvidersData, FileAttachment } from "../../../vscode-api";
@@ -96,6 +98,9 @@ type Props = {
   onMcpRefresh?: () => void;
   chatSandboxStatus?: ChatSandboxStatus;
   onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
+  reasoningReviewRuntime?: ReasoningReviewRuntime | null;
+  reasoningReviewPreference?: ReasoningReviewPreference | null;
+  onReasoningReviewPreferenceChange?: (preference: ReasoningReviewPreferencePatch) => void;
 };
 
 export function InputArea({
@@ -136,6 +141,9 @@ export function InputArea({
   onMcpRefresh,
   chatSandboxStatus,
   onChatSandboxSettingsChange,
+  reasoningReviewRuntime,
+  reasoningReviewPreference,
+  onReasoningReviewPreferenceChange,
 }: Props) {
   const t = useLocale();
   const [text, setText] = useState("");
@@ -835,6 +843,9 @@ export function InputArea({
                     sandboxStatus={chatSandboxStatus}
                     onChatSandboxSettingsChange={onChatSandboxSettingsChange}
                     sandboxControlsDisabled={isBusy}
+                    reasoningReviewRuntime={reasoningReviewRuntime}
+                    reasoningReviewPreference={reasoningReviewPreference}
+                    onReasoningReviewPreferenceChange={onReasoningReviewPreferenceChange}
                   />
                 )}
               />

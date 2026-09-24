@@ -138,6 +138,31 @@ export const es: LocaleSchema = {
   "config.sandboxApplying": "Aplicando configuración de aislamiento…",
   "config.sandboxError": (error: string) => `Error de aislamiento: ${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Revisión de razonamiento",
+  "config.reasoningReviewEnable": "Habilitar la revisión de razonamiento",
+  "config.reasoningReviewWorkspaceOptOut": "Excluir en este espacio de trabajo",
+  "config.reasoningReviewDescription":
+    "Revisa las respuestas en este host cuando el entorno de revisión de razonamiento está disponible. La exclusión del espacio de trabajo anula la preferencia global en este espacio de trabajo.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Activa en este espacio de trabajo" : "Inactiva en este espacio de trabajo",
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "Asistencia de razonamiento",
+  "reasoningAssist.stage.assessing": "Evaluando el mensaje",
+  "reasoningAssist.stage.mapping": "Organizando el argumento",
+  "reasoningAssist.stage.recording": "Registrando la estructura",
+  "reasoningAssist.stage.critiquing": "Revisando objeciones",
+  "reasoningAssist.stage.preparing": "Preparando la respuesta",
+  "reasoningAssist.stage.applied": "Asistencia aplicada",
+  "reasoningAssist.toggleDetails": "Expandir o contraer la asistencia de razonamiento",
+  "reasoningAssist.candidateConclusion": "Conclusión candidata",
+  "reasoningAssist.assumptions": "Supuestos",
+  "reasoningAssist.evidenceBoundary": "Límite de evidencia",
+  "reasoningAssist.criticObjections": "Objeciones que abordar",
+  "reasoningAssist.afRecordedStructure": "Estructura registrada en AF",
+  "reasoningAssist.afNotAvailable": "Estructura de AF no disponible",
+
   // Language setting
   "config.language": "Idioma",
   "config.langAuto": "Automático (VS Code)",

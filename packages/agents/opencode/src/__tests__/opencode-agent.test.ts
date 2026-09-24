@@ -10,6 +10,7 @@ import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk/v2"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HINDSIGHT_DISABLE_HOOKS_ENV, type HindsightCompanionIntegration } from "../hindsight-companion-integration";
 import { OpenCodeAgent } from "../opencode-agent";
+import { RESTRICTED_REVIEW_PROMPT } from "../restricted-review-overlay";
 
 const mockSandboxManager = vi.hoisted(() => ({
   isSupportedPlatform: vi.fn().mockReturnValue(true),
@@ -193,6 +194,12 @@ vi.mock("@opencode-ai/sdk/v2", () => ({
 describe("OpenCodeAgent", () => {
   let agent: OpenCodeAgent;
 
+  const restrictedReview = {
+    model: "host/provider",
+    prompt: RESTRICTED_REVIEW_PROMPT,
+    maxSteps: 4,
+  };
+
   beforeEach(() => {
     mockClient = createMockSdkClient();
     mockSandboxManager.isSupportedPlatform.mockReturnValue(true);
@@ -202,6 +209,31 @@ describe("OpenCodeAgent", () => {
     // createOpencodeClient のモック実装を更新
     vi.mocked(createOpencodeClient).mockReturnValue(mockClient as never);
     agent = new OpenCodeAgent();
+  });
+
+  describe("createRestrictedReviewProvider()", () => {
+    it("fails closed until a client, overlay, and well-formed host model exist", () => {
+      expect(agent.createRestrictedReviewProvider({ providerID: "host", modelID: "model" })).toBeUndefined();
+      const configured = new OpenCodeAgent({ ...integrationLaunchConfiguration, restrictedReview });
+      expect(configured.createRestrictedReviewProvider({ providerID: "host", modelID: "model" })).toBeUndefined();
+      expect(configured.createRestrictedReviewProvider({ providerID: " ", modelID: "model" })).toBeUndefined();
+    });
+
+    it("constructs a provider from the connected host client and binds its generation", async () => {
+      const configured = new OpenCodeAgent({ ...integrationLaunchConfiguration, restrictedReview });
+      await configured.connect();
+      const provider = configured.createRestrictedReviewProvider({ providerID: "host", modelID: "model" });
+      expect(provider).toBeDefined();
+
+      configured.updateLaunchConfiguration({
+        ...integrationLaunchConfiguration,
+        restrictedReview: { ...restrictedReview, maxSteps: 5 },
+      });
+      expect(await provider?.checkReadiness()).toBe(false);
+      expect(mockClient.config.get).not.toHaveBeenCalled();
+      expect(configured.createRestrictedReviewProvider({ providerID: "host", modelID: "model" })).toBeDefined();
+      configured.disconnect();
+    });
   });
 
   afterEach(() => {
@@ -3924,6 +3956,141 @@ describe("OpenCodeAgent", () => {
       expect(listener).toHaveBeenCalledTimes(1);
 
       endStream?.();
+    });
+  });
+
+  // ============================================================
+  // Event delivery hardening (payload-less events + listener isolation)
+  // ============================================================
+
+  describe("event delivery hardening", () => {
+    function setupControlledStream(): { emit: (event: unknown) => void; end: () => void } {
+      let emitEvent: ((event: unknown) => void) | undefined;
+      let endStream: (() => void) | undefined;
+
+      mockClient.global.event.mockResolvedValue({
+        stream: (async function* () {
+          const queue: unknown[] = [];
+          let resolve: (() => void) | undefined;
+          let done = false;
+
+          emitEvent = (event: unknown) => {
+            queue.push(event);
+            resolve?.();
+          };
+          endStream = () => {
+            done = true;
+            resolve?.();
+          };
+
+          while (!done) {
+            if (queue.length > 0) {
+              yield queue.shift()!;
+            } else {
+              await new Promise<void>((r) => {
+                resolve = r;
+              });
+            }
+          }
+        })(),
+      });
+
+      return { emit: (event) => emitEvent?.(event), end: () => endStream?.() };
+    }
+
+    it("delivers a payload-less event with empty properties and keeps later events flowing", async () => {
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      const listener = vi.fn();
+      agent.onEvent(listener);
+
+      // A serialized server.connected arrives without properties or data.
+      emit({ payload: { type: "server.connected" } });
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ type: "server.connected", properties: {} }));
+
+      emit({ payload: { type: "session.updated", properties: { id: "sess-1" } } });
+      await vi.waitFor(() =>
+        expect(listener).toHaveBeenLastCalledWith({ type: "session.updated", properties: { id: "sess-1" } }),
+      );
+      end();
+    });
+
+    it("isolates a throwing listener so later events still reach all listeners", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      const throwing = vi.fn(() => {
+        throw new TypeError("listener boom");
+      });
+      const healthy = vi.fn();
+      agent.onEvent(throwing);
+      agent.onEvent(healthy);
+
+      emit({ payload: { type: "message.updated", properties: { sessionID: "sess-1" } } });
+      await vi.waitFor(() => expect(healthy).toHaveBeenCalledTimes(1));
+
+      emit({ payload: { type: "session.updated", properties: { id: "sess-1" } } });
+      await vi.waitFor(() =>
+        expect(healthy).toHaveBeenLastCalledWith({ type: "session.updated", properties: { id: "sess-1" } }),
+      );
+
+      expect(healthy).toHaveBeenCalledTimes(2);
+      expect(throwing).toHaveBeenCalledTimes(2);
+      // The bounded diagnostic names only the event type and the error name,
+      // once per distinct type — never payload contents.
+      expect(errorLog).toHaveBeenCalledTimes(2);
+      expect(errorLog).toHaveBeenNthCalledWith(
+        1,
+        "[opencode-chat] OpenCode event listener failed (type=message.updated, error=TypeError)",
+      );
+      expect(errorLog).toHaveBeenNthCalledWith(
+        2,
+        "[opencode-chat] OpenCode event listener failed (type=session.updated, error=TypeError)",
+      );
+      expect(errorLog.mock.calls.flat().join("\n")).not.toContain("sess-1");
+      end();
+      errorLog.mockRestore();
+    });
+
+    it("records the payload-less diagnostic at most once per distinct type and only names the type", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      const listener = vi.fn();
+      agent.onEvent(listener);
+
+      emit({ payload: { type: "server.connected" } });
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+      emit({ payload: { type: "server.connected" } });
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2));
+
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(
+        "[opencode-chat] OpenCode event delivered without a payload (type=server.connected)",
+      );
+      end();
+      errorLog.mockRestore();
+    });
+
+    it("records the listener-failure diagnostic once per distinct type", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { emit, end } = setupControlledStream();
+      await agent.connect();
+      agent.onEvent(() => {
+        throw new RangeError("nope");
+      });
+
+      emit({ payload: { type: "message.updated", properties: { sessionID: "sess-1" } } });
+      await vi.waitFor(() => expect(errorLog).toHaveBeenCalledTimes(1));
+      emit({ payload: { type: "message.updated", properties: { sessionID: "sess-2" } } });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(
+        "[opencode-chat] OpenCode event listener failed (type=message.updated, error=RangeError)",
+      );
+      end();
+      errorLog.mockRestore();
     });
   });
 

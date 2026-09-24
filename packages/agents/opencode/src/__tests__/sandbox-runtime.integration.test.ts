@@ -125,7 +125,8 @@ function compatibilityFilesystemConfig(
   return { network, filesystem };
 }
 
-describe.sequential.skipIf(!canRun)(
+// vitest 5 has no describe.sequential; file-local tests already run sequentially, and skipIf preserves the explicit opt-in gate.
+describe.skipIf(!canRun)(
   `${process.platform} sandbox runtime integration (run with OPENCODE_CHAT_RUN_SANDBOX_INTEGRATION=1)`,
   () => {
     let root: string;

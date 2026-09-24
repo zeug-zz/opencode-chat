@@ -64,6 +64,12 @@ import {
   mapTodos,
   mapToolIds,
 } from "./mappers";
+import { buildRestrictedReviewAgentEntry, RESTRICTED_REVIEW_AGENT_NAME } from "./restricted-review-overlay";
+import {
+  createRestrictedReviewProvider,
+  type RestrictedReviewModel,
+  type RestrictedReviewProvider,
+} from "./restricted-review-provider";
 
 type EventHandler = (event: AgentEvent) => void;
 
@@ -72,6 +78,48 @@ const DIAGNOSTIC_TAIL_LENGTH = 4_096;
 const DIAGNOSTIC_LOG_LENGTH = 4_096;
 const SANDBOX_TERMINATION_GRACE_MS = 1_000;
 const SANDBOX_TERMINATION_ESCALATION_MS = 1_000;
+const MAX_RESTRICTED_REVIEW_MODEL_PART_LENGTH = 256;
+const EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT = 16;
+const EVENT_DELIVERY_DIAGNOSTIC_TYPE_LENGTH = 64;
+
+/** Bounds a diagnostic fragment (event type or error name) against oversized server-supplied values. */
+function boundEventDeliveryText(value: string): string {
+  return value.length > EVENT_DELIVERY_DIAGNOSTIC_TYPE_LENGTH
+    ? value.slice(0, EVENT_DELIVERY_DIAGNOSTIC_TYPE_LENGTH)
+    : value;
+}
+
+/** Extracts the bounded event type string for event-delivery diagnostics, or undefined when absent. */
+function boundedEventDeliveryType(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? boundEventDeliveryText(value) : undefined;
+}
+
+function isRestrictedReviewModel(value: RestrictedReviewModel): boolean {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof value.providerID === "string" &&
+    typeof value.modelID === "string" &&
+    value.providerID.trim().length > 0 &&
+    value.modelID.trim().length > 0 &&
+    value.providerID.length <= MAX_RESTRICTED_REVIEW_MODEL_PART_LENGTH &&
+    value.modelID.length <= MAX_RESTRICTED_REVIEW_MODEL_PART_LENGTH
+  );
+}
+
+function sameRestrictedReviewConfiguration(
+  previous: OpenCodeLaunchConfiguration["restrictedReview"],
+  next: OpenCodeLaunchConfiguration["restrictedReview"],
+): boolean {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+  return (
+    previous.model === next.model &&
+    previous.prompt === next.prompt &&
+    previous.maxSteps === next.maxSteps &&
+    JSON.stringify(previous.dynamicToolNames ?? []) === JSON.stringify(next.dynamicToolNames ?? [])
+  );
+}
 
 const CHAT_AGENT_OVERLAY = {
   agent: {
@@ -126,7 +174,7 @@ const CHAT_AGENT_OVERLAY = {
   },
 } as const;
 
-function buildChatOverlay(
+export function buildChatOverlay(
   pluginSources: OpenCodeLaunchConfiguration["pluginSources"],
   mcpOverlay: OpenCodeLaunchConfiguration["mcpOverlay"],
   guidanceOverlay: OpenCodeGuidanceOverlay | undefined,
@@ -134,6 +182,7 @@ function buildChatOverlay(
   retentionPolicy?: MemoryRetentionPolicy,
   pluginFree = false,
   backend?: OpenCodeLaunchConfiguration["backend"],
+  restrictedReview?: OpenCodeLaunchConfiguration["restrictedReview"],
 ): Record<string, unknown> {
   // Only the verified external nono boundary may receive provider-mutating
   // operations or native lifecycle authority. The SDK path is not an
@@ -208,9 +257,19 @@ function buildChatOverlay(
         },
       }
     : CHAT_AGENT_OVERLAY;
+  const restrictedAgentOverlay = restrictedReview
+    ? {
+        agent: {
+          [RESTRICTED_REVIEW_AGENT_NAME]: buildRestrictedReviewAgentEntry(restrictedReview),
+        },
+      }
+    : undefined;
 
   return {
     ...agentOverlay,
+    ...(restrictedAgentOverlay
+      ? { agent: { ...(agentOverlay.agent as Record<string, unknown>), ...restrictedAgentOverlay.agent } }
+      : {}),
     ...(pluginFree ? { plugin: [] } : composedPluginSources.length ? { plugin: composedPluginSources } : {}),
     ...(guidanceOverlay ?? {}),
     ...(mcpOverlay ?? {}),
@@ -547,13 +606,39 @@ export class OpenCodeAgent implements IAgent {
   private sandboxChildReady = false;
   private sandboxChildExit: SandboxChildExit | undefined;
   private reconnectPromise: Promise<void> | undefined;
+  private connectionGeneration = 0;
+  /** Distinct event types already reported as payload-less (bounded per instance). */
+  private payloadlessEventTypes: Set<string> = new Set();
+  /** Distinct event types already reported for listener failures (bounded per instance). */
+  private listenerFailureEventTypes: Set<string> = new Set();
 
   constructor(launchConfiguration?: OpenCodeLaunchConfiguration) {
     this.launchConfiguration = launchConfiguration;
   }
 
   updateLaunchConfiguration(launchConfiguration: OpenCodeLaunchConfiguration): void {
+    if (
+      !sameRestrictedReviewConfiguration(
+        this.launchConfiguration?.restrictedReview,
+        launchConfiguration.restrictedReview,
+      )
+    ) {
+      this.connectionGeneration += 1;
+    }
     this.launchConfiguration = launchConfiguration;
+  }
+
+  /** Creates the host-owned restricted provider without performing any SDK work. */
+  createRestrictedReviewProvider(hostPinnedModel: RestrictedReviewModel): RestrictedReviewProvider | undefined {
+    const restrictedReview = this.launchConfiguration?.restrictedReview;
+    if (!this.client || !restrictedReview || !isRestrictedReviewModel(hostPinnedModel)) return undefined;
+    return createRestrictedReviewProvider({
+      client: this.client,
+      restrictedReview,
+      hostPinnedModel,
+      generation: this.connectionGeneration,
+      currentGeneration: () => this.connectionGeneration,
+    });
   }
 
   private isSandboxDiagnosticsActive(): boolean {
@@ -657,6 +742,7 @@ export class OpenCodeAgent implements IAgent {
         pluginFree ? undefined : this.launchConfiguration?.memoryRetentionPolicy,
         pluginFree,
         this.launchConfiguration?.backend,
+        this.launchConfiguration?.restrictedReview,
       ),
       hindsightCompanionIntegration,
       pluginFree,
@@ -785,6 +871,7 @@ export class OpenCodeAgent implements IAgent {
               pluginFree ? undefined : configuration.memoryRetentionPolicy,
               pluginFree,
               configuration.backend,
+              configuration.restrictedReview,
             ),
           ),
         },
@@ -881,6 +968,7 @@ export class OpenCodeAgent implements IAgent {
     const server = this.server;
     this.server = undefined;
     this.client = undefined;
+    this.connectionGeneration += 1;
     if (!this.sandboxedChild) server?.close();
     void this.cleanupSandboxResources();
     if (clearListeners) this.listeners.clear();
@@ -936,6 +1024,7 @@ export class OpenCodeAgent implements IAgent {
     this.server = { url, close };
     this.client = createOpencodeClient({ baseUrl: url });
     await this.subscribeToEvents();
+    this.connectionGeneration += 1;
   }
 
   private async subscribeToEvents(): Promise<void> {
@@ -952,9 +1041,16 @@ export class OpenCodeAgent implements IAgent {
         for await (const globalEvent of result.stream) {
           const event = (globalEvent as { payload: Event }).payload;
           if (!event) continue;
+          this.recordPayloadlessEventDiagnostic(event);
           const mapped = mapEvent(event);
           for (const listener of this.listeners) {
-            listener(mapped);
+            // A listener failure must never terminate the stream: isolate it,
+            // record a bounded diagnostic, and keep delivering.
+            try {
+              listener(mapped);
+            } catch (error) {
+              this.recordListenerFailureDiagnostic(mapped, error);
+            }
           }
         }
       } catch (error) {
@@ -965,6 +1061,36 @@ export class OpenCodeAgent implements IAgent {
         throw error;
       }
     })();
+  }
+
+  /**
+   * Bounded diagnostic for a raw event delivered without any payload (no
+   * `properties` key and no truthy `data`). Logs only the event type — never
+   * payload contents — at most once per distinct type up to
+   * EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT.
+   */
+  private recordPayloadlessEventDiagnostic(rawEvent: unknown): void {
+    if (typeof rawEvent !== "object" || rawEvent === null) return;
+    if ("properties" in rawEvent || (rawEvent as { data?: unknown }).data) return;
+    const type = boundedEventDeliveryType((rawEvent as { type?: unknown }).type);
+    if (!type || this.payloadlessEventTypes.has(type)) return;
+    if (this.payloadlessEventTypes.size >= EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT) return;
+    this.payloadlessEventTypes.add(type);
+    console.error(`[opencode-chat] OpenCode event delivered without a payload (type=${type})`);
+  }
+
+  /**
+   * Bounded diagnostic for an event listener that threw. Logs only the event
+   * type and the error name — never payload contents — at most once per
+   * distinct type up to the same EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT.
+   */
+  private recordListenerFailureDiagnostic(event: unknown, error: unknown): void {
+    const type = boundedEventDeliveryType((event as { type?: unknown } | undefined)?.type);
+    if (!type || this.listenerFailureEventTypes.has(type)) return;
+    if (this.listenerFailureEventTypes.size >= EVENT_DELIVERY_DIAGNOSTIC_TYPE_LIMIT) return;
+    this.listenerFailureEventTypes.add(type);
+    const errorName = boundEventDeliveryText(error instanceof Error ? error.name : typeof error);
+    console.error(`[opencode-chat] OpenCode event listener failed (type=${type}, error=${errorName})`);
   }
 
   // --- Sessions (common) ---

@@ -135,6 +135,31 @@ export const ko: LocaleSchema = {
   "config.sandboxApplying": "샌드박스 설정 적용 중…",
   "config.sandboxError": (error: string) => `샌드박스 오류: ${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "추론 검토",
+  "config.reasoningReviewEnable": "추론 검토 사용",
+  "config.reasoningReviewWorkspaceOptOut": "이 작업 공간에서 사용 안 함",
+  "config.reasoningReviewDescription":
+    "추론 검토 런타임을 사용할 수 있을 때 이 호스트에서 응답을 검토합니다. 작업 공간 옵트아웃은 이 작업 공간의 전역 설정보다 우선합니다.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "이 작업 공간에서 활성화됨" : "이 작업 공간에서 비활성화됨",
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "추론 보조",
+  "reasoningAssist.stage.assessing": "프롬프트 평가 중",
+  "reasoningAssist.stage.mapping": "논증 구조화 중",
+  "reasoningAssist.stage.recording": "구조 기록 중",
+  "reasoningAssist.stage.critiquing": "반론 검토 중",
+  "reasoningAssist.stage.preparing": "답변 준비 중",
+  "reasoningAssist.stage.applied": "보조 적용됨",
+  "reasoningAssist.toggleDetails": "추론 보조 세부 정보 펼치기 또는 접기",
+  "reasoningAssist.candidateConclusion": "후보 결론",
+  "reasoningAssist.assumptions": "가정",
+  "reasoningAssist.evidenceBoundary": "근거 범위",
+  "reasoningAssist.criticObjections": "해결할 비판 의견",
+  "reasoningAssist.afRecordedStructure": "AF에 기록된 구조",
+  "reasoningAssist.afNotAvailable": "AF 구조를 사용할 수 없음",
+
   // Language setting
   "config.language": "언어",
   "config.langAuto": "자동 (VS Code)",

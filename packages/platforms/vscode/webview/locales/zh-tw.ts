@@ -134,6 +134,30 @@ export const zhTw: LocaleSchema = {
   "config.sandboxApplying": "正在套用沙箱設定…",
   "config.sandboxError": (error: string) => `沙箱錯誤：${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "推理審查",
+  "config.reasoningReviewEnable": "啟用推理審查",
+  "config.reasoningReviewWorkspaceOptOut": "在此工作區中選擇退出",
+  "config.reasoningReviewDescription":
+    "當推理審查執行階段可用時，會在此主機上審查回應。工作區退出設定會覆寫此工作區的全域偏好。",
+  "config.reasoningReviewEffective": (enabled: boolean) => (enabled ? "在此工作區中已啟用" : "在此工作區中未啟用"),
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "推理輔助",
+  "reasoningAssist.stage.assessing": "正在評估提示",
+  "reasoningAssist.stage.mapping": "正在整理論證",
+  "reasoningAssist.stage.recording": "正在記錄結構",
+  "reasoningAssist.stage.critiquing": "正在檢視反對意見",
+  "reasoningAssist.stage.preparing": "正在準備回應",
+  "reasoningAssist.stage.applied": "已套用輔助",
+  "reasoningAssist.toggleDetails": "展開或摺疊推理輔助",
+  "reasoningAssist.candidateConclusion": "候選結論",
+  "reasoningAssist.assumptions": "假設",
+  "reasoningAssist.evidenceBoundary": "證據範圍",
+  "reasoningAssist.criticObjections": "需要處理的批評意見",
+  "reasoningAssist.afRecordedStructure": "AF 已記錄的結構",
+  "reasoningAssist.afNotAvailable": "AF 結構無法使用",
+
   // Language setting
   "config.language": "語言",
   "config.langAuto": "自動（VS Code）",

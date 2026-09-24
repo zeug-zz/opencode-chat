@@ -32,6 +32,14 @@ const sandboxLocaleKeys = [
 
 const thinkingLocaleKeys = ["config.thinking", "config.showAllThinking"] as const;
 
+const reasoningReviewLocaleKeys = [
+  "config.reasoningReview",
+  "config.reasoningReviewEnable",
+  "config.reasoningReviewWorkspaceOptOut",
+  "config.reasoningReviewDescription",
+  "config.reasoningReviewEffective",
+] as const;
+
 const localeDictionaries = [en, ja, zhCn, ko, zhTw, es, ptBr, ru];
 
 const defaultProps = {
@@ -107,6 +115,131 @@ describe("ToolConfigPanel", () => {
     it("設定ファイルリンクをレンダリングすること", () => {
       const { container } = render(<ToolConfigPanel {...defaultProps} />);
       expect(container.querySelectorAll(".footer button")).toHaveLength(2);
+    });
+  });
+
+  context("Reasoning review section", () => {
+    const availableRuntime = { state: "available" as const };
+    const enabledPreference = { userEnabled: true, workspaceOptOut: false, effective: true };
+
+    it("renders the control for an available runtime and reflects the effective state", () => {
+      const { getByTestId, getByText } = render(
+        <ToolConfigPanel
+          {...defaultProps}
+          reasoningReviewRuntime={availableRuntime}
+          reasoningReviewPreference={enabledPreference}
+        />,
+      );
+
+      expect(getByTestId("reasoning-review-section")).toBeInTheDocument();
+      expect(getByTestId("reasoning-review-enabled")).toBeChecked();
+      expect(getByTestId("reasoning-review-workspace-opt-out")).not.toBeChecked();
+      expect(getByText("Active in this workspace")).toBeInTheDocument();
+    });
+
+    it.each(["checking", "incompatible", "unavailable"] as const)("renders no control for a %s runtime", (state) => {
+      const { queryByTestId, queryByText, container } = render(
+        <ToolConfigPanel
+          {...defaultProps}
+          reasoningReviewRuntime={{ state }}
+          reasoningReviewPreference={enabledPreference}
+        />,
+      );
+
+      expect(queryByTestId("reasoning-review-section")).not.toBeInTheDocument();
+      expect(queryByTestId("reasoning-review-enabled")).not.toBeInTheDocument();
+      expect(queryByText("Reasoning review")).not.toBeInTheDocument();
+      expect(container.textContent).not.toContain("Reasoning review");
+    });
+
+    it("renders no control when no runtime has been published", () => {
+      const { queryByTestId } = render(
+        <ToolConfigPanel {...defaultProps} reasoningReviewPreference={enabledPreference} />,
+      );
+
+      expect(queryByTestId("reasoning-review-section")).not.toBeInTheDocument();
+    });
+
+    it("emits only the user toggle patch", async () => {
+      const onChange = vi.fn();
+      const { getByTestId } = render(
+        <ToolConfigPanel
+          {...defaultProps}
+          reasoningReviewRuntime={availableRuntime}
+          reasoningReviewPreference={enabledPreference}
+          onReasoningReviewPreferenceChange={onChange}
+        />,
+      );
+
+      await userEvent.setup().click(getByTestId("reasoning-review-enabled"));
+
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledWith({ userEnabled: false });
+    });
+
+    it("emits only the workspace opt-out patch and reflects a host update", async () => {
+      const onChange = vi.fn();
+      const { getByTestId, getByText, rerender } = render(
+        <ToolConfigPanel
+          {...defaultProps}
+          reasoningReviewRuntime={availableRuntime}
+          reasoningReviewPreference={enabledPreference}
+          onReasoningReviewPreferenceChange={onChange}
+        />,
+      );
+
+      await userEvent.setup().click(getByTestId("reasoning-review-workspace-opt-out"));
+
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledWith({ workspaceOptOut: true });
+
+      rerender(
+        <ToolConfigPanel
+          {...defaultProps}
+          reasoningReviewRuntime={availableRuntime}
+          reasoningReviewPreference={{ userEnabled: true, workspaceOptOut: true, effective: false }}
+          onReasoningReviewPreferenceChange={onChange}
+        />,
+      );
+
+      expect(getByTestId("reasoning-review-workspace-opt-out")).toBeChecked();
+      expect(getByText("Inactive in this workspace")).toBeInTheDocument();
+    });
+
+    it("provides the exact reasoning-review key set and signature in every locale", () => {
+      for (const locale of localeDictionaries) {
+        expect(
+          Object.keys(locale)
+            .filter((key) => key.startsWith("config.reasoningReview"))
+            .sort(),
+        ).toEqual([...reasoningReviewLocaleKeys].sort());
+        expect(typeof locale["config.reasoningReview"]).toBe("string");
+        expect(typeof locale["config.reasoningReviewEnable"]).toBe("string");
+        expect(typeof locale["config.reasoningReviewWorkspaceOptOut"]).toBe("string");
+        expect(typeof locale["config.reasoningReviewDescription"]).toBe("string");
+        expect(typeof locale["config.reasoningReviewEffective"]).toBe("function");
+        expect(locale["config.reasoningReviewEffective"](true)).toBeTruthy();
+        expect(locale["config.reasoningReviewEffective"](false)).toBeTruthy();
+        expect(locale["config.reasoningReviewEffective"](true)).not.toBe(
+          locale["config.reasoningReviewEffective"](false),
+        );
+      }
+    });
+
+    it("renders localized reasoning-review strings", () => {
+      const { getByText } = render(
+        <LocaleProvider value={ja}>
+          <ToolConfigPanel
+            {...defaultProps}
+            reasoningReviewRuntime={availableRuntime}
+            reasoningReviewPreference={enabledPreference}
+          />
+        </LocaleProvider>,
+      );
+
+      expect(getByText("推論レビュー")).toBeInTheDocument();
+      expect(getByText("推論レビューを有効にする")).toBeInTheDocument();
+      expect(getByText("このワークスペースで有効")).toBeInTheDocument();
     });
   });
 

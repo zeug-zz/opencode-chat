@@ -2,7 +2,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPersistedState } from "../../vscode-api";
-import { createMessage, createSession } from "../factories";
+import { createMessage, createSession, createTextPart } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
 /** Reasoning パートを持つメッセージを表示するセットアップ */
@@ -10,7 +10,7 @@ async function setupWithReasoningPart(partOverrides: Record<string, unknown> = {
   renderApp();
   await sendExtMessage({ type: "activeSession", session: createSession({ id: "s1" }) });
 
-  const msg = createMessage({ id: "m1", sessionID: "s1", role: "assistant" });
+  const msg = createMessage({ id: "m1", sessionID: "s1", role: "assistant", time: { created: 1, completed: 2 } });
   const reasoningPart = {
     id: "rp1",
     type: "reasoning",
@@ -23,7 +23,7 @@ async function setupWithReasoningPart(partOverrides: Record<string, unknown> = {
   await sendExtMessage({
     type: "messages",
     sessionId: "s1",
-    messages: [{ info: msg, parts: [reasoningPart as any] }],
+    messages: [{ info: msg, parts: [reasoningPart as any, createTextPart("Response", { messageID: "m1" })] }],
   });
 }
 

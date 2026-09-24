@@ -1,0 +1,139 @@
+{
+  "fixtureSchema": "af-runtime-fixture-1",
+  "evidenceOnly": true,
+  "observationStatus": "observed-facts-only",
+  "metadata": {
+    "fixtureSchemaVersion": "af-runtime-fixture-1",
+    "capturedRuntimeIdentity": {
+      "executableName": "af",
+      "version": "0.1.7",
+      "commit": "5a37413",
+      "buildDate": "2026-09-08T02:25:39Z",
+      "goVersion": "go1.27.1"
+    },
+    "observationStatus": "observed-facts-only",
+    "futureOperations": {
+      "status": "unapproved",
+      "approvedOperations": []
+    }
+  },
+  "runtime": {
+    "executableName": "af",
+    "version": "0.1.7",
+    "commit": "5a37413",
+    "buildDate": "2026-09-08T02:25:39Z",
+    "goVersion": "go1.27.1"
+  },
+  "capturePlatform": {
+    "operatingSystem": "darwin",
+    "architecture": "arm64"
+  },
+  "workspace": {
+    "format": "1.0",
+    "root": "fixture-workspace"
+  },
+  "processBoundary": {
+    "supportedPlatforms": ["darwin", "linux"],
+    "policy": "dedicated-separate-from-chat-sandbox",
+    "executableResolution": "host-resolved-fixed-executable",
+    "operations": ["version", "schema", "init", "status"],
+    "argv": "typed-fixed-operations",
+    "shell": false,
+    "reviewRoot": "context.globalStorageUri",
+    "deniedWriteDomains": ["repository", "home-directory", "opencode-state", "sibling-review-roots"],
+    "descendantConfinement": "required",
+    "pathEscapeProtection": ["traversal", "symlink", "rename"],
+    "unapprovedChildExecution": "denied",
+    "boundedInput": true,
+    "boundedOutput": true,
+    "timeout": "operation-specific",
+    "cancellation": "terminate-and-reap-descendants",
+    "cleanup": "fail-closed",
+    "downgrade": "never-unsandboxed-or-chat-sandbox",
+    "failureMode": "fail-closed"
+  },
+  "observedOperations": [
+    {
+      "name": "version",
+      "argv": ["af", "version", "--json"],
+      "fixture": "version.json",
+      "result": {
+        "outcome": "success",
+        "exitCode": 0
+      },
+      "workspaceEffects": []
+    },
+    {
+      "name": "schema",
+      "argv": ["af", "schema", "--format", "json"],
+      "fixture": "schema.json",
+      "result": {
+        "outcome": "success",
+        "exitCode": 0
+      },
+      "workspaceEffects": []
+    },
+    {
+      "name": "init",
+      "argv": [
+        "af",
+        "init",
+        "--conjecture",
+        "<fixture-conjecture>",
+        "--author",
+        "<fixture-author>",
+        "--dir",
+        "<fixture-workspace>"
+      ],
+      "fixture": "workspace-init.json",
+      "result": {
+        "outcome": "success",
+        "exitCode": 0
+      },
+      "workspaceEffects": [
+        { "path": "fixture-workspace/.gitignore", "kind": "file", "effect": "created" },
+        { "path": "fixture-workspace/assumptions", "kind": "directory", "effect": "created" },
+        { "path": "fixture-workspace/defs", "kind": "directory", "effect": "created" },
+        { "path": "fixture-workspace/externals", "kind": "directory", "effect": "created" },
+        { "path": "fixture-workspace/ledger", "kind": "directory", "effect": "created" },
+        { "path": "fixture-workspace/lemmas", "kind": "directory", "effect": "created" },
+        { "path": "fixture-workspace/locks", "kind": "directory", "effect": "created" },
+        { "path": "fixture-workspace/meta.json", "kind": "file", "effect": "created" },
+        { "path": "fixture-workspace/nodes", "kind": "directory", "effect": "created" }
+      ]
+    },
+    {
+      "name": "status",
+      "argv": ["af", "status", "--dir", "<fixture-workspace>", "--format", "json"],
+      "fixture": "status.json",
+      "result": {
+        "outcome": "success",
+        "exitCode": 0
+      },
+      "workspaceEffects": []
+    },
+    {
+      "name": "invalid-node",
+      "argv": ["af", "get", "missing", "--dir", "<fixture-workspace>", "--format", "json"],
+      "fixture": "failures.json#/invalid-node",
+      "result": {
+        "outcome": "failure",
+        "exitCode": 1,
+        "output": { "error": "invalid-node-id" }
+      },
+      "workspaceEffects": []
+    },
+    {
+      "name": "missing-workspace",
+      "argv": ["af", "status", "--dir", "<missing-workspace>", "--format", "json"],
+      "fixture": "failures.json#/missing-workspace",
+      "result": {
+        "outcome": "failure",
+        "exitCode": 3,
+        "output": { "error": "missing-proof-directory" }
+      },
+      "workspaceEffects": []
+    }
+  ],
+  "approvedOperations": []
+}

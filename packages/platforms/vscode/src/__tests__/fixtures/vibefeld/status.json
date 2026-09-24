@@ -1,0 +1,31 @@
+{
+  "fixtureSchema": "af-runtime-fixture-1",
+  "argv": ["af", "status", "--dir", "<fixture-workspace>", "--format", "json"],
+  "status": {
+    "workspaceFormat": "1.0",
+    "root": { "state": "pending", "resolution": "unresolved" },
+    "statistics": {
+      "total_nodes": 1,
+      "epistemic_state": { "pending": 1 },
+      "taint_state": { "unresolved": 1 },
+      "total_challenges": 0,
+      "open_challenges": 0
+    },
+    "jobs": { "prover_jobs": 1, "verifier_jobs": 0 },
+    "nodes": [
+      {
+        "id": "1",
+        "type": "claim",
+        "inference": "assumption",
+        "workflow": "available",
+        "epistemic": "pending",
+        "taint": "unresolved",
+        "statement": "<fixture-conjecture>",
+        "timestamp": "<captured-timestamp>",
+        "contentHash": "<fixture-content-hash>"
+      }
+    ],
+    "challenges": []
+  },
+  "exitCode": 0
+}

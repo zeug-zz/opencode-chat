@@ -137,6 +137,31 @@ export const ru: LocaleSchema = {
   "config.sandboxApplying": "Применение настроек песочницы…",
   "config.sandboxError": (error: string) => `Ошибка песочницы: ${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "Проверка рассуждений",
+  "config.reasoningReviewEnable": "Включить проверку рассуждений",
+  "config.reasoningReviewWorkspaceOptOut": "Отказаться в этом рабочем пространстве",
+  "config.reasoningReviewDescription":
+    "Проверяет ответы на этом хосте, когда среда проверки рассуждений доступна. Отказ рабочего пространства переопределяет глобальную настройку для этого рабочего пространства.",
+  "config.reasoningReviewEffective": (enabled: boolean) =>
+    enabled ? "Включена в этом рабочем пространстве" : "Отключена в этом рабочем пространстве",
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "Помощник рассуждений",
+  "reasoningAssist.stage.assessing": "Оценка запроса",
+  "reasoningAssist.stage.mapping": "Составление структуры аргумента",
+  "reasoningAssist.stage.recording": "Запись структуры",
+  "reasoningAssist.stage.critiquing": "Проверка возражений",
+  "reasoningAssist.stage.preparing": "Подготовка ответа",
+  "reasoningAssist.stage.applied": "Помощник применён",
+  "reasoningAssist.toggleDetails": "Развернуть или свернуть помощника рассуждений",
+  "reasoningAssist.candidateConclusion": "Предварительный вывод",
+  "reasoningAssist.assumptions": "Предположения",
+  "reasoningAssist.evidenceBoundary": "Граница доказательств",
+  "reasoningAssist.criticObjections": "Возражения, требующие ответа",
+  "reasoningAssist.afRecordedStructure": "Структура записана в AF",
+  "reasoningAssist.afNotAvailable": "Структура AF недоступна",
+
   // Language setting
   "config.language": "Язык",
   "config.langAuto": "Автоматически (VS Code)",

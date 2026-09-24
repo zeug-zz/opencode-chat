@@ -166,6 +166,43 @@ describe("mapEvent", () => {
     const result = mapEvent(event as never) as Record<string, unknown>;
     expect(result.properties).toEqual({ sessionID: "s1", reasoningID: "r1", delta: "from-properties" });
   });
+
+  it("should return empty properties for an event with neither properties nor data", () => {
+    const event = { type: "server.connected" };
+    const result = mapEvent(event as never) as Record<string, unknown>;
+    expect(result.properties).toEqual({});
+    expect(result.type).toBe("server.connected");
+  });
+
+  it("should keep object properties unchanged", () => {
+    const properties = { sessionID: "s1", reasoningID: "r1", delta: "hello" };
+    const event = { type: "session.next.reasoning.delta", properties };
+    const result = mapEvent(event as never) as Record<string, unknown>;
+    expect(result.properties).toEqual(properties);
+  });
+
+  it("should coerce null properties to an empty object", () => {
+    const event = { type: "server.connected", properties: null };
+    const result = mapEvent(event as never) as Record<string, unknown>;
+    expect(result.properties).toEqual({});
+  });
+
+  it("should coerce non-object properties to an empty object", () => {
+    for (const badProperties of ["payload", 42, true]) {
+      const event = { type: "server.connected", properties: badProperties };
+      const result = mapEvent(event as never) as Record<string, unknown>;
+      expect(result.properties).toEqual({});
+    }
+  });
+
+  it("should not throw on odd event shapes", () => {
+    expect(() => mapEvent({ type: "weird" } as never)).not.toThrow();
+    expect(() => mapEvent({ type: "weird", properties: "oops" } as never)).not.toThrow();
+    expect(() => mapEvent({ type: "weird", data: 7 } as never)).not.toThrow();
+    expect(() => mapEvent({ type: "weird", properties: [], data: [] } as never)).not.toThrow();
+    expect(() => mapEvent("not-an-event" as never)).not.toThrow();
+    expect(() => mapEvent(undefined as never)).not.toThrow();
+  });
 });
 
 // ============================================================

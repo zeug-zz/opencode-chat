@@ -3,11 +3,13 @@ import type {
   ChatSandboxStatus,
   McpServerStatus,
   McpStatus,
+  ReasoningReviewRuntime,
   SoundEventSetting,
   SoundEventType,
   SoundSettings,
 } from "@opencode-chat/core";
 import { useMemo, useState } from "react";
+import type { ReasoningReviewPreference, ReasoningReviewPreferencePatch } from "../../../hooks/useReasoningReview";
 import type { LocaleSetting } from "../../../locales";
 import { useLocale } from "../../../locales";
 import { IconButton } from "../../atoms/IconButton";
@@ -32,6 +34,9 @@ type Props = {
   sandboxStatus?: ChatSandboxStatus;
   onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
   sandboxControlsDisabled?: boolean;
+  reasoningReviewRuntime?: ReasoningReviewRuntime | null;
+  reasoningReviewPreference?: ReasoningReviewPreference | null;
+  onReasoningReviewPreferenceChange?: (preference: ReasoningReviewPreferencePatch) => void;
 };
 
 export function ToolConfigPanel({
@@ -49,6 +54,9 @@ export function ToolConfigPanel({
   sandboxStatus,
   onChatSandboxSettingsChange,
   sandboxControlsDisabled = false,
+  reasoningReviewRuntime,
+  reasoningReviewPreference,
+  onReasoningReviewPreferenceChange,
 }: Props) {
   const t = useLocale();
   const [langMenuOpen, setLangMenuOpen] = useState(false);
@@ -183,6 +191,15 @@ export function ToolConfigPanel({
           />
         )}
 
+        {/* Availability-gated: an absent, checking, incompatible, or
+            unavailable runtime renders nothing, never a disabled control. */}
+        {reasoningReviewRuntime?.state === "available" && (
+          <ReasoningReviewSection
+            preference={reasoningReviewPreference}
+            onPreferenceChange={onReasoningReviewPreferenceChange}
+          />
+        )}
+
         {/* MCP Setting */}
         {mcpServers != null && (
           <div className={styles.section}>
@@ -289,6 +306,47 @@ function SandboxSection({
       {status.managed && <div className={styles.sandboxError}>{t["config.sandboxManaged"]}</div>}
       {status.error && <div className={styles.sandboxError}>{t["config.sandboxError"](status.error)}</div>}
       {status.applying && <div className={styles.sandboxStatus}>{t["config.sandboxApplying"]}</div>}
+    </div>
+  );
+}
+
+function ReasoningReviewSection({
+  preference,
+  onPreferenceChange,
+}: {
+  preference?: ReasoningReviewPreference | null;
+  onPreferenceChange?: (preference: ReasoningReviewPreferencePatch) => void;
+}) {
+  const t = useLocale();
+  // Before the host publishes, mirror the host-side availability-gated
+  // defaults (enabled, no workspace opt-out) instead of an unset control.
+  const userEnabled = preference?.userEnabled ?? true;
+  const workspaceOptOut = preference?.workspaceOptOut ?? false;
+  const effective = preference?.effective ?? false;
+
+  return (
+    <div className={styles.section} data-testid="reasoning-review-section">
+      <div className={styles.sectionTitle}>{t["config.reasoningReview"]}</div>
+      <label className={styles.toggle}>
+        <input
+          data-testid="reasoning-review-enabled"
+          type="checkbox"
+          checked={userEnabled}
+          onChange={(event) => onPreferenceChange?.({ userEnabled: event.target.checked })}
+        />
+        <span className={styles.toolName}>{t["config.reasoningReviewEnable"]}</span>
+      </label>
+      <label className={`${styles.toggle} ${styles.sandboxRow}`}>
+        <input
+          data-testid="reasoning-review-workspace-opt-out"
+          type="checkbox"
+          checked={workspaceOptOut}
+          onChange={(event) => onPreferenceChange?.({ workspaceOptOut: event.target.checked })}
+        />
+        <span className={styles.toolName}>{t["config.reasoningReviewWorkspaceOptOut"]}</span>
+      </label>
+      <div className={styles.sandboxDescription}>{t["config.reasoningReviewDescription"]}</div>
+      <div className={styles.sandboxStatus}>{t["config.reasoningReviewEffective"](effective)}</div>
     </div>
   );
 }

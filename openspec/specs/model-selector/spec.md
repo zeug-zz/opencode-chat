@@ -1,7 +1,9 @@
 # model-selector Specification
 
 ## Purpose
-TBD - created by archiving change recent-models-selector. Update Purpose after archive.
+
+Lets the user pick which model (and reasoning effort) each prompt runs on: a selector that recalls recently used models, groups providers and models, and carries the chosen model and effort into the dispatched prompt.
+
 ## Requirements
 ### Requirement: Surface recently used models for quick recall
 
@@ -79,4 +81,3 @@ Selecting a model from the `Recent` section SHALL use the same model-selection p
 - **WHEN** the user selects a recent model that has no persisted effort
 - **THEN** the GUI SHALL select the model with default/unset effort
 - **AND** the next prompt SHALL omit an effort override
-

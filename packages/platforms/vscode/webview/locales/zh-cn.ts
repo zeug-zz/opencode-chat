@@ -134,6 +134,30 @@ export const zhCn: LocaleSchema = {
   "config.sandboxApplying": "正在应用沙箱设置…",
   "config.sandboxError": (error: string) => `沙箱错误：${error}`,
 
+  // Reasoning review (availability-gated)
+  "config.reasoningReview": "推理审查",
+  "config.reasoningReviewEnable": "启用推理审查",
+  "config.reasoningReviewWorkspaceOptOut": "在此工作区中选择退出",
+  "config.reasoningReviewDescription":
+    "当推理审查运行时可用时，将在此主机上审查回复。工作区退出设置会覆盖此工作区的全局偏好。",
+  "config.reasoningReviewEffective": (enabled: boolean) => (enabled ? "在此工作区中已启用" : "在此工作区中未启用"),
+
+  // Reasoning assist lifecycle
+  "reasoningAssist.title": "推理辅助",
+  "reasoningAssist.stage.assessing": "正在评估提示",
+  "reasoningAssist.stage.mapping": "正在梳理论证",
+  "reasoningAssist.stage.recording": "正在记录结构",
+  "reasoningAssist.stage.critiquing": "正在检查反对意见",
+  "reasoningAssist.stage.preparing": "正在准备回答",
+  "reasoningAssist.stage.applied": "已应用辅助",
+  "reasoningAssist.toggleDetails": "展开或折叠推理辅助",
+  "reasoningAssist.candidateConclusion": "候选结论",
+  "reasoningAssist.assumptions": "假设",
+  "reasoningAssist.evidenceBoundary": "证据范围",
+  "reasoningAssist.criticObjections": "需要处理的批评意见",
+  "reasoningAssist.afRecordedStructure": "AF 已记录的结构",
+  "reasoningAssist.afNotAvailable": "AF 结构不可用",
+
   // Language setting
   "config.language": "语言",
   "config.langAuto": "自动（VS Code）",

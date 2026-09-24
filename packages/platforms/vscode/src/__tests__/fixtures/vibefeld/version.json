@@ -1,0 +1,16 @@
+{
+  "fixtureSchema": "af-runtime-fixture-1",
+  "argv": ["af", "version", "--json"],
+  "runtime": {
+    "executableName": "af",
+    "version": "0.1.7",
+    "commit": "5a37413",
+    "build_date": "2026-09-08T02:25:39Z",
+    "go_version": "go1.27.1"
+  },
+  "platform": {
+    "operatingSystem": "darwin",
+    "architecture": "arm64"
+  },
+  "exitCode": 0
+}

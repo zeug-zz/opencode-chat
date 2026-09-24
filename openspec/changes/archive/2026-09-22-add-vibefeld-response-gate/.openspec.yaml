@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-21
+goal: Require calibrated pre-release review only through a transactional
+  lifecycle, without changing ordinary Chat or Write behavior.
