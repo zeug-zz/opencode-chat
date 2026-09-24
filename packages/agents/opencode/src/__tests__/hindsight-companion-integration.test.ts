@@ -17,7 +17,12 @@ const resolution: HindsightPluginResolution = {
 
 const status = (
   state: MemoryProviderStatus["state"],
-  capabilities = { retain: true, recall: true, reflect: true, automaticSessionRetention: true },
+  capabilities: MemoryProviderStatus["capabilities"] = {
+    retain: true,
+    recall: true,
+    reflect: true,
+    automaticSessionRetention: true,
+  },
 ) => ({
   id: "hindsight",
   displayName: "untrusted detail",
@@ -263,18 +268,19 @@ describe("Hindsight companion integration", () => {
     ["missing exact tool", { enabled: true, requireConfirmation: true, missingTool: true }],
   ] as const)("does not expose retention for %s", (_label, options) => {
     const capabilities = {
-      retain: options.retain !== false,
+      retain: !("retain" in options && options.retain === false),
       recall: false,
       reflect: false,
+      automaticSessionRetention: false,
     };
-    const tools = options.missingTool ? [] : [HINDSIGHT_RETENTION_TOOL_ID];
+    const tools = "missingTool" in options && options.missingTool ? [] : [HINDSIGHT_RETENTION_TOOL_ID];
     const result = buildHindsightCompanionIntegration(status("available", capabilities), tools, resolution, {
       enabled: options.enabled,
       requireConfirmation: options.requireConfirmation,
       automaticSessionRetention: false,
     });
 
-    if (options.missingTool) expect(result.integration).toBeUndefined();
+    if ("missingTool" in options && options.missingTool) expect(result.integration).toBeUndefined();
     else expect(result.integration?.retentionPermission).toBeUndefined();
   });
 

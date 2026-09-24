@@ -8,7 +8,7 @@
  * adapted to the IAgent contract with SDK→domain type conversion via mappers.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, type SpawnOptionsWithStdioTuple, spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -473,7 +473,7 @@ function waitForSandboxChildExit(child: ChildProcess, timeoutMs: number): Promis
 }
 
 function isSafeSandboxProcessGroupPid(pid: number | undefined): pid is number {
-  return process.platform !== "win32" && Number.isInteger(pid) && pid > 1 && pid !== process.pid;
+  return process.platform !== "win32" && Number.isInteger(pid) && pid !== undefined && pid > 1 && pid !== process.pid;
 }
 
 async function terminateSandboxChild(child: ChildProcess | undefined): Promise<void> {
@@ -858,7 +858,7 @@ export class OpenCodeAgent implements IAgent {
           : undefined);
       if (lifecycleValue === undefined) delete childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV];
       else childEnvironment[HINDSIGHT_DISABLE_HOOKS_ENV] = lifecycleValue;
-      const spawnOptions = {
+      const spawnOptions: SpawnOptionsWithStdioTuple<"ignore", "pipe", "pipe"> = {
         cwd: configuration.workspacePath,
         env: {
           ...childEnvironment,
@@ -878,8 +878,10 @@ export class OpenCodeAgent implements IAgent {
         detached: true,
         shell: !nonoLaunch,
         stdio: ["ignore", "pipe", "pipe"],
-      } as const;
-      const child = nonoLaunch ? spawn(childCommand, childArgs ?? [], spawnOptions) : spawn(childCommand, spawnOptions);
+      };
+      const child: ChildProcess = nonoLaunch
+        ? spawn(childCommand, childArgs ?? [], spawnOptions)
+        : spawn(childCommand, spawnOptions);
       pluginFallbackEligible = true;
       this.sandboxedChild = child;
       this.sandboxedChildStopping = false;
@@ -887,7 +889,7 @@ export class OpenCodeAgent implements IAgent {
       const url = await waitForLoopbackUrl(child, configuration.workspacePath, output, backend, command);
       this.sandboxChildReady = true;
       await this.attachClient(url);
-      child.once("exit", (code, signal) => {
+      child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
         if (this.sandboxedChild !== child) return;
         this.sandboxChildExit = { code, signal };
         const expected = this.sandboxedChildStopping;

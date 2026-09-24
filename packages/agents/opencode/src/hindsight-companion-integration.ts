@@ -38,7 +38,7 @@ type HindsightCompanionIntegration = Readonly<{
   toolPatterns: readonly string[];
   nativeToolPatterns?: readonly string[];
   retentionPermission?: Readonly<Record<typeof HINDSIGHT_RETENTION_TOOL_ID, "ask" | "allow">>;
-  confirmationPermissions?: Readonly<Record<(typeof HINDSIGHT_CONFIRMATION_TOOL_IDS)[number], "ask">>;
+  confirmationPermissions?: Readonly<Partial<Record<(typeof HINDSIGHT_CONFIRMATION_TOOL_IDS)[number], "ask">>>;
   automaticSessionRetention: boolean;
   environment: Readonly<Partial<Record<typeof HINDSIGHT_DISABLE_HOOKS_ENV, "1">>>;
 }>;

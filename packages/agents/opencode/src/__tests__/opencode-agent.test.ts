@@ -3,7 +3,7 @@
  * @opencode-ai/sdk/v2 をモックし、各パブリックメソッドが正しいパラメータで SDK を呼び出し、
  * mapper を通してドメイン型に変換されることを検証する。
  */
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs/promises";
 import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk/v2";
@@ -26,6 +26,24 @@ const mockViolationStore = vi.hoisted(() => ({
   getViolationsForCommand: vi.fn().mockReturnValue([]),
 }));
 const mockSpawn = vi.hoisted(() => vi.fn());
+
+type SpawnCall = readonly [string, (readonly string[] | SpawnOptions)?, SpawnOptions?];
+
+function getSpawnOptions(call: SpawnCall | undefined): SpawnOptions | undefined {
+  if (!call) return undefined;
+  const second = call[1];
+  if (second === undefined) return call[2];
+  return typeof second === "object" && "env" in second ? second : call[2];
+}
+
+async function captureError(operation: Promise<unknown>): Promise<Error> {
+  try {
+    await operation;
+  } catch (error: unknown) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  return new Error("Expected operation to reject");
+}
 
 vi.mock("@vscode/sandbox-runtime", () => ({ SandboxManager: mockSandboxManager }));
 vi.mock("node:child_process", () => ({ spawn: mockSpawn }));
@@ -135,13 +153,16 @@ const integrationLaunchConfiguration = {
 function createSandboxChild() {
   const stdout = new EventEmitter();
   const stderr = new EventEmitter();
-  const handlers: Record<string, (...args: never[]) => void> = {};
+  type ExitHandler = (code: number | null, signal: NodeJS.Signals | null) => void;
+  type ErrorHandler = (error: Error) => void;
+  const handlers: { exit?: ExitHandler; error?: ErrorHandler } = {};
   const child = {
     stdout,
     stderr,
     kill: vi.fn(),
-    once: (event: string, handler: (...args: never[]) => void) => {
-      handlers[event] = handler;
+    once: (event: "exit" | "error", handler: ExitHandler | ErrorHandler) => {
+      if (event === "exit") handlers.exit = handler as ExitHandler;
+      else handlers.error = handler as ErrorHandler;
       return child;
     },
   };
@@ -319,7 +340,7 @@ describe("OpenCodeAgent", () => {
       const first = createSandboxChild();
       const second = createSandboxChild();
       vi.mocked(spawn).mockImplementationOnce(() => {
-        queueMicrotask(() => first.handlers.exit?.(2 as never, "SIGTERM" as never));
+        queueMicrotask(() => first.handlers.exit?.(2, "SIGTERM"));
         return first.child as never;
       });
       vi.mocked(spawn).mockImplementationOnce(() => {
@@ -342,7 +363,7 @@ describe("OpenCodeAgent", () => {
       expect(vi.mocked(spawn).mock.calls[0]?.[1]).toMatchObject({
         cwd: "/workspace/project",
       });
-      const retryOptions = vi.mocked(spawn).mock.calls[1]?.[1];
+      const retryOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[1]);
       if (!retryOptions) throw new Error("Expected plugin-free sandbox retry options");
       expect((retryOptions.env as Record<string, string>).OPENCODE_CONFIG_CONTENT).toContain('"plugin":[]');
       expect(mockSandboxManager.initialize).toHaveBeenCalledTimes(2);
@@ -354,7 +375,7 @@ describe("OpenCodeAgent", () => {
       const first = createSandboxChild();
       const second = createSandboxChild();
       vi.mocked(spawn).mockImplementationOnce(() => {
-        queueMicrotask(() => first.handlers.exit?.(2 as never, "SIGTERM" as never));
+        queueMicrotask(() => first.handlers.exit?.(2, "SIGTERM"));
         return first.child as never;
       });
       vi.mocked(spawn).mockImplementationOnce(() => {
@@ -384,7 +405,7 @@ describe("OpenCodeAgent", () => {
       expect(createOpencodeServer).not.toHaveBeenCalled();
       expect(spawn).toHaveBeenCalledTimes(2);
       expect(mockSandboxManager.initialize).toHaveBeenCalledTimes(2);
-      const retryOptions = vi.mocked(spawn).mock.calls[1]?.[1];
+      const retryOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[1]);
       expect(retryOptions).toBeDefined();
       if (!retryOptions) throw new Error("Expected plugin-free sandbox retry options");
       expect((retryOptions.env as Record<string, string>).HINDSIGHT_DISABLE_HOOKS).toBe("1");
@@ -475,7 +496,7 @@ describe("OpenCodeAgent", () => {
       process.env.HINDSIGHT_ENDPOINT = "http://must-not-cross-plugin-fallback";
       process.env.HINDSIGHT_TOKEN = "must-not-cross-plugin-fallback";
       vi.mocked(spawn).mockImplementationOnce(() => {
-        queueMicrotask(() => first.handlers.exit?.(2 as never, "SIGTERM" as never));
+        queueMicrotask(() => first.handlers.exit?.(2, "SIGTERM"));
         return first.child as never;
       });
       vi.mocked(spawn).mockImplementationOnce(() => {
@@ -512,7 +533,7 @@ describe("OpenCodeAgent", () => {
           "0",
         ]);
         expect(vi.mocked(spawn).mock.calls[1]?.[1]).toEqual(vi.mocked(spawn).mock.calls[0]?.[1]);
-        const retryOptions = vi.mocked(spawn).mock.calls[1]?.[2];
+        const retryOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[1]);
         if (!retryOptions) throw new Error("Expected nono plugin-free retry options");
         const retryEnvironment = retryOptions.env as Record<string, string | undefined>;
         const retryOverlay = JSON.parse(retryEnvironment.OPENCODE_CONFIG_CONTENT ?? "{}") as Record<string, unknown>;
@@ -570,7 +591,7 @@ describe("OpenCodeAgent", () => {
       vi.mocked(spawn).mockImplementationOnce(() => {
         queueMicrotask(() => {
           stderr.emit("data", `${"x".repeat(10_000)} token=nono-secret\n`);
-          handlers.exit?.(17 as never, null as never);
+          handlers.exit?.(17, null);
         });
         return child as never;
       });
@@ -581,9 +602,7 @@ describe("OpenCodeAgent", () => {
         sandbox: { ...integrationLaunchConfiguration.sandbox, mode: "on", enabled: true },
       });
 
-      const failure = await nonoAgent
-        .connect()
-        .catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+      const failure = await captureError(nonoAgent.connect());
 
       expect(failure.message).toContain("Nono OpenCode startup failed");
       expect(failure.message).not.toContain("nono-secret");
@@ -611,7 +630,7 @@ describe("OpenCodeAgent", () => {
       nonoAgent.onAvailabilityError = availabilityError;
 
       await nonoAgent.connect();
-      handlers.exit?.(23 as never, "SIGTERM" as never);
+      handlers.exit?.(23, "SIGTERM");
       await Promise.resolve();
       await Promise.resolve();
 
@@ -764,7 +783,7 @@ describe("OpenCodeAgent", () => {
             },
           },
         },
-      };
+      } as const;
 
       const unsandboxedAgent = new OpenCodeAgent(launchConfiguration);
       await unsandboxedAgent.connect();
@@ -787,7 +806,7 @@ describe("OpenCodeAgent", () => {
 
       await sandboxedAgent.connect();
 
-      const options = vi.mocked(spawn).mock.calls[0]?.[1];
+      const options = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
       if (!options) throw new Error("Expected sandboxed child spawn options");
       const sandboxedOverlay = JSON.parse((options.env as Record<string, string>).OPENCODE_CONFIG_CONTENT);
       expect(sandboxedOverlay.mcp).toEqual(unsandboxedOptions?.config?.mcp);
@@ -840,7 +859,7 @@ describe("OpenCodeAgent", () => {
         await configuredAgent.connect();
 
         const spawnCall = vi.mocked(spawn).mock.calls[0];
-        const spawnOptions = backend === "nono" ? spawnCall?.[2] : spawnCall?.[1];
+        const spawnOptions = getSpawnOptions(spawnCall);
         if (!spawnOptions) throw new Error("Expected backend spawn options");
         const overlay = JSON.parse(
           (spawnOptions.env as Record<string, string> | undefined)?.OPENCODE_CONFIG_CONTENT ?? "{}",
@@ -915,7 +934,7 @@ describe("OpenCodeAgent", () => {
 
       await configuredAgent.connect();
 
-      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[2];
+      const spawnOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
       if (!spawnOptions) throw new Error("Expected selected-nono spawn options");
       const overlay = JSON.parse((spawnOptions.env as Record<string, string>).OPENCODE_CONFIG_CONTENT) as {
         plugin?: unknown[];
@@ -1011,7 +1030,7 @@ describe("OpenCodeAgent", () => {
       });
       await sandboxedAgent.connect();
 
-      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[1];
+      const spawnOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
       if (!spawnOptions) throw new Error("Expected sandboxed child spawn options");
       const childEnv = spawnOptions.env as Record<string, string>;
       const sandboxedOverlay = JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT) as Record<string, unknown>;
@@ -1066,7 +1085,9 @@ describe("OpenCodeAgent", () => {
 
       const unsandboxedAgent = new OpenCodeAgent(launchConfiguration);
       await unsandboxedAgent.connect();
-      const unsandboxedConfig = vi.mocked(createOpencodeServer).mock.calls[0]?.[0].config;
+      const unsandboxedOptions = vi.mocked(createOpencodeServer).mock.calls[0]?.[0];
+      if (!unsandboxedOptions) throw new Error("Expected unsandboxed server options");
+      const unsandboxedConfig = unsandboxedOptions.config;
       expect(sdkLifecycleValue).toBe("1");
       expect(process.env[HINDSIGHT_DISABLE_HOOKS_ENV]).toBe("host-value");
       unsandboxedAgent.disconnect();
@@ -1081,7 +1102,7 @@ describe("OpenCodeAgent", () => {
         sandbox: { ...launchConfiguration.sandbox, mode: "on", enabled: true },
       });
       await sandboxedAgent.connect();
-      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[1];
+      const spawnOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
       if (!spawnOptions) throw new Error("Expected sandboxed child spawn options");
       const childEnv = spawnOptions.env as Record<string, string | undefined>;
       const sandboxedConfig = JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT ?? "{}");
@@ -1175,7 +1196,9 @@ describe("OpenCodeAgent", () => {
       await configuredAgent.connect();
 
       expect(createOpencodeServer).toHaveBeenCalledTimes(2);
-      expect(vi.mocked(createOpencodeServer).mock.calls[1]?.[0].config).toHaveProperty("plugin", []);
+      const retryServerOptions = vi.mocked(createOpencodeServer).mock.calls[1]?.[0];
+      if (!retryServerOptions) throw new Error("Expected plugin-free server options");
+      expect(retryServerOptions.config).toHaveProperty("plugin", []);
       expect(availabilityError).toHaveBeenCalledWith(
         expect.objectContaining({ message: expect.stringContaining("plugins disabled") }),
       );
@@ -1198,7 +1221,7 @@ describe("OpenCodeAgent", () => {
         pluginSources: ["broken-plugin"],
       });
 
-      const failure = await configuredAgent.connect().catch((error: unknown) => error as Error);
+      const failure = await captureError(configuredAgent.connect());
       expect(failure.message).toMatch(/plugin startup failed.*fallback also failed/);
       expect(failure.message).toContain("plugin=[redacted]");
       expect(failure.message).toContain("OPENCODE_CONFIG_CONTENT=[redacted]");
@@ -1208,7 +1231,9 @@ describe("OpenCodeAgent", () => {
       expect(failure.message).not.toContain("opaque-option");
       expect(failure.message.length).toBeLessThanOrEqual(4_096);
       expect(createOpencodeServer).toHaveBeenCalledTimes(2);
-      expect((await Promise.resolve(vi.mocked(createOpencodeServer).mock.calls[1]?.[0].config)).plugin).toEqual([]);
+      const retryServerOptions = vi.mocked(createOpencodeServer).mock.calls[1]?.[0];
+      if (!retryServerOptions) throw new Error("Expected plugin-free server options");
+      expect(retryServerOptions.config).toHaveProperty("plugin", []);
     });
 
     it("reports a bounded plugin-loading marker for sandbox readiness diagnostics", async () => {
@@ -1332,7 +1357,7 @@ describe("OpenCodeAgent", () => {
       });
       await sandboxedAgent.connect();
 
-      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[1];
+      const spawnOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
       if (!spawnOptions) throw new Error("Expected sandboxed child spawn options");
       expect((spawnOptions.env as Record<string, string>)[HINDSIGHT_DISABLE_HOOKS_ENV]).toBe("1");
       expect(process.env.HINDSIGHT_DISABLE_HOOKS).toBe("inherited-value");
@@ -1354,7 +1379,7 @@ describe("OpenCodeAgent", () => {
       });
       await sandboxedAgent.connect();
 
-      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[1];
+      const spawnOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
       if (!spawnOptions) throw new Error("Expected sandboxed child spawn options");
       expect((spawnOptions.env as Record<string, string>)[HINDSIGHT_DISABLE_HOOKS_ENV]).toBe("1");
       expect(process.env.HINDSIGHT_DISABLE_HOOKS).toBe("inherited-value");
@@ -1620,7 +1645,7 @@ describe("OpenCodeAgent", () => {
       expect(createOpencodeClient).toHaveBeenCalledWith({ baseUrl: discoveredUrl });
       expect(mockClient.global.event).toHaveBeenCalled();
       expect(sandboxedAgent.getServerUrl()).toBe(discoveredUrl);
-      const options = vi.mocked(spawn).mock.calls[0]?.[1];
+      const options = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
       expect(options).toMatchObject({
         cwd: "/workspace/project",
         shell: true,
@@ -1948,7 +1973,7 @@ describe("OpenCodeAgent", () => {
           undefined,
           true,
         );
-        const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[1];
+        const spawnOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
         if (!spawnOptions) throw new Error("Expected sandbox spawn options");
         const overlay = JSON.parse((spawnOptions.env as Record<string, string>).OPENCODE_CONFIG_CONTENT) as Record<
           string,
@@ -2159,9 +2184,9 @@ describe("OpenCodeAgent", () => {
         mcpOverlay,
       });
 
-      const failure = await sandboxedAgent.connect().catch((error) => error as Error);
+      const failure = await captureError(sandboxedAgent.connect());
       const diagnostic = failure.message;
-      const options = vi.mocked(spawn).mock.calls[0]?.[1];
+      const options = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
 
       if (!options) throw new Error("Expected sandboxed child spawn options");
       const launchOverlay = JSON.parse((options.env as Record<string, string>).OPENCODE_CONFIG_CONTENT);
@@ -2196,7 +2221,7 @@ describe("OpenCodeAgent", () => {
         executable: { path: "opencode" },
       });
 
-      const failure = await sandboxedAgent.connect().catch((error) => error as Error);
+      const failure = await captureError(sandboxedAgent.connect());
       expect(failure.message).toContain("Sandbox violations");
       expect(failure.message).toContain("deny network");
       expect(failure.message).not.toContain("hidden-value");
@@ -2335,7 +2360,7 @@ describe("OpenCodeAgent", () => {
     });
     await integratedAgent.connect();
 
-    const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[2];
+    const spawnOptions = getSpawnOptions(vi.mocked(spawn).mock.calls[0]);
     if (!spawnOptions) throw new Error("Expected nono spawn options");
     const overlay = JSON.parse((spawnOptions.env as Record<string, string>).OPENCODE_CONFIG_CONTENT);
     const agents = overlay.agent as Record<string, { permission?: Record<string, unknown> }>;

@@ -6,8 +6,8 @@ describe("buildMcpOverlay", () => {
     const result = buildMcpOverlay(
       {
         servers: {
-          selected: { explicitlyDisabled: false },
-          unselected: { explicitlyDisabled: false },
+          selected: { explicitlyDisabled: false, transport: "stdio" },
+          unselected: { explicitlyDisabled: false, transport: "stdio" },
         },
       },
       { selected: true },
@@ -26,9 +26,9 @@ describe("buildMcpOverlay", () => {
     const result = buildMcpOverlay(
       {
         servers: {
-          zebra: { explicitlyDisabled: true },
-          alpha: { explicitlyDisabled: true },
-          enabled: { explicitlyDisabled: false },
+          zebra: { explicitlyDisabled: true, transport: "stdio" },
+          alpha: { explicitlyDisabled: true, transport: "stdio" },
+          enabled: { explicitlyDisabled: false, transport: "stdio" },
         },
       },
       { alpha: true, enabled: true, zebra: true },
@@ -46,7 +46,7 @@ describe("buildMcpOverlay", () => {
 
   it("ignores preferences for names absent from the inventory", () => {
     const result = buildMcpOverlay(
-      { servers: { known: { explicitlyDisabled: false } } },
+      { servers: { known: { explicitlyDisabled: false, transport: "stdio" } } },
       { known: false, unknown: true },
     );
 
