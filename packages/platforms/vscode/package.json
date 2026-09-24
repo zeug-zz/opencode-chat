@@ -68,6 +68,18 @@
           "scope": "workspace",
           "description": "%configuration.nonoProfile%"
         },
+        "opencode-chat.vibefeld.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "%configuration.vibefeldEnabled%"
+        },
+        "opencode-chat.vibefeld.workspaceOptOut": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "%configuration.vibefeldWorkspaceOptOut%"
+        },
         "opencode-chat.chatSandbox.mode": {
           "type": "string",
           "enum": [
@@ -121,7 +133,7 @@
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@types/vscode": "^1.138.0",
+    "@types/vscode": "~1.137.0",
     "@vitejs/plugin-react": "^6.0.3",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",

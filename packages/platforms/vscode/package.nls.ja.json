@@ -2,6 +2,8 @@
   "displayName": "OpenCode Scribe",
   "description": "【実験的・非公式】OpenCode TUI と併用するための、調査・レポート執筆向け VS Code 拡張機能。本拡張機能は主に AI を活用したコーディングにより開発されており、現状のまま無保証で提供されます。OpenCode プロジェクトとは提携・推薦関係にありません。",
   "configuration.nonoProfile": "Chat 用の任意のワークスペース単位カスタム nono プロファイル。既定では組み込みの opencode プロファイルを使用します。",
+  "configuration.vibefeldEnabled": "互換性のあるランタイムが利用可能な場合に Vibefeld 推論レビューを有効にします。",
+  "configuration.vibefeldWorkspaceOptOut": "このワークスペースで Vibefeld 推論レビューをオプトアウトします。",
   "command.selectNonoProfile": "OpenCode Scribe: nono プロファイルを選択",
   "command.checkForUpdates": "OpenCode Scribe: 更新を確認"
 }

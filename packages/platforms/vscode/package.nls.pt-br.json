@@ -2,6 +2,8 @@
   "displayName": "OpenCode Scribe",
   "description": "[Experimental / Não oficial] Uma extensão de pesquisa e redação de relatórios para VS Code e OpenCode, projetada para ser usada junto com a TUI do OpenCode. Esta extensão é desenvolvida principalmente por meio de codificação assistida por IA e fornecida como está, sem garantia. Não é afiliada nem endossada pelo projeto OpenCode.",
   "configuration.nonoProfile": "Substituição opcional do perfil nono personalizado para o Chat, limitada ao espaço de trabalho; o perfil opencode integrado é usado por padrão.",
+  "configuration.vibefeldEnabled": "Ativa a revisão de raciocínio do Vibefeld quando um runtime compatível estiver disponível.",
+  "configuration.vibefeldWorkspaceOptOut": "Desativa a revisão de raciocínio do Vibefeld neste espaço de trabalho.",
   "command.selectNonoProfile": "OpenCode Scribe: selecionar perfil nono",
   "command.checkForUpdates": "OpenCode Scribe: verificar atualizações"
 }

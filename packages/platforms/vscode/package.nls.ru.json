@@ -2,6 +2,8 @@
   "displayName": "OpenCode Scribe",
   "description": "[Экспериментальное / Неофициальное] Исследовательское расширение VS Code для OpenCode с поддержкой написания отчетов, предназначенное для работы рядом с OpenCode TUI. Это расширение разработано преимущественно с помощью ИИ и предоставляется «как есть» без каких-либо гарантий. Не связано с проектом OpenCode и не одобрено им.",
   "configuration.nonoProfile": "Необязательный пользовательский профиль nono для Chat в пределах рабочей области; по умолчанию используется встроенный профиль opencode.",
+  "configuration.vibefeldEnabled": "Включает проверку рассуждений Vibefeld, если доступна совместимая среда выполнения.",
+  "configuration.vibefeldWorkspaceOptOut": "Отключает проверку рассуждений Vibefeld для этой рабочей области.",
   "command.selectNonoProfile": "OpenCode Scribe: выбрать профиль nono",
   "command.checkForUpdates": "OpenCode Scribe: Проверить обновления"
 }
