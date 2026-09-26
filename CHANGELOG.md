@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-26
+
+### Fixed
+
+- Reasoning Review Enable and workspace Opt out preferences now persist when a compatible runtime is available.
+
 ## [0.17.0] - 2026-09-25
 
 ### Added
