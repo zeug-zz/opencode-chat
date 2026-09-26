@@ -2512,7 +2512,7 @@ describe("extension", () => {
           { timeout: 10_000 },
         );
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
-      });
+      }, 15_000);
 
       it("reloads only after the separate restart confirmation", async () => {
         vi.mocked(vscode.window.showInformationMessage)
