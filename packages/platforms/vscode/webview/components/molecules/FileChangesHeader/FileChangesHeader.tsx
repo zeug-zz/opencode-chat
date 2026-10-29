@@ -41,7 +41,9 @@ function FileChangeItem({
 }) {
   const t = useLocale();
   const [expanded, setExpanded] = useState(false);
-  const status = getFileStatus(diff);
+  const unavailable = diff.contentUnavailable !== undefined;
+  // Empty before/after would misreport an unavailable entry as modified, so show a neutral badge.
+  const status = unavailable ? "unknown" : getFileStatus(diff);
   const fileName = basename(diff.file);
   const dirName = dirname(diff.file);
 
@@ -55,6 +57,7 @@ function FileChangeItem({
     added: "A",
     deleted: "D",
     modified: "M",
+    unknown: "•",
   };
 
   return (
@@ -76,20 +79,30 @@ function FileChangeItem({
           {diff.additions > 0 && <span className={styles.statAdd}>+{diff.additions}</span>}
           {diff.deletions > 0 && <span className={styles.statRemove}>−{diff.deletions}</span>}
         </span>
-        <IconButton
-          className={styles.openButton}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenDiffEditor(diff.file, diff.before, diff.after);
-          }}
-          title={t["fileChanges.openDiff"]}
-        >
-          <ExternalLinkIcon />
-        </IconButton>
+        {!unavailable && (
+          <IconButton
+            className={styles.openButton}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenDiffEditor(diff.file, diff.before, diff.after);
+            }}
+            title={t["fileChanges.openDiff"]}
+          >
+            <ExternalLinkIcon />
+          </IconButton>
+        )}
       </div>
       {expanded && (
         <div className={styles.diffBody}>
-          <DiffView oldStr={diff.before} newStr={diff.after} />
+          {unavailable ? (
+            <div role="note">
+              {diff.contentUnavailable === "binary"
+                ? t["fileChanges.binaryUnavailable"]
+                : t["fileChanges.contentUnavailable"]}
+            </div>
+          ) : (
+            <DiffView oldStr={diff.before} newStr={diff.after} />
+          )}
         </div>
       )}
     </div>

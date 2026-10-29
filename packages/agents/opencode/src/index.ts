@@ -83,6 +83,15 @@ export {
   validateMemoryRetentionSummary,
 } from "./memory-retention-policy";
 export { OpenCodeAgent } from "./opencode-agent";
+export {
+  createNativeTurnId,
+  isNativeTurnId,
+  SCRIBE_REASONING_CONTEXT_GRACE_MS,
+  SCRIBE_REASONING_CONTEXT_MAX_BRIEF_BYTES,
+  SCRIBE_REASONING_CONTEXT_MAX_BRIEF_CHARS,
+  SCRIBE_REASONING_CONTEXT_MAX_KEY_LENGTH,
+  SCRIBE_REASONING_CONTEXT_RPC_ID,
+} from "./reasoning-context-plugin";
 export type {
   RestrictedReviewAgentEntry,
   RestrictedReviewOverlayInput,
@@ -103,6 +112,10 @@ export type {
   RestrictedReviewFailure,
   RestrictedReviewGeneration,
   RestrictedReviewModel,
+  RestrictedReviewObservation,
+  RestrictedReviewObservationOutcome,
+  RestrictedReviewObservationStage,
+  RestrictedReviewObserver,
   RestrictedReviewOperationResult,
   RestrictedReviewProvenance,
   RestrictedReviewProvider,

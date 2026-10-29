@@ -1,9 +1,11 @@
 import type {
   AgentEvent,
+  AllProvidersData,
   ChatMessage,
   ChatSession,
   Permission,
   ProviderInfo,
+  SubtaskPart,
   TextPart,
   ToolPart,
 } from "@opencode-chat/core";
@@ -96,17 +98,21 @@ export function createTaskToolPart(
 
 // --- SubtaskPart ---
 
-export function createSubtaskPart(agent: string, description: string, overrides: Record<string, unknown> = {}) {
+export function createSubtaskPart(
+  agent: string,
+  description: string,
+  overrides: Partial<SubtaskPart> = {},
+): SubtaskPart & { description: string; agent: string } {
   return {
     id: `part-${++partSeq}`,
     type: "subtask" as const,
     sessionID: "session-1",
     messageID: "msg-1",
     prompt: description,
-    description,
     agent,
-    time: { created: Date.now(), updated: Date.now() },
+    input: {},
     ...overrides,
+    description: overrides.description ?? description,
   };
 }
 
@@ -126,18 +132,13 @@ export function createPermission(overrides: Partial<Permission> = {}): Permissio
 
 // --- Provider ---
 
-export function createProvider(
-  id: string,
-  models: Record<
-    string,
-    { id: string; name: string; limit?: { context: number; output: number }; status?: string }
-  > = {},
-): ProviderInfo {
+export function createProvider(id: string, models: Record<string, ProviderInfo["models"][string]> = {}): ProviderInfo {
   return {
     id,
     name: id.charAt(0).toUpperCase() + id.slice(1),
+    env: [],
     models,
-  } as unknown as ProviderInfo;
+  };
 }
 
 // --- Event ---
@@ -150,15 +151,12 @@ export function createEvent(type: string, properties: Record<string, unknown> = 
 
 export function createAllProvidersData(
   connected: string[] = [],
-  all: Array<{ id: string; name: string; models: Record<string, unknown> }> = [],
+  all: Array<Omit<ProviderInfo, "env"> & { env?: string[] }> = [],
   defaultModel: Record<string, string> = {},
-): any {
+): AllProvidersData {
   return {
     connected,
-    all: all.map((p) => ({
-      ...p,
-      env: [],
-    })),
+    all: all.map((provider) => ({ ...provider, env: provider.env ?? [] })),
     default: defaultModel,
   };
 }

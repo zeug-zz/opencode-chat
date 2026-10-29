@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ReviewContextMetadata } from "../vibefeld/adversarial-review-contract";
+import type { ObjectionProposal, ReviewContextMetadata } from "../vibefeld/adversarial-review-contract";
 import { RESTRICTED_REVIEW_PERMISSION_ATTESTATION } from "../vibefeld/adversarial-review-contract";
 import { createAdversarialReviewOrchestrator } from "../vibefeld/adversarial-review-orchestrator";
-import type { AdversarialReviewSeam } from "../vibefeld/adversarial-review-seam";
+import type { AdversarialReviewSeam, RestrictedReviewOperationResult } from "../vibefeld/adversarial-review-seam";
 
 const source = "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.";
 
@@ -104,9 +104,9 @@ describe("AdversarialReviewOrchestrator", () => {
     const caller = new AbortController();
     let proverSignal!: AbortSignal;
     const reviewSeam = seam({
-      runProver: vi.fn((_context, _packet, signal) => {
+      runProver: vi.fn((_context, _packet, signal): Promise<RestrictedReviewOperationResult<ObjectionProposal>> => {
         proverSignal = signal;
-        return new Promise(() => undefined);
+        return new Promise<RestrictedReviewOperationResult<ObjectionProposal>>(() => undefined);
       }),
     });
     const review = createAdversarialReviewOrchestrator(reviewSeam).review(source, caller.signal);
@@ -137,9 +137,9 @@ describe("AdversarialReviewOrchestrator", () => {
     const caller = new AbortController();
     let proverSignal!: AbortSignal;
     const reviewSeam = seam({
-      runProver: vi.fn((_context, _packet, signal) => {
+      runProver: vi.fn((_context, _packet, signal): Promise<RestrictedReviewOperationResult<ObjectionProposal>> => {
         proverSignal = signal;
-        return new Promise(() => undefined);
+        return new Promise<RestrictedReviewOperationResult<ObjectionProposal>>(() => undefined);
       }),
       cancelContext: vi.fn(async () => ({
         status: "audit_failed" as const,

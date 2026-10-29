@@ -5,11 +5,19 @@ import {
   createUnsupportedAdversarialReviewSeam,
   type RestrictedReviewAdapter,
 } from "../vibefeld/adversarial-review-seam";
+import { validateReviewContextMetadata } from "../vibefeld/adversarial-review-validation";
 
-const context = (role: "prover" | "verifier", identity: string, handle: string) => ({
-  handle,
-  provenance: { identity, role, contextNumber: role === "prover" ? 1 : 2 },
-});
+const context = (role: "prover" | "verifier", identity: string, handle: string) => {
+  const result = validateReviewContextMetadata(
+    {
+      handle,
+      provenance: { identity, role, contextNumber: role === "prover" ? 1 : 2 },
+    },
+    role,
+  );
+  if (!result.ok) throw new Error("valid review-context fixture rejected");
+  return result.value;
+};
 
 const packet = {
   packetId: "packet-1",

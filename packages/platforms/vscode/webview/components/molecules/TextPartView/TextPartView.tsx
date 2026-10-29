@@ -1,5 +1,5 @@
 import type { TextPart } from "@opencode-chat/core";
-import DOMPurify from "dompurify";
+import DOMPurify, { type Config } from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { Marked, type Renderer, type Tokens } from "marked";
 import markedKatex from "marked-katex-extension";
@@ -92,7 +92,7 @@ const linkRenderer: Partial<Renderer> = {
 };
 
 // DOMPurify で SVG 要素とカスタム data 属性を許可する設定
-const PURIFY_CONFIG: DOMPurify.Config = {
+const PURIFY_CONFIG = {
   ADD_TAGS: ["svg", "path", "rect", "circle", "ellipse", "polygon", "text", "linearGradient", "stop", "defs"],
   ADD_ATTR: [
     "viewBox",
@@ -131,7 +131,8 @@ const PURIFY_CONFIG: DOMPurify.Config = {
     "role",
     "tabindex",
   ],
-};
+  RETURN_TRUSTED_TYPE: false,
+} satisfies Config & { RETURN_TRUSTED_TYPE: false };
 
 /**
  * Scoped DOMPurify config for Mermaid SVG output.
@@ -152,7 +153,7 @@ const PURIFY_CONFIG: DOMPurify.Config = {
  * Mermaid's own `securityLevel: "strict"` (set in the helper) provides the
  * first line of defence; this config is the second.
  */
-const MERMAID_PURIFY_CONFIG: DOMPurify.Config = {
+const MERMAID_PURIFY_CONFIG = {
   ADD_TAGS: [
     // SVG structural
     "svg",
@@ -312,7 +313,8 @@ const MERMAID_PURIFY_CONFIG: DOMPurify.Config = {
   ],
   FORBID_TAGS: ["script", "a", "image"],
   FORBID_ATTR: ["href", "xlink:href", "onclick", "onload", "onerror", "onmouseover", "onfocus"],
-};
+  RETURN_TRUSTED_TYPE: false,
+} satisfies Config & { RETURN_TRUSTED_TYPE: false };
 
 /**
  * 絶対ファイルパスの正規表現。

@@ -1,3 +1,4 @@
+import { cp } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import { cleanExtensionDist } from "./scripts/clean-extension-dist.mjs";
@@ -7,6 +8,11 @@ const watch = process.argv.includes("--watch");
 const resolveFromHere = (relativePath) => fileURLToPath(new URL(relativePath, import.meta.url));
 
 await cleanExtensionDist(resolveFromHere("./dist"));
+await cp(
+  resolveFromHere("../../agents/opencode/src/scribe-context-plugin"),
+  resolveFromHere("./dist/scribe-context-plugin"),
+  { recursive: true },
+);
 
 /** @type {esbuild.BuildOptions} */
 const buildOptions = {
@@ -18,7 +24,7 @@ const buildOptions = {
   platform: "node",
   target: "node22",
   sourcemap: true,
-  // @opencode-ai/sdk は ESM のみ提供のため、バンドルに含める
+  // @opencode/client is bundled into the extension.
   mainFields: ["module", "main"],
   // ワークスペースパッケージはビルド済み dist ではなくソースから直接バンドルする
   // （vitest.config.ext.ts のエイリアスと同じ解決方法に揃える）

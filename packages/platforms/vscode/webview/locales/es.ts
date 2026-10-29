@@ -23,6 +23,10 @@ export const es: LocaleSchema = {
   "input.shellMode": "Modo Shell",
   "input.placeholder.shell": "Ingresa un comando de shell...",
   "input.settings": "Configuración",
+  "input.reasoningReviewOn": "Revisión del razonamiento: activada",
+  "input.reasoningReviewOff": "Revisión del razonamiento: desactivada",
+  "input.reasoningReviewBlocked":
+    "La revisión del razonamiento está bloqueada por la configuración del espacio de trabajo",
   "input.stop": "Detener",
   "input.send": "Enviar",
   "input.queued": (count: number) => `En cola: ${count}`,
@@ -37,6 +41,7 @@ export const es: LocaleSchema = {
   "message.thinking": "Pensando…",
   "message.toggleThought": "Alternar detalles de pensamiento",
   "message.copyMarkdown": "Copiar Markdown",
+  "message.moreActions": "More actions",
 
   // MessagesArea
   "checkpoint.revertTitle": "Revertir a este punto",
@@ -79,6 +84,7 @@ export const es: LocaleSchema = {
   "tool.search": "Buscar",
   "tool.tool": "Herramienta",
   "tool.toggleDetails": "Alternar detalles",
+  "tool.outputUnavailable": "[No se pudo mostrar la salida de la herramienta]",
   "tool.completed": (done: number, total: number) => `${done}/${total} completados`,
   "tool.moreLines": (n: number) => `… +${n} líneas más`,
   "tool.addLines": (n: number) => `+${n} líneas`,
@@ -116,6 +122,7 @@ export const es: LocaleSchema = {
     "No hay servidores MCP configurados. Configura mediante Configuración del Proyecto o Configuración Global.",
   "config.mcpTrust":
     "Las herramientas MCP instaladas por el usuario no están aisladas por las denegaciones de edición/shell de Scout.",
+  "config.mcpLocked": "Bloqueado por la política del sistema o administrada.",
 
   // ToolConfigPanel
   "config.title": "Configuración",
@@ -146,6 +153,38 @@ export const es: LocaleSchema = {
     "Revisa las respuestas en este host cuando el entorno de revisión de razonamiento está disponible. La exclusión del espacio de trabajo anula la preferencia global en este espacio de trabajo.",
   "config.reasoningReviewEffective": (enabled: boolean) =>
     enabled ? "Activa en este espacio de trabajo" : "Inactiva en este espacio de trabajo",
+  "reasoningReview.action": "Revisar argumento",
+  "reasoningReview.cancel": "Cancelar revisión",
+  "reasoningReview.cancelling": "Cancelando revisión…",
+  "reasoningReview.inProgress": "Revisión en curso",
+  "reasoningReview.cancelled": "Revisión cancelada.",
+  "reasoningReview.resultLabel": "Revisión del argumento",
+  "reasoningReview.boundaryLabel": "Límites de la revisión",
+  "reasoningReview.statusLabel": "Estado",
+  "reasoningReview.evidenceLabel": "Evidencia",
+  "reasoningReview.assumptionsLabel": "Suposiciones",
+  "reasoningReview.challengesLabel": "Objeciones abiertas",
+  "reasoningReview.status.notReviewed": "Sin revisar",
+  "reasoningReview.status.reviewing": "En revisión",
+  "reasoningReview.status.structurallyChecked": "Estructura comprobada",
+  "reasoningReview.status.conditional": "Condicional",
+  "reasoningReview.status.unresolved": "Sin resolver",
+  "reasoningReview.status.refuted": "Refutado",
+  "reasoningReview.status.blocked": "Bloqueado",
+  "reasoningReview.status.auditFailed": "Revisión fallida",
+  "reasoningReview.status.unavailable": "No disponible",
+  "reasoningReview.evidence.notAssessed": "Sin evaluar",
+  "reasoningReview.evidence.notRequired": "No necesaria",
+  "reasoningReview.evidence.sourceRecorded": "Fuente registrada",
+  "reasoningReview.evidence.unverified": "Sin verificar",
+  "reasoningReview.evidence.humanVerified": "Verificada por una persona",
+  "reasoningReview.evidence.conflicted": "En conflicto",
+  "reasoningReview.severity.critical": "Crítica",
+  "reasoningReview.severity.major": "Importante",
+  "reasoningReview.severity.minor": "Menor",
+  "reasoningReview.severity.note": "Nota",
+  "reasoningReview.stage.claimProjection": "Proyección de afirmaciones AF",
+  "reasoningReview.stage.adversarialReview": "Revisión de proponente/verificador",
 
   // Reasoning assist lifecycle
   "reasoningAssist.title": "Asistencia de razonamiento",
@@ -159,7 +198,6 @@ export const es: LocaleSchema = {
   "reasoningAssist.candidateConclusion": "Conclusión candidata",
   "reasoningAssist.assumptions": "Supuestos",
   "reasoningAssist.evidenceBoundary": "Límite de evidencia",
-  "reasoningAssist.criticObjections": "Objeciones que abordar",
   "reasoningAssist.afRecordedStructure": "Estructura registrada en AF",
   "reasoningAssist.afNotAvailable": "Estructura de AF no disponible",
 
@@ -191,6 +229,8 @@ export const es: LocaleSchema = {
   "fileChanges.noChanges": "Sin cambios de archivos",
   "fileChanges.openDiff": "Abrir en editor de diferencias",
   "fileChanges.toggle": "Cambios de archivos",
+  "fileChanges.binaryUnavailable": "Archivo binario: no se puede mostrar el contenido.",
+  "fileChanges.contentUnavailable": "El contenido no está disponible para este cambio.",
 
   // Share
   "share.share": "Compartir sesión",

@@ -78,16 +78,6 @@ export function ReasoningAssistRow({ row }: Props) {
               <p className={styles.text}>{summary.evidenceBoundary}</p>
             </div>
           )}
-          {summary.criticObjections.length > 0 && (
-            <div className={styles.field}>
-              <span className={styles.label}>{t["reasoningAssist.criticObjections"]}</span>
-              <ul className={styles.list}>
-                {summary.criticObjections.map((objection, index) => (
-                  <li key={index}>{objection.objection}</li>
-                ))}
-              </ul>
-            </div>
-          )}
           <div className={styles.field}>
             <span className={styles.label}>
               {summary.afFact === "recorded_structure"

@@ -1,7 +1,10 @@
+import type { McpStatus } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { computeReapplyActions, useMcp } from "../../hooks/useMcp";
 import { getPersistedState, postMessage, setPersistedState } from "../../vscode-api";
+
+const mcpStatus = (status: McpStatus): McpStatus => status;
 
 describe("computeReapplyActions", () => {
   // ==========================================================
@@ -13,7 +16,7 @@ describe("computeReapplyActions", () => {
     });
 
     it("returns empty actions when prefs empty and status non-empty", () => {
-      const status = { "my-server": { connected: true, status: "connected" } };
+      const status = mcpStatus({ "my-server": { connected: true, status: "connected" } });
       expect(computeReapplyActions({}, status)).toEqual([]);
     });
   });
@@ -24,13 +27,13 @@ describe("computeReapplyActions", () => {
   context("re-apply connect", () => {
     it("returns connect action when pref true but server disconnected", () => {
       const prefs = { "my-server": true };
-      const status = { "my-server": { connected: false, status: "disabled" } };
+      const status = mcpStatus({ "my-server": { connected: false, status: "disabled" } });
       expect(computeReapplyActions(prefs, status)).toEqual([{ server: "my-server", action: "connect" }]);
     });
 
     it("returns no action when pref true and server already connected", () => {
       const prefs = { "my-server": true };
-      const status = { "my-server": { connected: true, status: "connected" } };
+      const status = mcpStatus({ "my-server": { connected: true, status: "connected" } });
       expect(computeReapplyActions(prefs, status)).toEqual([]);
     });
 
@@ -53,13 +56,13 @@ describe("computeReapplyActions", () => {
   context("re-apply disconnect", () => {
     it("returns disconnect action when pref false but server connected", () => {
       const prefs = { "my-server": false };
-      const status = { "my-server": { connected: true, status: "connected" } };
+      const status = mcpStatus({ "my-server": { connected: true, status: "connected" } });
       expect(computeReapplyActions(prefs, status)).toEqual([{ server: "my-server", action: "disconnect" }]);
     });
 
     it("returns no action when pref false and server already disconnected", () => {
       const prefs = { "my-server": false };
-      const status = { "my-server": { connected: false, status: "disabled" } };
+      const status = mcpStatus({ "my-server": { connected: false, status: "disabled" } });
       expect(computeReapplyActions(prefs, status)).toEqual([]);
     });
   });
@@ -70,16 +73,16 @@ describe("computeReapplyActions", () => {
   context("unknown pref keys", () => {
     it("ignores prefs for servers not present in status", () => {
       const prefs = { "ghost-server": true };
-      const status = { "live-server": { connected: true, status: "connected" } };
+      const status = mcpStatus({ "live-server": { connected: true, status: "connected" } });
       expect(computeReapplyActions(prefs, status)).toEqual([]);
     });
 
     it("ignores prefs for servers absent from status even with mixed matches", () => {
       const prefs = { "server-a": true, "ghost-server": true };
-      const status = {
+      const status = mcpStatus({
         "server-a": { connected: false, status: "disabled" },
         "server-b": { connected: true, status: "connected" },
-      };
+      });
       expect(computeReapplyActions(prefs, status)).toEqual([{ server: "server-a", action: "connect" }]);
     });
   });
@@ -94,11 +97,11 @@ describe("computeReapplyActions", () => {
         "server-b": false,
         "server-c": true,
       };
-      const status = {
+      const status = mcpStatus({
         "server-a": { connected: false, status: "disabled" },
         "server-b": { connected: true, status: "connected" },
         "server-c": { connected: true, status: "connected" },
-      };
+      });
       expect(computeReapplyActions(prefs, status)).toEqual([
         { server: "server-a", action: "connect" },
         { server: "server-b", action: "disconnect" },
@@ -112,17 +115,18 @@ describe("computeReapplyActions", () => {
   context("tools field in status", () => {
     it("ignores tools field when computing actions", () => {
       const prefs = { "my-server": true };
-      const status = { "my-server": { connected: false, status: "disabled", tools: ["read_file"] } };
+      const status = mcpStatus({ "my-server": { connected: false, status: "disabled", tools: ["read_file"] } });
       expect(computeReapplyActions(prefs, status)).toEqual([{ server: "my-server", action: "connect" }]);
     });
   });
 
-  it("re-applies selected servers regardless of the compatibility locked list", () => {
+  it("never connects a locked server but still connects other selected servers", () => {
     const prefs = { locked: true, available: true };
-    const status = {
+    const status = mcpStatus({
       locked: { connected: false, status: "disabled" },
       available: { connected: false, status: "disabled" },
-    };
+    });
+    expect(computeReapplyActions(prefs, status, ["locked"])).toEqual([{ server: "available", action: "connect" }]);
     expect(computeReapplyActions(prefs, status)).toEqual([
       { server: "locked", action: "connect" },
       { server: "available", action: "connect" },
@@ -202,6 +206,28 @@ describe("useMcp", () => {
         expect.objectContaining({ mcpEnabledByServer: { "my-server": true } }),
       );
       expect(postMessage).not.toHaveBeenCalledWith({ type: "setMcpPrefs", prefs: { "my-server": true } });
+    });
+  });
+
+  context("locked servers", () => {
+    it("exposes locked, skips reapply connect, and ignores toggles while keeping the stored preference", () => {
+      vi.mocked(getPersistedState).mockReturnValue({ mcpEnabledByServer: { corp: true, free: true } } as never);
+      const { result } = renderHook(() => useMcp());
+      act(() => result.current.handleMcpPrefs({ prefs: { corp: true, free: true }, locked: ["corp"] }));
+      expect(result.current.locked).toEqual(["corp"]);
+      vi.mocked(postMessage).mockClear();
+      act(() =>
+        result.current.handleMcpStatus({
+          corp: { connected: false, status: "disabled" },
+          free: { connected: false, status: "disabled" },
+        }),
+      );
+      expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "free" });
+      expect(postMessage).not.toHaveBeenCalledWith({ type: "connectMcp", server: "corp" });
+      vi.mocked(postMessage).mockClear();
+      act(() => result.current.toggle("corp", false));
+      expect(postMessage).not.toHaveBeenCalled();
+      expect(result.current.prefs).toEqual({ corp: true, free: true });
     });
   });
 

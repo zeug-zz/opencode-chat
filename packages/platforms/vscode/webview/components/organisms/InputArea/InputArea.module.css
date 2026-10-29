@@ -33,6 +33,15 @@
   min-width: 0;
 }
 
+.reasoningReviewToggle {
+  flex: 0 0 auto;
+}
+
+.reasoningReviewActive {
+  color: var(--vscode-textLink-foreground);
+  background-color: var(--vscode-toolbar-hoverBackground);
+}
+
 .textareaContainer {
   position: relative;
   display: flex;

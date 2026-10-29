@@ -117,6 +117,28 @@ export function ForkIcon({ width = 12, height: _h, ...props }: IconProps) {
 
 // ─── Input Area Actions ───────────────────────────────────────────────
 
+/** Brain outline — reasoning review toggle. */
+export function BrainIcon({ width = 16, height = 16, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      width={width}
+      height={height}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M12 5.5a4 4 0 0 0-7.5 2 4 4 0 0 0-.2 7.3A4 4 0 0 0 9 20h3V5.5Z" />
+      <path d="M12 5.5a4 4 0 0 1 7.5 2 4 4 0 0 1 .2 7.3A4 4 0 0 1 15 20h-3" />
+      <path d="M8 9.5c1.2 0 2 .8 2 2M7.5 15c1.5 0 2.5.8 2.5 2M16 9.5c-1.2 0-2 .8-2 2m2.5 3.5c-1.5 0-2.5.8-2.5 2" />
+    </svg>
+  );
+}
+
 /** Codicon: terminal */
 export function TerminalIcon({ width = 16, height: _h, ...props }: IconProps) {
   return <VscTerminal {...adapt({ width, ...props }, 16)} />;

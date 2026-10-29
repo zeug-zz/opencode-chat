@@ -108,7 +108,7 @@ const isSafePlaceholder = (value: unknown): value is string =>
     value,
   );
 
-const failure = (reason: Parameters<typeof classifyAfRuntimeResult>[0]): AfOutputResult<never> => ({
+const failure = (reason: Exclude<Parameters<typeof classifyAfRuntimeResult>[0], "success">): AfOutputResult<never> => ({
   ok: false,
   failure: classifyAfRuntimeResult(reason),
 });
@@ -122,6 +122,7 @@ const executionFailure = (execution: AfOutputExecution): AfOutputResult<never> |
 };
 
 const outputExitFailure = (value: Record<string, unknown>): AfOutputResult<never> | undefined => {
+  if (typeof value.exitCode !== "number") return failure("malformed");
   if (value.exitCode !== 0) return failure("non-zero");
   return undefined;
 };

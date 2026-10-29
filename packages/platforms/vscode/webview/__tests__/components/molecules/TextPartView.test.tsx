@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TextPartView } from "../../../components/molecules/TextPartView";
+import type { RenderMermaidOptions, RenderMermaidResult } from "../../../utils/mermaid";
 import { postMessage } from "../../../vscode-api";
 import { createTextPart } from "../../factories";
 
@@ -11,7 +12,7 @@ vi.unmock("marked");
 // Mermaid レンダリング補助のモック：テストでは実際の Mermaid ライブラリを
 // 使用せず、string-render ヘルパーの戻り値 ({ svg, bindFunctions }) を返す。
 const mockRenderMermaidDiagram = vi.hoisted(() =>
-  vi.fn(() =>
+  vi.fn<(...args: [string, (string | RenderMermaidOptions)?]) => Promise<RenderMermaidResult>>(() =>
     Promise.resolve({
       svg: '<svg viewBox="0 0 10 10"><text>diagram</text></svg>',
       bindFunctions: vi.fn(),
@@ -99,6 +100,14 @@ describe("TextPartView", () => {
       expect(container.textContent).toContain("safe");
       expect(container.textContent).toContain("bold");
       expect(container.textContent).toContain("text");
+    });
+
+    it("reasoning-style Markdown keeps formatting while sanitizing raw HTML", () => {
+      const source = '**Visible thought**\n\n<img src="x" onerror="alert(1)">';
+      const { container } = render(<TextPartView part={createTextPart(source)} />);
+
+      expect(container.querySelector(".markdown strong")).toHaveTextContent("Visible thought");
+      expect(container.querySelector("[onerror]")).toBeNull();
     });
   });
 
@@ -219,13 +228,11 @@ describe("TextPartView", () => {
         expect(mockRenderMermaidDiagram).toHaveBeenCalledTimes(1);
       });
 
-      const [firstCallSource, firstCallOptions] = mockRenderMermaidDiagram.mock.calls[0] as [
-        string,
-        { signal?: AbortSignal; container?: Element },
-      ];
+      const [firstCallSource, firstCallOptions] = mockRenderMermaidDiagram.mock.calls[0]!;
       expect(firstCallSource).toBe(MERMAID_SOURCE);
       // options オブジェクトに signal（AbortSignal）が含まれている
       expect(firstCallOptions).toBeDefined();
+      if (typeof firstCallOptions !== "object" || firstCallOptions === null) throw new Error("Expected options");
       expect(firstCallOptions.signal).toBeInstanceOf(AbortSignal);
       // ライブ DOM container を渡さない（string-render 経路）
       expect("container" in firstCallOptions).toBe(false);
@@ -255,7 +262,7 @@ describe("TextPartView", () => {
       const bindError = new Error("bind failed");
       mockRenderMermaidDiagram.mockResolvedValueOnce({
         svg: MOCK_SVG,
-        bindFunctions: () => {
+        bindFunctions: (_element: Element) => {
           throw bindError;
         },
       });
@@ -318,7 +325,8 @@ describe("TextPartView", () => {
       });
       // SVG がコピーされていないこと
       const lastCall = vi.mocked(postMessage).mock.calls.at(-1)?.[0];
-      expect(lastCall?.text).not.toContain("<svg");
+      if (lastCall?.type !== "copyToClipboard") throw new Error("Expected a copyToClipboard message");
+      expect(lastCall.text).not.toContain("<svg");
     });
 
     // render failure: error state and source preservation
@@ -430,9 +438,10 @@ describe("TextPartView", () => {
       const call = vi.mocked(postMessage).mock.calls[0]?.[0];
       expect(call).toEqual({ type: "copyToClipboard", text: 'print("hi")' });
       // フェンスや前後に投稿された場合の文字列が混入していないこと
-      expect(call?.text).not.toContain("```");
-      expect(call?.text).not.toContain("Here is code");
-      expect(call?.text).not.toContain("Done.");
+      if (call?.type !== "copyToClipboard") throw new Error("Expected a copyToClipboard message");
+      expect(call.text).not.toContain("```");
+      expect(call.text).not.toContain("Here is code");
+      expect(call.text).not.toContain("Done.");
     });
   });
 });

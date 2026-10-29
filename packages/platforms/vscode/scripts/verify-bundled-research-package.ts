@@ -34,6 +34,10 @@ export function deriveExpectedExtensionManifest(packageManifest: Record<string, 
 export const EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS = BUNDLED_RESEARCH_RESOURCE_MANIFEST.map(
   ({ relativePath }) => `${DEFAULT_RESOURCE_ROOT}${relativePath}`,
 );
+export const REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS = [
+  "extension/dist/scribe-context-plugin/package.json",
+  "extension/dist/scribe-context-plugin/server.js",
+] as const;
 
 function normalizeArchivePath(entry: string): string {
   return entry.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -72,6 +76,19 @@ export function verifyBundledResearchArchiveEntries(entries: readonly string[]):
   }
   if (duplicateResourceEntries.length > 0) {
     throw new Error(`VSIX contains duplicate bundled research resources: ${duplicateResourceEntries.join(", ")}`);
+  }
+}
+
+export function verifyBundledScribeContextPluginArchiveEntries(entries: readonly string[]): void {
+  const normalizedEntries = entries.map(normalizeArchivePath);
+  const missing = REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS.filter((entry) => !normalizedEntries.includes(entry));
+  const duplicate = REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS.filter(
+    (entry) => normalizedEntries.filter((candidate) => candidate === entry).length > 1,
+  );
+  if (missing.length > 0)
+    throw new Error(`VSIX is missing bundled Scribe context plugin resources: ${missing.join(", ")}`);
+  if (duplicate.length > 0) {
+    throw new Error(`VSIX contains duplicate bundled Scribe context plugin resources: ${duplicate.join(", ")}`);
   }
 }
 
@@ -214,8 +231,9 @@ async function main(): Promise<void> {
   verifyVsixManifest(archive, expectedManifest, entries);
   verifyVsixArchiveHygiene(entries);
   verifyBundledResearchArchiveEntries(entries);
+  verifyBundledScribeContextPluginArchiveEntries(entries);
   console.log(
-    `VSIX archive verification passed: ${EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS.length} bundled research resources`,
+    `VSIX archive verification passed: ${EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS.length} bundled research resources and ${REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS.length} bundled Scribe plugin resources`,
   );
 }
 

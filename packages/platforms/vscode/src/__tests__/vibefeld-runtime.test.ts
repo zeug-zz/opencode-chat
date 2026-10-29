@@ -13,7 +13,13 @@ import {
   createProductionAfOutputParsers,
 } from "../vibefeld/af-parser-mode";
 import type { AfProcessResult } from "../vibefeld/af-process-executor";
-import { type AfBridgeOperation, VibefeldRuntimeBridge } from "../vibefeld/vibefeld-runtime";
+import type { ProofWorkspaceHandle, ProofWorkspaceStore } from "../vibefeld/proof-workspace-store";
+import {
+  type AfBridgeExecutor,
+  type AfBridgeExecutorOptions,
+  type AfBridgeOperation,
+  VibefeldRuntimeBridge,
+} from "../vibefeld/vibefeld-runtime";
 
 const live = (name: string) =>
   readFileSync(new URL(`./fixtures/vibefeld/live/af-0.1.11/${name}`, import.meta.url), "utf8");
@@ -62,9 +68,26 @@ const readyPolicy = (): AfExecutionPolicyAdapter => ({
   terminateAndReap: vi.fn(),
 });
 
+type FixtureExecutor = {
+  executePreflight: (
+    operation: { operation: "version" | "schema" },
+    options: Readonly<{ cwd: string }>,
+    signal?: AbortSignal,
+  ) => Promise<AfProcessResult<unknown>>;
+  execute: (operation: AfBridgeOperation, signal?: AbortSignal) => Promise<AfProcessResult<unknown>>;
+  isInvalidated: boolean;
+};
+
+// The fixture supplies only the opaque token; the brand is intentionally asserted at this test boundary.
+const fixtureHandle = (token: string): ProofWorkspaceHandle => ({ token }) as ProofWorkspaceHandle;
+
+const createFixtureExecutorFactory = (executor: FixtureExecutor) =>
+  // Fixture responses are heterogeneous; this boundary adapts them to the production generic executor contract.
+  vi.fn((_options: AfBridgeExecutorOptions): AfBridgeExecutor => executor as AfBridgeExecutor);
+
 const makeBridge = (
-  executor: { executePreflight: ReturnType<typeof vi.fn>; execute: ReturnType<typeof vi.fn>; isInvalidated: boolean },
-  allocate = vi.fn(async () => ({ token: "opaque" }) as never),
+  executor: FixtureExecutor,
+  allocate = vi.fn(async () => fixtureHandle("opaque")),
   resolveExecutable: () => string | undefined | Promise<string | undefined> = vi.fn(async () => "/private/af"),
   overrides: Partial<{
     platform: NodeJS.Platform;
@@ -76,9 +99,9 @@ const makeBridge = (
   const proofStore = {
     allocate,
     resolvePath: vi.fn(() => "/private/review-root"),
-    cleanup: vi.fn(async () => ({ ok: true as const })),
+    cleanup: vi.fn(async (): Promise<Awaited<ReturnType<ProofWorkspaceStore["cleanup"]>>> => ({ ok: true })),
   };
-  const createExecutor = vi.fn(() => executor);
+  const createExecutor = createFixtureExecutorFactory(executor);
   return {
     bridge: new VibefeldRuntimeBridge({
       platform: overrides.platform ?? "darwin",
@@ -136,9 +159,9 @@ const createLiveCapturePolicy = (outputs: LiveCaptureOutputs) => {
 const makeLiveCaptureBridge = (outputs: LiveCaptureOutputs) => {
   const { adapter, preflightLaunches, launches } = createLiveCapturePolicy(outputs);
   const proofStore = {
-    allocate: vi.fn(async () => ({ token: "opaque" }) as never),
+    allocate: vi.fn(async () => fixtureHandle("opaque")),
     resolvePath: vi.fn(() => "/private/review-root"),
-    cleanup: vi.fn(async () => ({ ok: true as const })),
+    cleanup: vi.fn(async (): Promise<Awaited<ReturnType<ProofWorkspaceStore["cleanup"]>>> => ({ ok: true })),
   };
   const bridge = new VibefeldRuntimeBridge({
     platform: "darwin",
@@ -171,7 +194,7 @@ describe("Vibefeld runtime bridge", () => {
     };
     const allocate = vi.fn(async () => {
       events.push("allocate");
-      return { token: "opaque" } as never;
+      return fixtureHandle("opaque");
     });
     const { bridge } = makeBridge(executor, allocate);
     expect(bridge.getState()).toBe("dormant");
@@ -198,7 +221,7 @@ describe("Vibefeld runtime bridge", () => {
 
   it("reports the exact frozen claim capability with no preflight, spawn, allocation, or state change", () => {
     const executor = { isInvalidated: false, executePreflight: vi.fn(), execute: vi.fn() };
-    const allocate = vi.fn(async () => ({ token: "opaque" }) as never);
+    const allocate = vi.fn(async () => fixtureHandle("opaque"));
     const resolveExecutable = vi.fn(async () => "/private/af");
     const policy = readyPolicy();
     const { bridge, proofStore, createExecutor } = makeBridge(executor, allocate, resolveExecutable, { policy });
@@ -358,7 +381,7 @@ describe("Vibefeld runtime bridge", () => {
       "ambiguous policy",
       {
         policy: {
-          platform: "darwin",
+          platform: "darwin" as const,
           readiness: { state: "ambiguous" as const },
           launch: vi.fn(),
           terminateAndReap: vi.fn(),
@@ -393,19 +416,19 @@ describe("Vibefeld runtime bridge", () => {
   });
 
   it.each([
-    ["non-zero", "non-zero"],
-    ["malformed", "malformed"],
-    ["oversized", "oversized"],
-    ["timeout", "timeout"],
-    ["signal", "signal"],
-  ])("does not allocate a root after %s preflight failure", async (_name, diagnostic) => {
+    ["non-zero", "non-zero", "non-zero"],
+    ["malformed", "malformed", "malformed"],
+    ["oversized", "oversized", "oversized"],
+    ["timeout", "timeout", "timeout"],
+    ["signal", "signal", "signaled"],
+  ])("does not allocate a root after %s preflight failure", async (_name, diagnostic, reason) => {
     const executor = {
       isInvalidated: false,
       executePreflight: vi.fn(
         async () =>
           ({
             ok: false,
-            classification: { outcome: "unavailable", reason: diagnostic, structuralStatus: null },
+            classification: { outcome: "unavailable", reason, structuralStatus: null },
             diagnostic,
           }) as AfProcessResult,
       ),
@@ -414,7 +437,7 @@ describe("Vibefeld runtime bridge", () => {
     const { bridge, proofStore } = makeBridge(executor);
     const result = await bridge.preflight();
 
-    expect(result).toMatchObject({ state: "unavailable", reason: diagnostic, structuralStatus: null });
+    expect(result).toMatchObject({ state: "unavailable", reason, structuralStatus: null });
     expect(proofStore.allocate).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
     expectBoundedResult(result, ["/private"]);
@@ -426,7 +449,7 @@ describe("Vibefeld runtime bridge", () => {
       executePreflight: vi.fn(),
       execute: vi.fn(),
     };
-    const allocate = vi.fn(async () => ({ token: "opaque" }) as never);
+    const allocate = vi.fn(async () => fixtureHandle("opaque"));
     const { bridge } = makeBridge(executor, allocate, async () => {
       throw new Error("raw resolver path and details");
     });
@@ -643,11 +666,11 @@ describe("Vibefeld runtime bridge", () => {
       ),
       execute: vi.fn(async () => success("init", { initialized: true })),
     };
-    const createExecutor = vi.fn(() => executor);
+    const createExecutor = createFixtureExecutorFactory(executor);
     const proofStore = {
-      allocate: vi.fn(async () => ({ token: "opaque-root-handle" }) as never),
+      allocate: vi.fn(async () => fixtureHandle("opaque-root-handle")),
       resolvePath: vi.fn(() => "/private/review-root"),
-      cleanup: vi.fn(async () => ({ ok: true as const })),
+      cleanup: vi.fn(async (): Promise<Awaited<ReturnType<ProofWorkspaceStore["cleanup"]>>> => ({ ok: true })),
     };
     const bridge = new VibefeldRuntimeBridge({
       platform: "darwin",
@@ -790,14 +813,14 @@ describe("Vibefeld runtime bridge", () => {
     let allocations = 0;
     const allocate = vi.fn(async () => {
       allocations += 1;
-      return { token: `root-${allocations}` } as never;
+      return fixtureHandle(`root-${allocations}`);
     });
     const proofStore = {
       allocate,
-      resolvePath: vi.fn((handle: unknown) => `/private/${(handle as { token: string }).token}`),
-      cleanup: vi.fn(async () => ({ ok: true as const })),
+      resolvePath: vi.fn((handle: ProofWorkspaceHandle) => `/private/${handle.token}`),
+      cleanup: vi.fn(async (): Promise<Awaited<ReturnType<ProofWorkspaceStore["cleanup"]>>> => ({ ok: true })),
     };
-    const createExecutor = vi.fn(() => executor);
+    const createExecutor = createFixtureExecutorFactory(executor);
     const bridge = new VibefeldRuntimeBridge({
       platform: "darwin",
       architecture: "arm64",
@@ -898,7 +921,7 @@ describe("Vibefeld runtime bridge", () => {
     const allocate = vi.fn(async () => {
       allocations += 1;
       if (allocations === 2) throw new Error("raw allocation path detail");
-      return { token: "opaque" } as never;
+      return fixtureHandle("opaque");
     });
     const { bridge, proofStore } = makeBridge(executor, allocate);
     await bridge.preflight();

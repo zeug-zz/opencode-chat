@@ -45,7 +45,7 @@ export type AfPolicyIoLimits = Readonly<{
 export type AfPolicyExecutionFact = Readonly<{
   outcome: "exited" | "signaled" | "timed-out" | "cancelled";
   exitCode?: number;
-  signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP";
+  signal?: NodeJS.Signals;
   /** Bounded transport captured by the adapter, never a diagnostic. */
   stdout?: string;
   stderr?: string;

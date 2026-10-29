@@ -26,6 +26,7 @@ import type {
   TodoItem,
   ToolListItem,
 } from "./domain";
+import type { ReasoningAssistBriefClearResult, ReasoningAssistBriefDeliveryResult } from "./reasoning-assist";
 
 /** Agent capability declarations */
 export type AgentCapabilities = {
@@ -88,6 +89,19 @@ export interface IAgent {
   getMessages(sessionId: string): Promise<ChatMessageWithParts[]>;
   sendMessage(sessionId: string, text: string, options?: SendMessageOptions): Promise<void>;
   abortSession(sessionId: string): Promise<void>;
+
+  /** Create a native user-message ID for one ephemeral reasoning brief turn. */
+  createReasoningAssistTurnId(): string;
+  /** Mark a validated argument turn pending so its next Scout context hook may wait briefly for a brief. */
+  pendingReasoningAssistTurn(sessionId: string, turnId: string, graceMs: number): Promise<boolean>;
+  /** Set a bounded ephemeral reasoning brief for one private Scout turn. */
+  setReasoningAssistBrief(
+    sessionId: string,
+    turnId: string,
+    brief: string,
+  ): Promise<ReasoningAssistBriefDeliveryResult>;
+  /** Clear one turn's ephemeral reasoning brief, or all briefs for a session. */
+  clearReasoningAssistBrief(sessionId: string, turnId?: string): Promise<ReasoningAssistBriefClearResult>;
 
   // --- Shell (capabilities.shell) ---
   executeShell(sessionId: string, command: string, model?: ModelRef): Promise<void>;

@@ -20,7 +20,8 @@ const FAILURE_BOUNDARY =
 const CONCLUSIONS: Readonly<Record<ReasoningReviewStatus, string>> = {
   not_reviewed: "No reasoning review was requested.",
   reviewing: "Reasoning review is in progress.",
-  structurally_checked: "The recorded argument supports this conclusion under the stated assumptions.",
+  structurally_checked:
+    "The argument structure was recorded; this does not establish that the conclusion follows or is true.",
   conditional: "This conclusion depends on the stated assumption or unverified evidence.",
   unresolved: "The conclusion is not established; the central open objection is unresolved.",
   refuted: "The proposed claim fails because the recorded structure does not support it.",

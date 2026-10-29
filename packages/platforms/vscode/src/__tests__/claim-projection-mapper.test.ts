@@ -24,6 +24,9 @@ describe("private claim projection mapping", () => {
   it("allows structural success only with adequate evidence", () => {
     const result = mapClaimProjectionToSummary(input({ status: "structurally_checked" }));
     expect(result.status).toBe("structurally_checked");
+    expect(result.conclusion).toBe(
+      "The argument structure was recorded; this does not establish that the conclusion follows or is true.",
+    );
     expect(result.evidenceStatus).toBe("not_required");
     expect(result.invocation).toBe("manual");
     expect(result.interpretiveBoundary).toMatch(/does not establish external truth/);
@@ -47,7 +50,7 @@ describe("private claim projection mapping", () => {
   });
 
   it.each(["unavailable", "audit_failed"] as const)("maps %s without a structural claim", (status) => {
-    const result = mapClaimProjectionToSummary(input({ status }));
+    const result = mapClaimProjectionToSummary(input({ status, reason: "unsupported" }));
     expect(result.status).toBe(status);
     expect(result.conclusion).not.toMatch(/supports this conclusion/);
     expect(result.interpretiveBoundary).toMatch(/does not establish the truth/);
@@ -64,7 +67,7 @@ describe("private claim projection mapping", () => {
   });
 
   it("does not retain provider-shaped outcome data", () => {
-    const result = mapClaimProjectionToSummary(input({ status: "unavailable" }));
+    const result = mapClaimProjectionToSummary(input({ status: "unavailable", reason: "unsupported" }));
     expect(JSON.stringify(result)).not.toMatch(/argv|path|command|ledger|prompt|credential|source packet/);
   });
 

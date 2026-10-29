@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { buildChatOverlay } from "../../../../agents/opencode/src/opencode-agent";
 
 const readSource = (relativePath: string): string => readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
@@ -27,6 +28,16 @@ const reasoningAssistSources = [
   readSource("../vibefeld/reasoning-assist-structure-recorder.ts"),
 ];
 const restrictedReviewAdapterSource = readSource("../vibefeld/restricted-review-adapter.ts");
+const restrictedReviewHolderSource = readSource("../vibefeld/restricted-review-holder.ts");
+const nativeAgents = buildChatOverlay(undefined, undefined, undefined).agents as Record<
+  string,
+  {
+    mode: string;
+    hidden?: boolean;
+    steps?: number;
+    permissions: Array<{ action: string; resource: string; effect: string }>;
+  }
+>;
 
 describe("Vibefeld activation wiring security negatives", () => {
   it("keeps runtime inputs host-owned and operations fixed", () => {
@@ -76,8 +87,24 @@ describe("Vibefeld activation wiring security negatives", () => {
       /(?:af|vibefeld)[\s\S]{0,160}(?:pluginSources|mcpOverlay|customTools|agentOverlay|IAgent)/iu,
     );
     expect(extensionSource).not.toMatch(/(?:runAf|invokeAf|af(?:Argv|Executable|Workspace|Environment))/u);
-    expect(agentSource).toMatch(/"\*":\s*"deny"/u);
-    expect(agentSource).toMatch(/"chat-research-worker":\s*"allow"/u);
+    expect(nativeAgents.scout).toMatchObject({ mode: "all" });
+    expect(nativeAgents.scout.permissions).toContainEqual({ action: "*", resource: "*", effect: "deny" });
+    expect(nativeAgents.scout.permissions).toContainEqual({
+      action: "subagent",
+      resource: "chat-research-worker",
+      effect: "allow",
+    });
+    expect(nativeAgents.scout.permissions).not.toContainEqual(
+      expect.objectContaining({ action: "subagent", resource: "*", effect: "allow" }),
+    );
+    for (const target of ["chat-reasoning-critic", "chat-reasoning-verifier"]) {
+      expect(nativeAgents[target]).toMatchObject({ mode: "subagent", hidden: true, steps: 2 });
+      expect(nativeAgents[target]!.permissions.every(({ effect }) => effect === "deny")).toBe(true);
+      expect(nativeAgents[target]!.permissions).toContainEqual({ action: "execute", resource: "*", effect: "deny" });
+      expect(nativeAgents.build.permissions).not.toContainEqual(
+        expect.objectContaining({ action: "subagent", effect: "allow" }),
+      );
+    }
     expect(writePrompt).toContain("Write never uses task or subagent workflows");
   });
 
@@ -173,21 +200,20 @@ describe("Reasoning-assist activation negatives", () => {
     expect(launchConfigSource).toMatch(/pluginSources\?:/);
     expect(launchConfigSource).toMatch(/mcpOverlay\?:/);
 
-    // The extension's assist touchpoints stay bounded: the typed adapter and
-    // recorder injected into the provider options plus the provider lifecycle
-    // hook. Every reasoningAssist identifier stays within that bounded set,
-    // and the wiring reaches no session, configuration, workspace, profile, or
-    // sandbox API.
+    // AF structure recording is the only activation-scoped assist dependency;
+    // restricted adapters belong to the connection-scoped holder. Neither
+    // boundary gains direct configuration, workspace, or process authority;
+    // plugin availability is a boolean only and grants no launch/lifecycle authority.
     expect(new Set(extensionSource.match(/reasoningAssist\w*/gu) ?? [])).toEqual(
-      new Set(["reasoningAssistAdapter", "reasoningAssistDisposal", "reasoningAssistStructureRecorder"]),
+      new Set(["reasoningAssistStructureRecorder", "reasoningAssistPluginAvailable"]),
     );
-    const assistWiring = extensionSource
-      .split("\n")
-      .filter((line) => line.includes("reasoningAssist"))
-      .join("\n");
-    expect(assistWiring).toContain("cancelAllReasoningAssistWork()");
-    expect(assistWiring).not.toMatch(
-      /getConfiguration|configuration\.update|workspace|nono|profile|sandbox|grant|permission|session/iu,
+    expect(extensionSource).toMatch(/reasoningAssistPluginAvailable:\s*reasoningContextPlugin\.available/u);
+    expect(extensionSource).toContain("getReasoningAssistAdapter: () => restrictedReviewHolder?.getSnapshot().adapter");
+    expect(extensionSource).toMatch(
+      /cancelWork: \(\) => \{\s*chatViewProvider\?\.cancelAllReasoningAssistWork\(\);\s*chatViewProvider\?\.cancelAllReasoningReviewWork\(\);\s*\},/u,
+    );
+    expect(restrictedReviewHolderSource).not.toMatch(
+      /getConfiguration|configuration\.update|workspace|nono|profile|sandbox|grant|permission|spawn\s*\(/iu,
     );
   });
 });

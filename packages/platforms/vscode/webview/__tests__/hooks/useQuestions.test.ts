@@ -98,6 +98,24 @@ describe("useQuestions", () => {
     });
   });
 
+  it("clears old pending questions on reconnect and restores only active-session asks", () => {
+    const ref = createSessionRef({ id: "active" } as ChatSession);
+    const { result } = renderHook(() => useQuestions(ref));
+    const ask = (id: string, sessionID: string) =>
+      result.current.handleQuestionEvent({
+        type: "question.asked",
+        properties: { id, sessionID, questions: [{ question: "Q", header: "H", options: [] }] },
+      } as unknown as AgentEvent);
+    act(() => ask("old", "active"));
+    act(() =>
+      result.current.handleQuestionEvent({ type: "server.connected", properties: {} } as unknown as AgentEvent),
+    );
+    expect(result.current.questions.size).toBe(0);
+    act(() => ask("restored", "active"));
+    act(() => ask("foreign", "other"));
+    expect([...result.current.questions.keys()]).toEqual(["restored"]);
+  });
+
   // question.replied
   context("question.replied イベントを受信した場合", () => {
     // removes question from the map

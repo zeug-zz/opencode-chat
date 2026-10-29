@@ -124,7 +124,7 @@ describe.skipIf(!canRun)(
         maxSteps: 4,
         dynamicToolNames: [dynamicToolName],
       };
-      const overlay = buildChatOverlay([], undefined, undefined, undefined, undefined, false, "sdk", restrictedReview);
+      const overlay = buildChatOverlay([], undefined, undefined, undefined, undefined, "sdk", restrictedReview);
       agent = new OpenCodeAgent({
         workspacePath: workspace,
         backend: "sdk",

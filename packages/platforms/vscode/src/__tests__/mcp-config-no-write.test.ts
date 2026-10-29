@@ -94,6 +94,11 @@ describe("Chat MCP config ownership", () => {
     "does not write config files across a %s backend toggle and companion restart",
     async (backend) => {
       harness.backend = backend;
+      harness.connect.mockClear();
+      harness.disconnect.mockClear();
+      harness.stopForReconnect.mockClear();
+      harness.updateLaunchConfiguration.mockClear();
+      harness.launchConfigurations.splice(0);
       await mkdir("tmp", { recursive: true });
       const fixtureRoot = await mkdtemp("tmp/chat-mcp-no-write-");
       const previousEnvironment = {
@@ -127,11 +132,31 @@ describe("Chat MCP config ownership", () => {
         ];
         await writeFile(
           configFiles[0],
-          JSON.stringify({ mcp: { globalServer: { command: "global-command" } } }, null, 2),
+          JSON.stringify(
+            {
+              mcp: {
+                servers: {
+                  globalServer: { type: "local", command: ["global-command"], disabled: true },
+                },
+              },
+            },
+            null,
+            2,
+          ),
         );
         await writeFile(
           configFiles[2],
-          JSON.stringify({ mcp: { workspaceServer: { command: "workspace-command", enabled: false } } }, null, 2),
+          JSON.stringify(
+            {
+              mcp: {
+                servers: {
+                  workspaceServer: { type: "local", command: ["workspace-command"], disabled: true },
+                },
+              },
+            },
+            null,
+            2,
+          ),
         );
         await writeFile(
           configFiles[4],
@@ -142,9 +167,12 @@ describe("Chat MCP config ownership", () => {
         process.env.XDG_DATA_HOME = resolve(join(fixtureRoot, "data"));
         process.env.XDG_CACHE_HOME = resolve(join(fixtureRoot, "cache"));
         process.env.TMPDIR = resolve(join(fixtureRoot, "temp"));
-        vscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot, scheme: "file" } }] as never;
+        Object.defineProperty(vscode.workspace, "workspaceFolders", {
+          configurable: true,
+          value: [{ uri: vscode.Uri.file(workspaceRoot), name: "workspace", index: 0 }],
+        });
         vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-          (section: string) =>
+          (section?: string) =>
             ({
               get: vi.fn((key: string) => {
                 if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
@@ -207,9 +235,14 @@ describe("Chat MCP config ownership", () => {
           expect.objectContaining({
             mcpOverlay: {
               mcp: {
-                globalServer: { enabled: false },
-                workspaceServer: { enabled: true },
-                dotMcpServer: { enabled: false },
+                servers: {
+                  globalServer: { type: "local", command: ["global-command"], disabled: true },
+                  workspaceServer: {
+                    type: "local",
+                    command: ["workspace-command"],
+                    disabled: false,
+                  },
+                },
               },
             },
           }),
@@ -218,13 +251,25 @@ describe("Chat MCP config ownership", () => {
           expect.objectContaining({
             mcpOverlay: {
               mcp: {
-                globalServer: { enabled: false },
-                workspaceServer: { enabled: true },
-                dotMcpServer: { enabled: false },
+                servers: {
+                  globalServer: { type: "local", command: ["global-command"], disabled: true },
+                  workspaceServer: {
+                    type: "local",
+                    command: ["workspace-command"],
+                    disabled: false,
+                  },
+                },
               },
             },
           }),
         );
+        expect(harness.launchConfigurations.at(-1)).not.toHaveProperty(
+          "mcpOverlay.mcp.servers.workspaceServer.enabled",
+        );
+        expect(harness.launchConfigurations.at(-1)).not.toHaveProperty(
+          "mcpOverlay.mcp.servers.workspaceServer.codemode",
+        );
+        expect(harness.launchConfigurations.at(-1)).not.toHaveProperty("mcpOverlay.mcp.servers.dotMcpServer");
 
         const after = await Promise.all(configFiles.map((filePath) => snapshot(filePath)));
         expect(after).toEqual(before);
@@ -239,7 +284,10 @@ describe("Chat MCP config ownership", () => {
         }
       } finally {
         extension?.deactivate();
-        vscode.workspace.workspaceFolders = originalWorkspaceFolders;
+        Object.defineProperty(vscode.workspace, "workspaceFolders", {
+          configurable: true,
+          value: originalWorkspaceFolders,
+        });
         vi.mocked(vscode.workspace.getConfiguration).mockReset();
         vi.mocked(vscode.window.registerWebviewViewProvider).mockReset();
         for (const [key, value] of Object.entries(previousEnvironment)) {
@@ -247,6 +295,11 @@ describe("Chat MCP config ownership", () => {
           else process.env[key] = value;
         }
         await rm(fixtureRoot, { recursive: true, force: true });
+        harness.connect.mockClear();
+        harness.disconnect.mockClear();
+        harness.stopForReconnect.mockClear();
+        harness.updateLaunchConfiguration.mockClear();
+        harness.launchConfigurations.splice(0);
       }
     },
   );

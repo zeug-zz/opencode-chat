@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Reasoning assist uses an ephemeral current-turn brief through Scribe's bundled private plugin; completed-answer review is available under secondary **More actions**, without dedicated thinking/review Markdown-copy controls.
+- **Breaking:** Scribe now runs on OpenCode V2 only. Production version eligibility accepts stable canonical OpenCode versions `>=2.1.3` and `<3.0.0`; exact patch equality is not required. This does not qualify every future release: the private authenticated child PID, endpoint, version/location binding, and response-contract checks remain fail-closed. V1 support is removed.
+- Native V2 Code Mode (`execute`/search over permitted tools) for Scout, the research worker and Write; restricted reviewers stay tool-free.
+- Hindsight memory is detected through the exact approved plugin being active in the native plugin list (V2 has no tool-ID catalog).
+- Plugin load failures are isolated per plugin by OpenCode V2; the former plugin-free retry was removed.
+- MCP servers denied by managed/system configuration now show as locked.
+
+### Removed
+
+- Session share/unshare (no V2 API); the buttons are hidden.
+
+### Fixed
+
+- Catalog reads retry only the exact transient plugin-activation error with a bounded wait; native model IDs are preserved, and sandbox status refresh no longer gates launch status. This does not establish that a host-side sandbox stall or Claude hang is fixed.
+- Startup failures are reported once with a bounded status instead of accumulating repeated not-connected request errors; this does not claim that the observed Claude/catalog issue's live root cause is fixed.
+- Added bounded, redacted launch, prompt-stage, and plugin-activation diagnostics in the **Output → OpenCode Scribe** channel; an optional Hindsight inventory probe is bounded separately from launch.
+- Session diffs show binary or capped files as "content unavailable" instead of failing.
+- Independent TUI handoff deletes its temporary session export after import.
+
 ## [0.17.1] - 2026-09-26
 
 ### Fixed

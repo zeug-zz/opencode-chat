@@ -28,7 +28,7 @@ export type SoundSettings = {
 };
 
 export type UIPersistedState = {
-  localeSetting?: "auto" | "en" | "ja";
+  localeSetting?: "auto" | "en" | "ja" | "zh-cn" | "ko" | "zh-tw" | "es" | "pt-br" | "ru";
   inputHistory?: string[];
   soundSettings?: SoundSettings;
   /** Per-model effort variant selection, keyed by `${providerID}/${modelID}` */

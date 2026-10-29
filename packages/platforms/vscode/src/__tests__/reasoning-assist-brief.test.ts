@@ -8,10 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  appendReasoningAssistBrief,
   composeReasoningAssistBrief,
   composeReasoningAssistSummary,
-  REASONING_ASSIST_BRIEF_DELIMITER,
   REASONING_ASSIST_BRIEF_MAX_CHARS,
   type ReasoningAssistBriefInput,
 } from "../vibefeld/reasoning-assist-brief";
@@ -19,22 +17,9 @@ import {
 const TRAILER =
   "Write the user's requested response directly. Do not mention this brief unless it materially improves clarity. Do not state that a claim is proven, factually verified, or formally checked merely because it appears in the brief.";
 
-const OBJECTION_ASSUMPTION = {
-  target: { kind: "assumption" as const, id: "assumption-1" },
-  severity: "material" as const,
-  objection: "The premise applies only to a narrower case.",
-};
-
-const OBJECTION_CONCLUSION = {
-  target: { kind: "candidate_conclusion" as const, id: "claim-conclusion" },
-  severity: "minor" as const,
-  objection: "The conclusion needs an explicit qualifier.",
-};
-
 type InputOverrides = {
   facts?: ReasoningAssistBriefInput["facts"];
   afState?: ReasoningAssistBriefInput["afState"];
-  objections?: ReasoningAssistBriefInput["objections"];
 };
 
 function makeInput(overrides: InputOverrides = {}): ReasoningAssistBriefInput {
@@ -50,7 +35,6 @@ function makeInput(overrides: InputOverrides = {}): ReasoningAssistBriefInput {
       uncertainty: ["The observation is bounded to one case.", "The calculation assumes constant rates."],
     },
     afState: "recorded",
-    objections: [OBJECTION_ASSUMPTION, OBJECTION_CONCLUSION],
     ...overrides,
   };
 }
@@ -70,9 +54,6 @@ describe("composeReasoningAssistBrief", () => {
         "- The premise applies to this case.",
         "- No other premise changes the result.",
         `Evidence boundary: ${EXPECTED_BOUNDARY}`,
-        "Independent objections to address or qualify:",
-        "- The premise applies only to a narrower case.",
-        "- The conclusion needs an explicit qualifier.",
         "AF fact: structure recorded",
         "",
         TRAILER,
@@ -115,7 +96,6 @@ describe("composeReasoningAssistBrief", () => {
           ],
           uncertainty: [],
         },
-        objections: [],
       }),
     );
 
@@ -125,7 +105,7 @@ describe("composeReasoningAssistBrief", () => {
       "Evidence boundary: 1 not required, 1 source recorded, 1 unverified, 1 human verified, 2 conflicted",
     );
     expect(brief).not.toContain("Material assumptions:");
-    expect(brief).not.toContain("Independent objections");
+    expect(brief).not.toMatch(/critic|objection/i);
   });
 
   it("joins uncertainty items with a semicolon and omits an empty boundary", () => {
@@ -137,7 +117,6 @@ describe("composeReasoningAssistBrief", () => {
           evidenceNeeds: [],
           uncertainty: ["First uncertainty.", "Second uncertainty."],
         },
-        objections: [],
       }),
     );
     expect(withUncertainty).toContain("Evidence boundary: First uncertainty.; Second uncertainty.");
@@ -150,28 +129,15 @@ describe("composeReasoningAssistBrief", () => {
           evidenceNeeds: [],
           uncertainty: [],
         },
-        objections: [],
       }),
     );
     expect(emptyBoundary).not.toContain("Evidence boundary:");
   });
 
-  it("bounds by omission and never truncates a statement, uncertainty item, or objection", () => {
+  it("bounds by omission and never truncates a statement or uncertainty item", () => {
     const conclusion = `The conclusion rests on a bounded chain: ${"c".repeat(430)}`;
     const assumptions = Array.from({ length: 8 }, (_, index) => `Premise ${index + 1}: ${"a".repeat(490)}`);
     const uncertainty = Array.from({ length: 5 }, (_, index) => `Uncertainty item ${index + 1}: ${"u".repeat(230)}`);
-    const objections = [
-      {
-        target: { kind: "assumption" as const, id: "assumption-1" },
-        severity: "material" as const,
-        objection: `Objection one: ${"o".repeat(490)}`,
-      },
-      {
-        target: { kind: "candidate_conclusion" as const, id: "claim-conclusion" },
-        severity: "minor" as const,
-        objection: `Objection two: ${"p".repeat(490)}`,
-      },
-    ];
     const brief = composeReasoningAssistBrief(
       makeInput({
         facts: {
@@ -180,7 +146,6 @@ describe("composeReasoningAssistBrief", () => {
           evidenceNeeds: [{ sourceKind: "observation", status: "source_recorded" }],
           uncertainty,
         },
-        objections,
       }),
     );
 
@@ -190,7 +155,7 @@ describe("composeReasoningAssistBrief", () => {
     expect(composed.includes(conclusion)).toBe(true);
 
     // Every entry is either present whole or absent entirely.
-    for (const entry of [...assumptions, ...uncertainty, ...objections.map(({ objection }) => objection)]) {
+    for (const entry of [...assumptions, ...uncertainty]) {
       const included = composed.includes(entry);
       expect(included || !composed.includes(entry.slice(0, 48))).toBe(true);
     }
@@ -199,7 +164,7 @@ describe("composeReasoningAssistBrief", () => {
     expect(assumptions.some((statement) => composed.includes(statement))).toBe(true);
     expect(assumptions.some((statement) => !composed.includes(statement))).toBe(true);
     expect(uncertainty.some((item) => !composed.includes(item))).toBe(true);
-    expect(objections.every(({ objection }) => !composed.includes(objection))).toBe(true);
+    expect(composed).not.toMatch(/critic|objection/i);
   });
 
   it("returns no brief when only the mandatory content exceeds the bound", () => {
@@ -222,19 +187,16 @@ describe("composeReasoningAssistBrief", () => {
 });
 
 describe("composeReasoningAssistSummary", () => {
-  it("maps validated facts and objection target kinds into the compact summary", () => {
+  it("maps only validated facts and AF structure into the compact summary", () => {
     const summary = composeReasoningAssistSummary(makeInput());
 
     expect(summary).toEqual({
       candidateConclusion: "The conclusion follows from the recorded premise.",
       assumptions: ["The premise applies to this case.", "No other premise changes the result."],
       evidenceBoundary: EXPECTED_BOUNDARY,
-      criticObjections: [
-        { target: "assumption", objection: "The premise applies only to a narrower case." },
-        { target: "candidate_conclusion", objection: "The conclusion needs an explicit qualifier." },
-      ],
       afFact: "recorded_structure",
     });
+    expect(JSON.stringify(summary)).not.toMatch(/critic|objection/i);
   });
 
   it("reports the evidence boundary exactly as the brief was given it", () => {
@@ -243,31 +205,6 @@ describe("composeReasoningAssistSummary", () => {
     const summary = composeReasoningAssistSummary(input);
 
     expect(brief).toContain(`Evidence boundary: ${summary?.evidenceBoundary}`);
-  });
-
-  it("keeps zero, one, and two objections as exact tuple lengths", () => {
-    const none = composeReasoningAssistSummary(makeInput({ objections: [] }));
-    expect(none?.criticObjections).toHaveLength(0);
-    expect(none?.criticObjections).toEqual([]);
-
-    const one = composeReasoningAssistSummary(makeInput({ objections: [OBJECTION_ASSUMPTION] }));
-    expect(one?.criticObjections).toHaveLength(1);
-    expect(one?.criticObjections).toEqual([
-      { target: "assumption", objection: "The premise applies only to a narrower case." },
-    ]);
-
-    const two = composeReasoningAssistSummary(makeInput({ objections: [OBJECTION_ASSUMPTION, OBJECTION_CONCLUSION] }));
-    expect(two?.criticObjections).toHaveLength(2);
-    expect(two?.criticObjections).toEqual([
-      { target: "assumption", objection: "The premise applies only to a narrower case." },
-      { target: "candidate_conclusion", objection: "The conclusion needs an explicit qualifier." },
-    ]);
-
-    // More than two validated objections are still bounded by the core tuple.
-    const three = composeReasoningAssistSummary(
-      makeInput({ objections: [OBJECTION_ASSUMPTION, OBJECTION_CONCLUSION, OBJECTION_ASSUMPTION] }),
-    );
-    expect(three?.criticObjections).toHaveLength(2);
   });
 
   it("reports the AF fact as absent unless structure was recorded", () => {
@@ -290,24 +227,6 @@ describe("composeReasoningAssistSummary", () => {
 
     expect(composeReasoningAssistBrief(input)).toBeUndefined();
     expect(composeReasoningAssistSummary(input)).toBeUndefined();
-  });
-});
-
-describe("appendReasoningAssistBrief", () => {
-  it("uses the brief alone when the base system instruction is undefined or empty", () => {
-    const brief = composeReasoningAssistBrief(makeInput()) ?? "";
-
-    expect(appendReasoningAssistBrief(undefined, brief)).toBe(brief);
-    expect(appendReasoningAssistBrief("", brief)).toBe(brief);
-  });
-
-  it("appends the brief to an existing base with the fixed delimiter", () => {
-    const brief = composeReasoningAssistBrief(makeInput()) ?? "";
-
-    expect(appendReasoningAssistBrief("chat prompt", brief)).toBe(
-      `chat prompt${REASONING_ASSIST_BRIEF_DELIMITER}${brief}`,
-    );
-    expect(appendReasoningAssistBrief("chat prompt", brief).startsWith("chat prompt")).toBe(true);
   });
 });
 

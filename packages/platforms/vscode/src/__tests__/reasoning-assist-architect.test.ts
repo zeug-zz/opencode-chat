@@ -13,6 +13,7 @@ import {
   type ArchitectPacketInput,
   buildArchitectPacket,
   parseArchitectResult,
+  parseArchitectResultWithDetails,
 } from "../vibefeld/reasoning-assist-architect";
 
 const readSource = (relativePath: string): string => readFileSync(new URL(relativePath, import.meta.url), "utf8");
@@ -41,6 +42,14 @@ const validMap = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("reasoning-assist architect packet", () => {
+  it("omits absent recent-turn context without making the packet ineligible", () => {
+    const result = buildArchitectPacket({ userText: "A bounded user question." });
+    expect(result.kind).toBe("packet");
+    if (result.kind !== "packet") return;
+    expect(result.packet).toContain("A bounded user question.");
+    expect(result.packet).not.toContain("RECENT SAME-SESSION CONTEXT:");
+  });
+
   it("renders one bounded packet from the allowed inputs only", () => {
     const result = buildArchitectPacket({
       userText: "Should the recorded premise support the conclusion?",
@@ -155,6 +164,40 @@ describe("reasoning-assist architect packet", () => {
 });
 
 describe("reasoning-assist architect result parser", () => {
+  it("accepts the exact shipped connected-map example and keeps disconnected or reversed maps invalid", () => {
+    const example = {
+      kind: "argument",
+      conclusionId: "c",
+      claims: [
+        { id: "c", class: "deductive", statement: "X is B.", dependsOn: ["p1", "p2"] },
+        { id: "p1", class: "deductive", statement: "All A are B.", dependsOn: [] },
+        { id: "p2", class: "deductive", statement: "X is A.", dependsOn: [] },
+      ],
+      assumptions: [],
+      evidenceNeeds: [],
+      uncertainty: [],
+    };
+    const overlaySource = readSource("../../../../agents/opencode/src/restricted-review-overlay.ts");
+    expect(overlaySource).toContain(JSON.stringify(example));
+    const result = parseArchitectResult(JSON.stringify(example));
+    expect(result.kind).toBe("argument");
+    if (result.kind !== "argument") return;
+    expect(result.graph.nodes).toHaveLength(3);
+    expect(result.graph.logicalDependencies).toHaveLength(2);
+
+    const reversed = structuredClone(example);
+    reversed.claims = reversed.claims.map((claim) => ({
+      ...claim,
+      dependsOn: claim.id === "p1" || claim.id === "p2" ? ["c"] : [],
+    }));
+    expect(parseArchitectResult(JSON.stringify(reversed))).toEqual({ kind: "no-assist", reason: "missing-dependency" });
+    const disconnected = { ...example, claims: [...example.claims, { ...example.claims[2], id: "x", dependsOn: [] }] };
+    expect(parseArchitectResult(JSON.stringify(disconnected))).toEqual({
+      kind: "no-assist",
+      reason: "missing-dependency",
+    });
+  });
+
   it("accepts exactly the ordinary result", () => {
     const result = parseArchitectResult('{ "kind": "ordinary" }');
     expect(result).toEqual({ kind: "ordinary" });
@@ -164,6 +207,42 @@ describe("reasoning-assist architect result parser", () => {
       kind: "no-assist",
       reason: "malformed",
     });
+  });
+
+  it("accepts one optional JSON-labeled or unlabeled outer fence with the same strict result", () => {
+    const body = JSON.stringify(validMap());
+    const bare = parseArchitectResult(body);
+
+    for (const fenced of [
+      `\`\`\`json\n${body}\n\`\`\``,
+      `\`\`\`\n${body}\n\`\`\``,
+      ` \n\`\`\`json\n${body}\n\`\`\`\n \t`,
+    ]) {
+      expect(parseArchitectResult(fenced)).toEqual(bare);
+    }
+  });
+
+  it.each([
+    ["prose before", `A result follows: ${JSON.stringify({ kind: "ordinary" })}`],
+    ["prose after", `${JSON.stringify({ kind: "ordinary" })} is the result.`],
+    [
+      "two fenced blocks",
+      `\`\`\`json\n${JSON.stringify({ kind: "ordinary" })}\n\`\`\`\n\n\`\`\`json\n${JSON.stringify({ kind: "ordinary" })}\n\`\`\``,
+    ],
+  ])("rejects %s rather than extracting JSON", (_label, text) => {
+    expect(parseArchitectResult(text)).toEqual({ kind: "no-assist", reason: "malformed" });
+  });
+
+  it("checks the original length before parsing a fenced body", () => {
+    const body = `${JSON.stringify({ kind: "ordinary" })}${" ".repeat(ARCHITECT_RESULT_MAX_CHARS)}`;
+    const fenced = `\`\`\`json\n${body}\n\`\`\``;
+    expect(fenced.length).toBeGreaterThan(ARCHITECT_RESULT_MAX_CHARS);
+    expect(parseArchitectResult(fenced)).toEqual({ kind: "no-assist", reason: "over-limit" });
+  });
+
+  it("keeps exact schema validation when a valid fenced body has extra keys", () => {
+    const fenced = `\`\`\`json\n${JSON.stringify({ ...validMap(), extra: true })}\n\`\`\``;
+    expect(parseArchitectResult(fenced)).toEqual({ kind: "no-assist", reason: "malformed" });
   });
 
   it("converts a valid argument map into a graph that passes private validation", () => {
@@ -215,6 +294,82 @@ describe("reasoning-assist architect result parser", () => {
     expect(result.graph.logicalDependencies).toEqual([]);
     expect(result.graph.evidenceReferences).toEqual([]);
     expect(result.facts.evidenceNeeds).toEqual([]);
+  });
+
+  it("reports only a fixed first-match detail for missing dependency graph failures", () => {
+    const sentinel = "UNIQUE_DEPENDENCY_GRAPH_SENTINEL";
+    const claim = { id: "claim-a", class: "deductive", statement: `${sentinel} statement`, dependsOn: [] };
+    const map = (overrides: Record<string, unknown> = {}) => ({
+      kind: "argument",
+      conclusionId: "claim-a",
+      claims: [claim],
+      assumptions: [],
+      evidenceNeeds: [],
+      uncertainty: [],
+      ...overrides,
+    });
+    const cases = [
+      {
+        subreason: "dependency-unknown-conclusion",
+        value: map({
+          conclusionId: `${sentinel}-conclusion`,
+          claims: [{ ...claim, dependsOn: [`${sentinel}-target`] }],
+        }),
+      },
+      {
+        subreason: "dependency-target-assumption",
+        value: map({
+          claims: [{ ...claim, dependsOn: [`${sentinel}-assumption`, `${sentinel}-target`] }],
+          assumptions: [{ id: `${sentinel}-assumption`, claimId: "claim-a", statement: `${sentinel} assumption` }],
+        }),
+      },
+      {
+        subreason: "dependency-unknown-target",
+        value: map({
+          claims: [{ ...claim, dependsOn: [`${sentinel}-target`] }],
+          assumptions: [{ id: "assumption-a", claimId: `${sentinel}-claim`, statement: `${sentinel} assumption` }],
+        }),
+      },
+      {
+        subreason: "dependency-unknown-assumption-claim",
+        value: map({
+          assumptions: [{ id: "assumption-a", claimId: `${sentinel}-claim`, statement: `${sentinel} assumption` }],
+          evidenceNeeds: [{ claimId: `${sentinel}-claim`, sourceKind: "citation", status: "unverified" }],
+        }),
+      },
+      {
+        subreason: "dependency-unknown-evidence-claim",
+        value: map({
+          evidenceNeeds: [{ claimId: `${sentinel}-claim`, sourceKind: "citation", status: "unverified" }],
+        }),
+      },
+      {
+        subreason: "dependency-unreachable-claim",
+        value: map({
+          claims: [claim, { ...claim, id: `${sentinel}-unreachable` }],
+        }),
+      },
+    ] as const;
+
+    for (const { subreason, value } of cases) {
+      const details = parseArchitectResultWithDetails(JSON.stringify(value));
+      expect(details.result).toEqual({ kind: "no-assist", reason: "missing-dependency" });
+      expect(details.dependencySubreason).toBe(subreason);
+      expect(JSON.stringify(details)).not.toContain(sentinel);
+    }
+
+    const validText = JSON.stringify({
+      kind: "argument",
+      conclusionId: "claim-a",
+      claims: [claim],
+      assumptions: [],
+      evidenceNeeds: [],
+      uncertainty: [],
+    });
+    const validDetails = parseArchitectResultWithDetails(validText);
+    expect(validDetails.result).toEqual(parseArchitectResult(validText));
+    expect(validDetails.dependencySubreason).toBeUndefined();
+    expect(validDetails.normalizationApplied).toBe(false);
   });
 
   it.each([

@@ -23,6 +23,9 @@ export const ja: LocaleSchema = {
   "input.shellMode": "シェルモード",
   "input.placeholder.shell": "シェルコマンドを入力...",
   "input.settings": "設定",
+  "input.reasoningReviewOn": "推論レビュー：オン",
+  "input.reasoningReviewOff": "推論レビュー：オフ",
+  "input.reasoningReviewBlocked": "ワークスペース設定により推論レビューは無効です",
   "input.stop": "停止",
   "input.send": "送信",
   "input.queued": (count: number) => `キュー: ${count}`,
@@ -37,6 +40,7 @@ export const ja: LocaleSchema = {
   "message.thinking": "思考中…",
   "message.toggleThought": "思考の詳細を切り替え",
   "message.copyMarkdown": "マークダウンをコピー",
+  "message.moreActions": "その他のアクション",
 
   // MessagesArea
   "checkpoint.revertTitle": "ここまで巻き戻す",
@@ -79,6 +83,7 @@ export const ja: LocaleSchema = {
   "tool.search": "検索",
   "tool.tool": "ツール",
   "tool.toggleDetails": "詳細を切り替え",
+  "tool.outputUnavailable": "[ツールの出力を表示できません]",
   "tool.completed": (done: number, total: number) => `${done}/${total} 完了`,
   "tool.moreLines": (n: number) => `… 他 ${n} 行`,
   "tool.addLines": (n: number) => `+${n} 行`,
@@ -115,6 +120,7 @@ export const ja: LocaleSchema = {
   "config.mcpEmpty": "MCPサーバーが設定されていません。プロジェクト設定またはグローバル設定から設定してください。",
   "config.mcpTrust":
     "ユーザーがインストールしたMCPツールはScoutの編集/シェル拒否によってサンドボックス化されていません。",
+  "config.mcpLocked": "システムまたは管理ポリシーによりブロックされています。",
 
   // ToolConfigPanel
   "config.title": "設定",
@@ -145,6 +151,38 @@ export const ja: LocaleSchema = {
     "推論レビューのランタイムが利用可能なとき、このホストで応答をレビューします。ワークスペースのオプトアウトは、このワークスペースのグローバル設定より優先されます。",
   "config.reasoningReviewEffective": (enabled: boolean) =>
     enabled ? "このワークスペースで有効" : "このワークスペースでは無効",
+  "reasoningReview.action": "議論をレビュー",
+  "reasoningReview.cancel": "レビューをキャンセル",
+  "reasoningReview.cancelling": "レビューをキャンセル中…",
+  "reasoningReview.inProgress": "レビュー中",
+  "reasoningReview.cancelled": "レビューをキャンセルしました。",
+  "reasoningReview.resultLabel": "議論のレビュー",
+  "reasoningReview.boundaryLabel": "レビューの限界",
+  "reasoningReview.statusLabel": "状態",
+  "reasoningReview.evidenceLabel": "証拠",
+  "reasoningReview.assumptionsLabel": "前提",
+  "reasoningReview.challengesLabel": "未解決の異議",
+  "reasoningReview.status.notReviewed": "未レビュー",
+  "reasoningReview.status.reviewing": "レビュー中",
+  "reasoningReview.status.structurallyChecked": "構造を確認済み",
+  "reasoningReview.status.conditional": "条件付き",
+  "reasoningReview.status.unresolved": "未解決",
+  "reasoningReview.status.refuted": "反証済み",
+  "reasoningReview.status.blocked": "ブロック済み",
+  "reasoningReview.status.auditFailed": "レビューに失敗",
+  "reasoningReview.status.unavailable": "利用不可",
+  "reasoningReview.evidence.notAssessed": "未評価",
+  "reasoningReview.evidence.notRequired": "不要",
+  "reasoningReview.evidence.sourceRecorded": "情報源を記録済み",
+  "reasoningReview.evidence.unverified": "未検証",
+  "reasoningReview.evidence.humanVerified": "人が確認済み",
+  "reasoningReview.evidence.conflicted": "矛盾あり",
+  "reasoningReview.severity.critical": "重大",
+  "reasoningReview.severity.major": "大",
+  "reasoningReview.severity.minor": "小",
+  "reasoningReview.severity.note": "注記",
+  "reasoningReview.stage.claimProjection": "AF主張の投影",
+  "reasoningReview.stage.adversarialReview": "prover/verifierレビュー",
 
   // Reasoning assist lifecycle
   "reasoningAssist.title": "推論アシスト",
@@ -158,7 +196,6 @@ export const ja: LocaleSchema = {
   "reasoningAssist.candidateConclusion": "候補となる結論",
   "reasoningAssist.assumptions": "前提",
   "reasoningAssist.evidenceBoundary": "証拠の範囲",
-  "reasoningAssist.criticObjections": "対処する反論",
   "reasoningAssist.afRecordedStructure": "AFに記録された構造",
   "reasoningAssist.afNotAvailable": "AFの構造は利用できません",
 
@@ -190,6 +227,8 @@ export const ja: LocaleSchema = {
   "fileChanges.noChanges": "ファイル変更なし",
   "fileChanges.openDiff": "差分エディタで開く",
   "fileChanges.toggle": "ファイル変更",
+  "fileChanges.binaryUnavailable": "バイナリファイルのため内容を表示できません。",
+  "fileChanges.contentUnavailable": "この変更の内容は利用できません。",
 
   // Share
   "share.share": "セッションを共有",

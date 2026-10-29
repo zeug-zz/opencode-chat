@@ -227,7 +227,6 @@ describe("reasoning assist protocol", () => {
     candidateConclusion: "The proposal is useful within its stated boundary.",
     assumptions: ["The stated input remains in scope."],
     evidenceBoundary: "No external evidence is established.",
-    criticObjections: [{ target: "assumption", objection: "The assumption may not hold universally." }],
     afFact: "absent",
   };
 

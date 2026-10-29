@@ -74,7 +74,7 @@
 .userBubble .content {
   font-size: 13px;
   line-height: 1.5;
-  white-space: pre-wrap;
+  white-space: normal;
   word-wrap: break-word;
 }
 
@@ -133,6 +133,108 @@
 .copyMarkdownButton span {
   display: flex;
   pointer-events: none;
+}
+
+.reviewAction {
+  margin: 6px 0 0 4px;
+}
+
+.messageActions {
+  display: inline-block;
+  position: relative;
+  margin: 6px 0 0 4px;
+}
+
+.messageActions summary {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  list-style: none;
+}
+
+.messageActions summary::-webkit-details-marker {
+  display: none;
+}
+
+.messageActions summary:hover,
+.messageActions summary:focus-visible {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.messageActionsMenu {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  left: 0;
+  min-width: max-content;
+  padding: 4px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: var(--vscode-menu-background, var(--vscode-editor-background));
+}
+
+.reviewProgress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.reviewCancelled {
+  margin: 6px 0 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.reviewResult {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--vscode-panel-border);
+  color: var(--vscode-foreground);
+  font-size: 12px;
+}
+
+.reviewResult p,
+.reviewResult ul,
+.reviewResult h4 {
+  margin: 4px 0;
+}
+
+.reviewConclusion {
+  font-weight: 600;
+}
+
+.reviewFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 6px 0;
+}
+
+.reviewFacts div {
+  display: flex;
+  gap: 4px;
+}
+
+.reviewFacts dt {
+  color: var(--vscode-descriptionForeground);
+}
+
+.reviewFacts dd {
+  margin: 0;
+}
+
+.reviewResult ul {
+  padding-left: 1.5em;
 }
 
 /* --- Markdown in messages --- */
@@ -436,7 +538,7 @@
 /* Error state: concise parser message styled with error theme colour. */
 .content :global(.mermaid-error .mermaid-render-target) {
   color: var(--vscode-errorForeground);
-  white-space: pre-wrap;
+  white-space: normal;
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
 }
@@ -526,9 +628,28 @@
   color: var(--vscode-descriptionForeground);
   line-height: 1.5;
   white-space: pre-wrap;
+  user-select: text;
   word-wrap: break-word;
   contain: content;
   overflow-anchor: none;
+}
+
+.content .reasoningBody :global(.markdown) p,
+.content .reasoningBody :global(.markdown) ul,
+.content .reasoningBody :global(.markdown) ol {
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.content .reasoningBody :global(.markdown) h1,
+.content .reasoningBody :global(.markdown) h2,
+.content .reasoningBody :global(.markdown) h3,
+.content .reasoningBody :global(.markdown) h4,
+.content .reasoningBody :global(.markdown) h5,
+.content .reasoningBody :global(.markdown) h6 {
+  font-size: 1em;
+  margin-top: 6px;
+  margin-bottom: 4px;
 }
 
 /* --- Shared spinner & chevron (used by ReasoningPartView) --- */

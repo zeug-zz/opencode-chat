@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type {
-  ReasoningAssistAfFact,
-  ReasoningAssistObjectionTarget,
-  ReasoningAssistProgress,
-  ReasoningAssistStage,
-  ReasoningAssistSummary,
-} from "..";
+import type { ReasoningAssistAfFact, ReasoningAssistProgress, ReasoningAssistStage, ReasoningAssistSummary } from "..";
 
 const forbiddenFields = [
   "providerId",
@@ -38,23 +32,15 @@ describe("reasoning assist core contract", () => {
   });
 
   it("keeps the compact summary exact and display-safe", () => {
-    const target: ReasoningAssistObjectionTarget = "assumption";
     const afFact: ReasoningAssistAfFact = "recorded_structure";
     const summary: ReasoningAssistSummary = {
       candidateConclusion: "The proposal is useful if its stated assumption holds.",
       assumptions: ["The input remains within the stated scope."],
       evidenceBoundary: "External evidence is not established here.",
-      criticObjections: [{ target, objection: "The key assumption may not hold in every case." }],
       afFact,
     };
 
-    expect(Object.keys(summary).sort()).toEqual([
-      "afFact",
-      "assumptions",
-      "candidateConclusion",
-      "criticObjections",
-      "evidenceBoundary",
-    ]);
+    expect(Object.keys(summary).sort()).toEqual(["afFact", "assumptions", "candidateConclusion", "evidenceBoundary"]);
     expect(JSON.parse(JSON.stringify(summary))).toEqual(summary);
     for (const field of forbiddenFields) {
       expect(summary).not.toHaveProperty(field);

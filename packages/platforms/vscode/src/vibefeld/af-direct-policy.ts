@@ -180,7 +180,7 @@ export const createDefaultAfDirectLauncher = (seams: AfDirectLauncherSeams = {})
       };
       options.signal?.addEventListener("abort", abort, { once: true });
       const result = await new Promise<AfPolicyExecutionFact>((resolve) => {
-        spawned.once("error", () => resolve({ outcome: "signaled", signal: "SIGTERM" }));
+        spawned.once("error", () => resolve({ outcome: "signaled" }));
         spawned.once("exit", (code, signal) => {
           void Promise.all([stdout, stderr]).then(([out, err]) =>
             resolve({

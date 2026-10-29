@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ShellResultView } from "../../../components/molecules/ShellResultView";
+import { getStrings, LocaleProvider } from "../../../locales";
 import { createToolPart } from "../../factories";
 
 describe("ShellResultView", () => {
@@ -38,6 +39,54 @@ describe("ShellResultView", () => {
       ];
       render(<ShellResultView parts={parts} />);
       expect(screen.getByText("hello")).toBeInTheDocument();
+    });
+
+    it("structured V2 results render as compact escaped text and preserve falsy values", () => {
+      const parts = [
+        ...[{ result: ["<script>not markup</script>", { ok: true }] }, 0, false].map((output) =>
+          createToolPart("execute", {
+            state: { status: "completed", title: "execute", input: { command: "run" }, output },
+          } as any),
+        ),
+        ...[null, undefined].map((output) =>
+          createToolPart("execute", {
+            state: { status: "completed", title: "execute", input: { command: "run" }, output },
+          } as any),
+        ),
+      ];
+      const { container } = render(<ShellResultView parts={parts} />);
+
+      expect(container.querySelectorAll(".output")).toHaveLength(3);
+      expect(container.querySelectorAll(".output")[0]).toHaveTextContent(
+        '{"result":["<script>not markup</script>",{"ok":true}]}',
+      );
+      expect(container.querySelectorAll(".output")[1]).toHaveTextContent("0");
+      expect(container.querySelectorAll(".output")[2]).toHaveTextContent("false");
+      expect(container.querySelector("script")).not.toBeInTheDocument();
+    });
+
+    it("cyclic output displays a bounded fallback without throwing", () => {
+      const output: { self?: unknown } = {};
+      output.self = output;
+      const part = createToolPart("execute", {
+        state: { status: "completed", title: "execute", input: {}, output },
+      } as any);
+      expect(() => render(<ShellResultView parts={[part]} />)).not.toThrow();
+      expect(screen.getByText("[Tool output could not be displayed]")).toBeInTheDocument();
+    });
+
+    it("localizes the fallback for cyclic output", () => {
+      const output: { self?: unknown } = {};
+      output.self = output;
+      const part = createToolPart("execute", {
+        state: { status: "completed", title: "execute", input: {}, output },
+      } as any);
+      render(
+        <LocaleProvider value={getStrings("ja")}>
+          <ShellResultView parts={[part]} />
+        </LocaleProvider>,
+      );
+      expect(screen.getByText("[ツールの出力を表示できません]")).toBeInTheDocument();
     });
 
     // is expanded by default

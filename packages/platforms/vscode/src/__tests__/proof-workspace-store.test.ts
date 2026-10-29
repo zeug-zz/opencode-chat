@@ -134,7 +134,7 @@ describe("ProofWorkspaceStore", () => {
   });
 
   it("returns bounded cleanup failure without deleting the owned root when removal fails", async () => {
-    const failingRm = vi.fn(async (_target: string, _options: Parameters<typeof rm>[1]) => {
+    const failingRm = vi.fn(async (_target: Parameters<typeof rm>[0], _options?: Parameters<typeof rm>[1]) => {
       throw new Error("simulated cleanup failure with untrusted details");
     });
     const fileSystem: ProofWorkspaceFileSystem = { lstat, mkdir, realpath, rm: failingRm, rmdir };

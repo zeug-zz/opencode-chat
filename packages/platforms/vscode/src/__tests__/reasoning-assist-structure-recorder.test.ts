@@ -131,7 +131,7 @@ describe("reasoning-assist structure recorder", () => {
   it.each(MALFORMED_RESULTS)("omits the AF fact for a malformed projection result ($label)", async ({ value }) => {
     const seam: ClaimProjectionSeam = {
       getCapability: () => ({ supported: true, operation: "claim_projection" }),
-      project: () => value as unknown as NormalizedProjectionOutcome,
+      project: () => Promise.resolve(value as unknown as NormalizedProjectionOutcome),
     };
     const recorder = createReasoningAssistStructureRecorder(seam);
 

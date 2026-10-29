@@ -86,7 +86,7 @@ const failure = (
   diagnostic: AfProcessFailure["diagnostic"],
 ): AfProcessFailure => ({
   ok: false,
-  classification: classifyAfRuntimeResult(kind) as AfProcessFailure["classification"],
+  classification: classifyAfRuntimeResult(kind),
   diagnostic,
 });
 
@@ -218,10 +218,10 @@ export class AfProcessExecutor {
       return failure(signal?.aborted ? "cancelled" : "audit-failure", signal?.aborted ? "cancelled" : "cleanup");
     const adapter = this.options.adapter;
     if (!adapter?.launchPreflight) return failure("policy-failure", "policy");
-    let descriptor: ReturnType<typeof buildAfPreflightDescriptor>["descriptor"];
+    let descriptor: Extract<ReturnType<typeof buildAfPreflightDescriptor>, { available: true }>["descriptor"];
     try {
       const launch = this.commands.build(operation);
-      const result = buildAfPreflightDescriptor(adapter, {
+      const result: ReturnType<typeof buildAfPreflightDescriptor> = buildAfPreflightDescriptor(adapter, {
         executable: launch.executable,
         argv: launch.argv,
         cwd: preflight.cwd,

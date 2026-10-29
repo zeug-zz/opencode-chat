@@ -18,6 +18,12 @@ const retainedReviewConfigKeys = [
   "config.reasoningReviewEffective",
 ] as const;
 
+const reasoningReviewToggleKeys = [
+  "input.reasoningReviewOn",
+  "input.reasoningReviewOff",
+  "input.reasoningReviewBlocked",
+] as const;
+
 const retainedReasoningAssistKeys = [
   "reasoningAssist.title",
   "reasoningAssist.stage.assessing",
@@ -30,9 +36,42 @@ const retainedReasoningAssistKeys = [
   "reasoningAssist.candidateConclusion",
   "reasoningAssist.assumptions",
   "reasoningAssist.evidenceBoundary",
-  "reasoningAssist.criticObjections",
   "reasoningAssist.afRecordedStructure",
   "reasoningAssist.afNotAvailable",
+] as const;
+
+const manualReasoningReviewKeys = [
+  "reasoningReview.action",
+  "reasoningReview.cancel",
+  "reasoningReview.cancelling",
+  "reasoningReview.inProgress",
+  "reasoningReview.cancelled",
+  "reasoningReview.resultLabel",
+  "reasoningReview.statusLabel",
+  "reasoningReview.evidenceLabel",
+  "reasoningReview.assumptionsLabel",
+  "reasoningReview.challengesLabel",
+  "reasoningReview.status.notReviewed",
+  "reasoningReview.status.reviewing",
+  "reasoningReview.status.structurallyChecked",
+  "reasoningReview.status.conditional",
+  "reasoningReview.status.unresolved",
+  "reasoningReview.status.refuted",
+  "reasoningReview.status.blocked",
+  "reasoningReview.status.auditFailed",
+  "reasoningReview.status.unavailable",
+  "reasoningReview.evidence.notAssessed",
+  "reasoningReview.evidence.notRequired",
+  "reasoningReview.evidence.sourceRecorded",
+  "reasoningReview.evidence.unverified",
+  "reasoningReview.evidence.humanVerified",
+  "reasoningReview.evidence.conflicted",
+  "reasoningReview.severity.critical",
+  "reasoningReview.severity.major",
+  "reasoningReview.severity.minor",
+  "reasoningReview.severity.note",
+  "reasoningReview.stage.claimProjection",
+  "reasoningReview.stage.adversarialReview",
 ] as const;
 
 describe("webview locale dictionaries", () => {
@@ -55,11 +94,35 @@ describe("webview locale dictionaries", () => {
     }
   });
 
+  it("provides the exact reasoning-review toggle labels in every locale", () => {
+    for (const [locale, dictionary] of Object.entries(dictionaries)) {
+      for (const key of reasoningReviewToggleKeys) {
+        expect(dictionary[key], `${locale}.${key}`).toBeTruthy();
+      }
+    }
+  });
+
   it("provides every reasoning-assist lifecycle key in every locale", () => {
     for (const [locale, dictionary] of Object.entries(dictionaries)) {
       for (const key of retainedReasoningAssistKeys) {
         expect(dictionary[key], `${locale}.${key}`).toBeTruthy();
       }
+    }
+  });
+
+  it("provides every manual completed-answer review key in every locale", () => {
+    for (const [locale, dictionary] of Object.entries(dictionaries)) {
+      for (const key of manualReasoningReviewKeys) {
+        expect(dictionary[key], `${locale}.${key}`).toBeTruthy();
+      }
+    }
+  });
+
+  it("provides the localized secondary message-action label in every locale", () => {
+    for (const [locale, dictionary] of Object.entries(dictionaries)) {
+      expect(dictionary["message.moreActions"], `${locale}.message.moreActions`).toBeTruthy();
+      expect(dictionary).not.toHaveProperty("message.copyThinkingMarkdown");
+      expect(dictionary).not.toHaveProperty("reasoningReview.copyMarkdown");
     }
   });
 });

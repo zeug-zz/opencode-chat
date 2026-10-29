@@ -21,7 +21,7 @@ import { useLocale } from "../../../locales";
 import type { AllProvidersData, FileAttachment } from "../../../vscode-api";
 import { postMessage } from "../../../vscode-api";
 import { IconButton } from "../../atoms/IconButton";
-import { ChevronRightIcon, GearIcon, SendIcon, StopIcon, TerminalIcon } from "../../atoms/icons";
+import { BrainIcon, ChevronRightIcon, GearIcon, SendIcon, StopIcon, TerminalIcon } from "../../atoms/icons";
 import { Popover } from "../../atoms/Popover";
 import { AgentPopup } from "../../molecules/AgentPopup";
 import { AgentSelector } from "../../molecules/AgentSelector";
@@ -94,6 +94,7 @@ type Props = {
   bundledResources?: BundledResourceMetadata[];
   contextMemoryText?: string;
   mcpServers?: McpStatus | null;
+  mcpLocked?: readonly string[];
   onMcpToggle?: (server: string, enabled: boolean) => void;
   onMcpRefresh?: () => void;
   chatSandboxStatus?: ChatSandboxStatus;
@@ -137,6 +138,7 @@ export function InputArea({
   recentModels,
   contextMemoryText,
   mcpServers,
+  mcpLocked,
   onMcpToggle,
   onMcpRefresh,
   chatSandboxStatus,
@@ -709,6 +711,16 @@ export function InputArea({
   const isActiveAttached = activeEditorFile
     ? attachedFiles.some((f) => f.filePath === activeEditorFile.filePath)
     : false;
+  const reasoningReviewAvailable = reasoningReviewRuntime?.state === "available";
+  const reasoningReviewDisabled =
+    reasoningReviewPreference == null ||
+    reasoningReviewPreference.workspaceOptOut ||
+    onReasoningReviewPreferenceChange == null;
+  const reasoningReviewTooltip = reasoningReviewPreference?.workspaceOptOut
+    ? t["input.reasoningReviewBlocked"]
+    : reasoningReviewPreference?.userEnabled
+      ? t["input.reasoningReviewOn"]
+      : t["input.reasoningReviewOff"];
 
   return (
     <div className={styles.root}>
@@ -738,6 +750,24 @@ export function InputArea({
               onClearSkill={clearSkill}
             />
           </div>
+          {reasoningReviewAvailable && (
+            <IconButton
+              className={`${styles.reasoningReviewToggle} ${reasoningReviewPreference?.userEnabled ? styles.reasoningReviewActive : ""}`}
+              variant="muted"
+              size="sm"
+              active={reasoningReviewPreference?.userEnabled === true}
+              disabled={reasoningReviewDisabled}
+              aria-pressed={reasoningReviewPreference?.userEnabled === true}
+              aria-label={reasoningReviewTooltip}
+              title={reasoningReviewTooltip}
+              onClick={() => {
+                if (reasoningReviewDisabled || !reasoningReviewPreference) return;
+                onReasoningReviewPreferenceChange?.({ userEnabled: !reasoningReviewPreference.userEnabled });
+              }}
+            >
+              <BrainIcon />
+            </IconButton>
+          )}
         </div>
 
         {/* テキスト入力エリア（# ポップアップ付き） */}
@@ -839,6 +869,7 @@ export function InputArea({
                     soundSettings={soundSettings}
                     onSoundSettingChange={onSoundSettingChange}
                     mcpServers={mcpServers}
+                    mcpLocked={mcpLocked}
                     onMcpToggle={onMcpToggle}
                     sandboxStatus={chatSandboxStatus}
                     onChatSandboxSettingsChange={onChatSandboxSettingsChange}

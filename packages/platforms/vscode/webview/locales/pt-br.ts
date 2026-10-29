@@ -23,6 +23,9 @@ export const ptBr: LocaleSchema = {
   "input.shellMode": "Modo Shell",
   "input.placeholder.shell": "Digite um comando shell...",
   "input.settings": "Configurações",
+  "input.reasoningReviewOn": "Revisão do raciocínio: ativada",
+  "input.reasoningReviewOff": "Revisão do raciocínio: desativada",
+  "input.reasoningReviewBlocked": "A revisão do raciocínio está bloqueada pelas configurações do espaço de trabalho",
   "input.stop": "Parar",
   "input.send": "Enviar",
   "input.queued": (count: number) => `Na fila: ${count}`,
@@ -37,6 +40,7 @@ export const ptBr: LocaleSchema = {
   "message.thinking": "Pensando…",
   "message.toggleThought": "Alternar detalhes do pensamento",
   "message.copyMarkdown": "Copiar Markdown",
+  "message.moreActions": "More actions",
 
   // MessagesArea
   "checkpoint.revertTitle": "Reverter para este ponto",
@@ -79,6 +83,7 @@ export const ptBr: LocaleSchema = {
   "tool.search": "Pesquisar",
   "tool.tool": "Ferramenta",
   "tool.toggleDetails": "Alternar detalhes",
+  "tool.outputUnavailable": "[Não foi possível exibir a saída da ferramenta]",
   "tool.completed": (done: number, total: number) => `${done}/${total} concluídos`,
   "tool.moreLines": (n: number) => `… +${n} linhas`,
   "tool.addLines": (n: number) => `+${n} linhas`,
@@ -115,6 +120,7 @@ export const ptBr: LocaleSchema = {
   "config.mcpEmpty": "Nenhum servidor MCP configurado. Configure via Configuração do Projeto ou Configuração Global.",
   "config.mcpTrust":
     "Ferramentas MCP instaladas pelo usuário não são isoladas pelas negações de edição/shell do Scout.",
+  "config.mcpLocked": "Bloqueado por política do sistema ou gerenciada.",
 
   // ToolConfigPanel
   "config.title": "Configurações",
@@ -145,6 +151,38 @@ export const ptBr: LocaleSchema = {
     "Revisa respostas neste host quando o runtime de revisão de raciocínio está disponível. A opção de não participação do workspace substitui a preferência global neste workspace.",
   "config.reasoningReviewEffective": (enabled: boolean) =>
     enabled ? "Ativa neste workspace" : "Inativa neste workspace",
+  "reasoningReview.action": "Revisar argumento",
+  "reasoningReview.cancel": "Cancelar revisão",
+  "reasoningReview.cancelling": "Cancelando revisão…",
+  "reasoningReview.inProgress": "Revisão em andamento",
+  "reasoningReview.cancelled": "Revisão cancelada.",
+  "reasoningReview.resultLabel": "Revisão do argumento",
+  "reasoningReview.boundaryLabel": "Limites da revisão",
+  "reasoningReview.statusLabel": "Status",
+  "reasoningReview.evidenceLabel": "Evidência",
+  "reasoningReview.assumptionsLabel": "Premissas",
+  "reasoningReview.challengesLabel": "Objeções em aberto",
+  "reasoningReview.status.notReviewed": "Não revisado",
+  "reasoningReview.status.reviewing": "Em revisão",
+  "reasoningReview.status.structurallyChecked": "Estrutura verificada",
+  "reasoningReview.status.conditional": "Condicional",
+  "reasoningReview.status.unresolved": "Não resolvido",
+  "reasoningReview.status.refuted": "Refutado",
+  "reasoningReview.status.blocked": "Bloqueado",
+  "reasoningReview.status.auditFailed": "Falha na revisão",
+  "reasoningReview.status.unavailable": "Indisponível",
+  "reasoningReview.evidence.notAssessed": "Não avaliada",
+  "reasoningReview.evidence.notRequired": "Não necessária",
+  "reasoningReview.evidence.sourceRecorded": "Fonte registrada",
+  "reasoningReview.evidence.unverified": "Não verificada",
+  "reasoningReview.evidence.humanVerified": "Verificada por uma pessoa",
+  "reasoningReview.evidence.conflicted": "Em conflito",
+  "reasoningReview.severity.critical": "Crítica",
+  "reasoningReview.severity.major": "Alta",
+  "reasoningReview.severity.minor": "Baixa",
+  "reasoningReview.severity.note": "Nota",
+  "reasoningReview.stage.claimProjection": "Projeção de alegações AF",
+  "reasoningReview.stage.adversarialReview": "Revisão do proponente/verificador",
 
   // Reasoning assist lifecycle
   "reasoningAssist.title": "Assistência de raciocínio",
@@ -158,7 +196,6 @@ export const ptBr: LocaleSchema = {
   "reasoningAssist.candidateConclusion": "Conclusão candidata",
   "reasoningAssist.assumptions": "Suposições",
   "reasoningAssist.evidenceBoundary": "Limite das evidências",
-  "reasoningAssist.criticObjections": "Objeções a abordar",
   "reasoningAssist.afRecordedStructure": "Estrutura registrada no AF",
   "reasoningAssist.afNotAvailable": "Estrutura do AF indisponível",
 
@@ -190,6 +227,8 @@ export const ptBr: LocaleSchema = {
   "fileChanges.noChanges": "Sem alterações de arquivos",
   "fileChanges.openDiff": "Abrir no editor de diferenças",
   "fileChanges.toggle": "Alterações de arquivos",
+  "fileChanges.binaryUnavailable": "Arquivo binário: o conteúdo não pode ser exibido.",
+  "fileChanges.contentUnavailable": "O conteúdo não está disponível para esta alteração.",
 
   // Share
   "share.share": "Compartilhar sessão",

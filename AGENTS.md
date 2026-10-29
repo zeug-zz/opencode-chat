@@ -54,9 +54,9 @@ package scripts for release-specific details.
 
 ## Security Invariants
 
-- Scout denies edit and Bash access. Task delegation is wildcard-denied except for the exact injected `chat-research-worker` target.
+- Scout denies edit and Bash access. Task delegation is wildcard-denied except for the exact `chat-research-worker`, `chat-reasoning-critic`, and `chat-reasoning-verifier` targets; the two hidden reasoning agents are available only through Scribe's private server plugin.
 - The research worker is read-only and may use only the reviewed `firecrawl_*`, `context-mode_*`, and `paper-search_*` MCP prefixes when the corresponding Chat preference enables them.
-- Do not add arbitrary, recursive, coding, shell, package, terminal, deletion, provider-administration, or unknown-tool access to Scout or Write.
+- Approved V2 migration target (not yet delivered): native `execute` composes each role's existing tools; it grants no shell/process, Scout/worker edit, arbitrary delegation, unrelated worktree/session mutation or administration tools, or unknown/unapproved tools. Native `fetch` is distinct from permission-checked `webfetch`; no Scribe-added limits or ordinary-tool allowlist check are claimed.
 - Connected MCP servers remain untrusted downstream execution boundaries; verify their tool permissions independently.
 - On supported macOS/Linux Chat sandbox launches, protected reads and writes remain constrained, deny/grant conflicts fail closed, and there is no unsandboxed retry. Windows provides no read-deny enforcement guarantee.
 - Diagnostics must be bounded and redacted. Never log secrets, credentials, authorization material, file contents, request payloads, or unredacted environment/configuration data.

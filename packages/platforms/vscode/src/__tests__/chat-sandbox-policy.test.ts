@@ -22,7 +22,7 @@ describe("buildChatSandboxNetworkPolicy", () => {
     const policy = buildChatSandboxNetworkPolicy({ allowNetwork: true, platform });
 
     expect(policy.allowMachLookup).toEqual([]);
-    expect(policy).not.toHaveProperty("allowMachLookup", expect.arrayContaining(MACOS_MACH_LOOKUP_SERVICES));
+    expect(policy).not.toHaveProperty("allowMachLookup", expect.arrayContaining([...MACOS_MACH_LOOKUP_SERVICES]));
   });
 });
 
@@ -600,8 +600,8 @@ describe("buildChatSandboxFilesystemPolicy", () => {
   });
 
   it.each([
-    ["OpenCode config", { config: "/Library/Keychains" }, undefined],
-    ["executable", undefined, "/Library/Keychains"],
+    ["OpenCode config", { config: "/Library/Keychains" }, undefined, undefined],
+    ["executable", undefined, "/Library/Keychains", undefined],
     ["PATH executable", undefined, undefined, ["/Library/Keychains"]],
   ] as const)(
     "rejects an exact protected deny conflict for the %s read-only grant",
@@ -888,7 +888,7 @@ describe("resolveRuntimeCachePaths", () => {
       platform,
     });
 
-    expect(policy.readWritePaths).toEqual(expect.arrayContaining(runtimePaths));
+    expect(policy.readWritePaths).toEqual(expect.arrayContaining([...runtimePaths]));
     expect(policy.readWritePaths).not.toContain(homePath);
     expect(policy.readOnlyPaths).not.toContain(homePath);
   });

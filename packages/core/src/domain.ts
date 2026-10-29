@@ -143,6 +143,8 @@ export type FilePart = {
   url: string;
   filename: string;
   mime: string;
+  description?: string;
+  mention?: { start: number; end: number; text: string };
 };
 
 export type StepStartPart = {
@@ -165,6 +167,15 @@ export type AgentPart = {
   sessionID: string;
   messageID: string;
   type: "agent";
+  name: string;
+};
+
+export type SkillPart = {
+  id: string;
+  sessionID: string;
+  messageID: string;
+  type: "skill";
+  skillID: string;
   name: string;
 };
 
@@ -220,6 +231,7 @@ export type MessagePart =
   | StepStartPart
   | StepFinishPart
   | AgentPart
+  | SkillPart
   | SubtaskPart
   | SnapshotPart
   | PatchPart
@@ -237,6 +249,10 @@ export type ChatMessageWithParts = {
 
 export type AgentEvent =
   | {
+      type: "server.connected";
+      properties: Record<string, never>;
+    }
+  | {
       type: "session.updated";
       properties: { sessionID: string; info: ChatSession };
     }
@@ -246,7 +262,7 @@ export type AgentEvent =
     }
   | {
       type: "session.deleted";
-      properties: { info: ChatSession };
+      properties: { info: Pick<ChatSession, "id"> };
     }
   | {
       type: "session.status";
@@ -442,6 +458,11 @@ export type FileDiff = {
   after: string;
   additions: number;
   deletions: number;
+  /**
+   * Set when the native patch cannot be turned into file contents (binary, or capped/partial/ambiguous).
+   * `before`/`after` are then empty and must not be rendered as content.
+   */
+  contentUnavailable?: "binary" | "unavailable";
 };
 
 // ============================================================
@@ -641,6 +662,8 @@ export type ChatSandboxStatus = ChatSandboxSettings & {
 // ============================================================
 
 export type SendMessageOptions = {
+  /** Native user-message ID used to bind a private ephemeral context brief to this turn. */
+  turnID?: string;
   model?: ModelRef;
   /**
    * Optional explicit effort/variant override. When omitted, payload

@@ -5,10 +5,13 @@ const executable = "/opt/homebrew/bin/nono";
 const listing =
   "nono profile: 2 profiles\n\n  Built-in:\n    default\n\n  User (/home/test/.config/nono/profiles):\n    opencode-local       extends opencode\n    unsafe/name          invalid\n";
 
-function execFor(...args: unknown[]) {
-  const callback = args.at(-1) as (error: null, stdout: string, stderr: string) => void;
-  const command = args[1] as string[];
-  callback(null, command[1] === "list" ? listing : "nono 1.0.0", "policy contents must not escape");
+function execFor(
+  _file: string,
+  args: string[],
+  _options: { timeout: number; maxBuffer: number; windowsHide: boolean },
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+): void {
+  callback(null, args[1] === "list" ? listing : "nono 1.0.0", "policy contents must not escape");
 }
 
 describe("nono profile discovery and resolution", () => {

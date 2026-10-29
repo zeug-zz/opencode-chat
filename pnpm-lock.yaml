@@ -33,12 +33,12 @@ importers:
 
   packages/agents/opencode:
     dependencies:
-      '@opencode-ai/sdk':
-        specifier: ^1.18.18
-        version: 1.18.18
       '@opencode-chat/core':
         specifier: workspace:*
         version: link:../../core
+      '@opencode/client':
+        specifier: 2.1.0
+        version: 2.1.0(effect@4.0.1)
       '@vscode/sandbox-runtime':
         specifier: 0.0.1
         version: 0.0.1
@@ -605,8 +605,22 @@ packages:
     resolution: {integrity: sha512-WrOw/bcXm0f9qHkumlT1QlArXSTWqaY9sunsDpOk+yCCorCKMxvWT/a3xko4EYHVdeZoh00yI2TydXn6eyICDA==}
     engines: {node: '>= 10'}
 
-  '@opencode-ai/sdk@1.18.18':
-    resolution: {integrity: sha512-zJlwXskIR47V1dkPJqeKBgq7nejG1uU8lJaGIGqbX3MWRCT8vKn0fEotbxuPCKnTdmWsDyNGNg9q1qIliDSMDA==}
+  '@opencode/client@2.1.0':
+    resolution: {integrity: sha512-2rT2cog3QFMErvWaUvV3M5I9SvBF8p8MWC5PHh+Rno2Z828SiVQRlmXO0BwbxRou3xmAgKk5dHk0573BS2VBTw==}
+    peerDependencies:
+      effect: 4.0.1
+      solid-js: '>=1.9.0'
+    peerDependenciesMeta:
+      effect:
+        optional: true
+      solid-js:
+        optional: true
+
+  '@opencode/protocol@2.1.0':
+    resolution: {integrity: sha512-Zo1TDw5Yx41Bi7+I0Djs0b92IcPP7Jg/k+lL6FLm+m46TT27wIG7n8xPV490LTo4sXTtknYddnU4aLpwqaIa3g==}
+
+  '@opencode/schema@2.1.0':
+    resolution: {integrity: sha512-Cv1bP3lEDXbRvmlw7pwDhMNFSAOy+Zo8zBs/t0lP1iWZE6tqMhRb1lsvaX6DPI8iwzF3QW2b9dKcixPjlqwAhQ==}
 
   '@oxc-project/types@0.149.0':
     resolution: {integrity: sha512-Efcc+iF0j3Bf67YjEqIqWXbX5XddXoK/Mw4K1/JuXwRCZ8N16VR7iT23nlCc9XrveFVh/E5Rqs2StT0V8v9LdA==}
@@ -735,6 +749,9 @@ packages:
   '@secretlint/types@10.2.2':
     resolution: {integrity: sha512-Nqc90v4lWCXyakD6xNyNACBJNJ0tNCwj2WNk/7ivyacYHxiITVgmLUFXTBOeCdy79iz6HtN9Y31uw/jbLrdOAg==}
     engines: {node: '>=20.0.0'}
+
+  '@standard-schema/spec@1.1.0':
+    resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -1318,6 +1335,9 @@ packages:
   editions@6.22.0:
     resolution: {integrity: sha512-UgGlf8IW75je7HZjNDpJdCv4cGJWIi6yumFdZ0R7A8/CIhQiWUjyGLCxdHpd8bmyD1gnkfUNK0oeOXqUS2cpfQ==}
     engines: {ecmascript: '>= es5', node: '>=4'}
+
+  effect@4.0.1:
+    resolution: {integrity: sha512-b1VlQG9g8fwxE5QnIZuPoOP/0MsqHJSRKxUijjoM80E5q95FXrX5yWtY5XI8G+GJsBQAVSDbLS458z9a++uVvw==}
 
   elkjs@0.9.3:
     resolution: {integrity: sha512-f/ZeWvW/BCXbhGEf1Ujp29EASo/lk1FDnETgNKwJrsVvGZhUWCZyg3xLJjAsxfOmt8KjswHmI5EwCQcPMpOYhQ==}
@@ -2430,9 +2450,22 @@ snapshots:
       '@napi-rs/keyring-win32-ia32-msvc': 1.3.0
       '@napi-rs/keyring-win32-x64-msvc': 1.3.0
 
-  '@opencode-ai/sdk@1.18.18':
+  '@opencode/client@2.1.0(effect@4.0.1)':
     dependencies:
-      cross-spawn: 7.0.6
+      '@opencode/protocol': 2.1.0
+      '@opencode/schema': 2.1.0
+    optionalDependencies:
+      effect: 4.0.1
+
+  '@opencode/protocol@2.1.0':
+    dependencies:
+      '@opencode/schema': 2.1.0
+      effect: 4.0.1
+
+  '@opencode/schema@2.1.0':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      effect: 4.0.1
 
   '@oxc-project/types@0.149.0': {}
 
@@ -2508,6 +2541,8 @@ snapshots:
       istextorbinary: 9.5.0
 
   '@secretlint/types@10.2.2': {}
+
+  '@standard-schema/spec@1.1.0': {}
 
   '@testing-library/dom@10.4.1':
     dependencies:
@@ -3137,6 +3172,8 @@ snapshots:
   editions@6.22.0:
     dependencies:
       version-range: 4.15.0
+
+  effect@4.0.1: {}
 
   elkjs@0.9.3: {}
 

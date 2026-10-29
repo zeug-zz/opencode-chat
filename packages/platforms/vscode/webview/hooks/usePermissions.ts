@@ -35,6 +35,9 @@ export function usePermissions(activeSessionRef: RefObject<ChatSession | null>) 
     (event: AgentEvent) => {
       const activeId = activeSessionRef.current?.id;
       switch (event.type) {
+        case "server.connected":
+          clearPermissions();
+          break;
         case "permission.asked": {
           if (activeId && event.properties.sessionID !== activeId) break;
           addPermission(event.properties);
@@ -45,7 +48,7 @@ export function usePermissions(activeSessionRef: RefObject<ChatSession | null>) 
           break;
       }
     },
-    [activeSessionRef, addPermission, removePermission],
+    [activeSessionRef, addPermission, clearPermissions, removePermission],
   );
 
   return {

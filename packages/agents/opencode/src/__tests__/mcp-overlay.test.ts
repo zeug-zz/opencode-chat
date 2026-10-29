@@ -2,55 +2,75 @@ import { describe, expect, it } from "vitest";
 import { buildMcpOverlay } from "../mcp-overlay";
 
 describe("buildMcpOverlay", () => {
-  it("emits every inventoried server with unselected servers disabled", () => {
+  it("copies selected full native definitions and suppresses unselected servers", () => {
     const result = buildMcpOverlay(
       {
         servers: {
-          selected: { explicitlyDisabled: false, transport: "stdio" },
-          unselected: { explicitlyDisabled: false, transport: "stdio" },
+          selected: {
+            definition: { type: "local", command: ["fixture"], environment: { KEY: "fixture-secret" } },
+            source: "fixture.json",
+            explicitlyDisabled: false,
+            transport: "stdio",
+          },
+          unselected: {
+            definition: { type: "remote", url: "https://fixture.invalid", codemode: false },
+            source: "fixture.json",
+            explicitlyDisabled: false,
+            transport: "http",
+          },
         },
+        locked: [],
+        qualificationGaps: [],
       },
       { selected: true },
     );
 
     expect(result).toEqual({
       mcp: {
-        selected: { enabled: true },
-        unselected: { enabled: false },
+        servers: {
+          selected: { type: "local", command: ["fixture"], environment: { KEY: "fixture-secret" }, disabled: false },
+          unselected: { type: "remote", url: "https://fixture.invalid", codemode: false, disabled: true },
+        },
       },
-      locked: [],
     });
   });
 
-  it("lets a true Chat preference override an explicitly disabled server", () => {
+  it("overrides ordinary config-disabled selection without changing Code Mode", () => {
     const result = buildMcpOverlay(
       {
         servers: {
-          zebra: { explicitlyDisabled: true, transport: "stdio" },
-          alpha: { explicitlyDisabled: true, transport: "stdio" },
-          enabled: { explicitlyDisabled: false, transport: "stdio" },
+          selected: {
+            definition: { type: "remote", url: "https://fixture.invalid", disabled: true },
+            source: "fixture.json",
+            explicitlyDisabled: true,
+            transport: "http",
+          },
         },
+        locked: [],
+        qualificationGaps: [],
       },
-      { alpha: true, enabled: true, zebra: true },
+      { selected: true },
     );
-
-    expect(result).toEqual({
-      mcp: {
-        alpha: { enabled: true },
-        enabled: { enabled: true },
-        zebra: { enabled: true },
-      },
-      locked: [],
-    });
+    expect(result.mcp.servers.selected).toEqual({ type: "remote", url: "https://fixture.invalid", disabled: false });
+    expect(Object.hasOwn(result.mcp.servers.selected, "codemode")).toBe(false);
   });
 
-  it("ignores preferences for names absent from the inventory", () => {
+  it("ignores unknown preferences and never emits their definitions", () => {
     const result = buildMcpOverlay(
-      { servers: { known: { explicitlyDisabled: false, transport: "stdio" } } },
+      {
+        servers: {
+          known: {
+            definition: { type: "local", command: ["fixture"] },
+            source: "fixture.json",
+            explicitlyDisabled: false,
+            transport: "stdio",
+          },
+        },
+        locked: [],
+        qualificationGaps: [],
+      },
       { known: false, unknown: true },
     );
-
-    expect(result).toEqual({ mcp: { known: { enabled: false } }, locked: [] });
-    expect(JSON.stringify(result)).not.toContain("unknown");
+    expect(result.mcp.servers).toEqual({ known: { type: "local", command: ["fixture"], disabled: true } });
   });
 });

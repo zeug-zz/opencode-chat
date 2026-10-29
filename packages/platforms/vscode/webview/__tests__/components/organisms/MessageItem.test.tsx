@@ -1,4 +1,4 @@
-import type { QuestionRequest } from "@opencode-chat/core";
+import type { QuestionRequest, ReasoningReviewSummary } from "@opencode-chat/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { act, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -160,16 +160,203 @@ describe("MessageItem", () => {
       expect(container.querySelector(".root")).toBeInTheDocument();
     });
 
-    it("完了済み assistant にレビュー操作もレビューカードも表示しないこと", () => {
+    it("non-Scout メッセージには completed review UI を表示しないこと", () => {
       const completed = { ...assistantMsg, info: { ...assistantMsg.info, time: { created: 1, completed: 2 } } };
       const { container } = render(<MessageItem {...defaultProps} message={completed} />, { wrapper });
 
       expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Cancel review" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Show review" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Hide review" })).not.toBeInTheDocument();
       expect(screen.queryByRole("region", { name: "Reasoning review" })).not.toBeInTheDocument();
       expect(container.querySelector(".reviewActions")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("completed-answer reasoning review", () => {
+    const completedScoutAnswer: MessageWithParts = {
+      info: createMessage({
+        id: "answer-1",
+        sessionID: "session-1",
+        role: "assistant",
+        agent: "scout",
+        time: { created: 1, completed: 2 },
+      }),
+      parts: [createTextPart("A completed Scout answer.")],
+    };
+
+    const summary: ReasoningReviewSummary = {
+      reviewedMessageId: "answer-1",
+      status: "conditional",
+      invocation: "manual",
+      conclusion: "The conclusion depends on the stated assumption or unverified evidence.",
+      assumptions: ["The premise applies to this case."],
+      evidenceStatus: "source_recorded",
+      openChallenges: [{ severity: "major", target: "claim:claim-1", reason: "The objection remains open." }],
+      interpretiveBoundary:
+        "Structural review describes recorded relationships. The prover/verifier review did not complete; no challenges are reported.",
+    };
+
+    it("offers the action only for a completed Scout answer in the active session", async () => {
+      const onRequestReasoningReview = vi.fn();
+      const { container, rerender } = render(
+        <MessageItem
+          {...defaultProps}
+          message={completedScoutAnswer}
+          reasoningReviewAvailable
+          onRequestReasoningReview={onRequestReasoningReview}
+        />,
+        { wrapper },
+      );
+
+      const details = container.querySelector<HTMLDetailsElement>(".messageActions");
+      const summary = details?.querySelector("summary");
+      expect(details?.open).toBe(false);
+      expect(summary).toHaveAttribute("aria-label", "More actions");
+      expect(details).toContainElement(screen.getByText("Review argument"));
+      expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
+      fireEvent.click(summary!);
+      expect(details?.open).toBe(true);
+      fireEvent.click(await screen.findByRole("button", { name: "Review argument" }));
+      expect(onRequestReasoningReview).toHaveBeenCalledWith("session-1", "answer-1");
+
+      rerender(
+        <MessageItem
+          {...defaultProps}
+          message={{ ...completedScoutAnswer, info: { ...completedScoutAnswer.info, time: { created: 1 } } }}
+          reasoningReviewAvailable
+          onRequestReasoningReview={onRequestReasoningReview}
+        />,
+      );
+      expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
+
+      rerender(
+        <MessageItem
+          {...defaultProps}
+          message={completedScoutAnswer}
+          activeSessionId="another-session"
+          reasoningReviewAvailable
+          onRequestReasoningReview={onRequestReasoningReview}
+        />,
+      );
+      expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["runtime unavailable", { reasoningReviewAvailable: false }],
+      [
+        "incomplete",
+        { message: { ...completedScoutAnswer, info: { ...completedScoutAnswer.info, time: { created: 1 } } } },
+      ],
+      [
+        "error",
+        {
+          message: {
+            ...completedScoutAnswer,
+            info: { ...completedScoutAnswer.info, error: { name: "Error", data: {} } },
+          },
+        },
+      ],
+      ["user", { message: { ...completedScoutAnswer, info: { ...completedScoutAnswer.info, role: "user" as const } } }],
+      ["Write", { message: { ...completedScoutAnswer, info: { ...completedScoutAnswer.info, agent: "write" } } }],
+      ["foreign session", { activeSessionId: "another-session" }],
+      [
+        "shell",
+        {
+          message: { ...completedScoutAnswer, info: { ...completedScoutAnswer.info, id: "shell-answer" } },
+          shell: true,
+        },
+      ],
+    ])("does not offer review when %s", (_label, overrides) => {
+      const { shell = false, ...props } = overrides as {
+        shell?: boolean;
+        message?: MessageWithParts;
+        reasoningReviewAvailable?: boolean;
+        activeSessionId?: string;
+      };
+      const shellWrapper = createContextWrapper({ isShellMessage: (id: string) => shell && id === "shell-answer" });
+      render(
+        <MessageItem
+          {...defaultProps}
+          message={props.message ?? completedScoutAnswer}
+          reasoningReviewAvailable={props.reasoningReviewAvailable ?? true}
+          activeSessionId={props.activeSessionId ?? "session-1"}
+        />,
+        { wrapper: shellWrapper },
+      );
+      expect(screen.queryByRole("button", { name: "Review argument" })).not.toBeInTheDocument();
+    });
+
+    it("shows bounded progress, cancellation, and the AF facts separately from open challenges", () => {
+      const reviewing = {
+        phase: "reviewing" as const,
+        requestId: "review-1",
+        stage: "adversarialReview" as const,
+      };
+      const { rerender } = render(
+        <MessageItem
+          {...defaultProps}
+          message={completedScoutAnswer}
+          reasoningReviewAvailable
+          reasoningReview={reviewing}
+        />,
+        { wrapper },
+      );
+
+      expect(screen.getByText("Review in progress: Prover/verifier review")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel review" })).toBeInTheDocument();
+
+      rerender(
+        <MessageItem
+          {...defaultProps}
+          message={completedScoutAnswer}
+          reasoningReview={{ phase: "result", requestId: "review-1", summary }}
+        />,
+      );
+
+      expect(screen.getByRole("region", { name: "Argument review" })).toBeInTheDocument();
+      expect(screen.getByText(summary.conclusion)).toBeInTheDocument();
+      expect(screen.getByText("Review limits:", { exact: false })).toBeInTheDocument();
+      expect(screen.getByText(/The prover\/verifier review did not complete/u)).toBeInTheDocument();
+      expect(screen.getByText("Conditional")).toBeInTheDocument();
+      expect(screen.getByText("Source recorded")).toBeInTheDocument();
+      expect(screen.getByText("The premise applies to this case.")).toBeInTheDocument();
+      expect(screen.getByText(/The objection remains open/u)).toBeInTheDocument();
+    });
+
+    it("renders no review-copy control or review clipboard action, even with a result", () => {
+      render(
+        <MessageItem
+          {...defaultProps}
+          message={completedScoutAnswer}
+          reasoningReview={{ phase: "result", requestId: "review-1", summary }}
+        />,
+        { wrapper },
+      );
+      expect(screen.queryByRole("button", { name: /copy review/i })).not.toBeInTheDocument();
+      expect(postMessage).not.toHaveBeenCalled();
+    });
+
+    it("renders review boundaries only as text in a completed result", () => {
+      const boundary = '<img src=x onerror="alert(1)">';
+      const maliciousSummary = { ...summary, status: "structurally_checked" as const, interpretiveBoundary: boundary };
+      const { rerender, container } = render(
+        <MessageItem
+          {...defaultProps}
+          message={completedScoutAnswer}
+          reasoningReview={{ phase: "reviewing", requestId: "review-1", stage: "claimProjection" }}
+        />,
+        { wrapper },
+      );
+      expect(screen.queryByText(boundary)).not.toBeInTheDocument();
+      rerender(
+        <MessageItem
+          {...defaultProps}
+          message={completedScoutAnswer}
+          reasoningReview={{ phase: "result", requestId: "review-1", summary: maliciousSummary }}
+        />,
+      );
+      expect(screen.getByText(boundary)).toBeInTheDocument();
+      expect(container.querySelector("img")).not.toBeInTheDocument();
+      expect(screen.getByText("Structurally checked")).toBeInTheDocument();
     });
   });
 
@@ -180,7 +367,7 @@ describe("MessageItem", () => {
       text: "A private chain of thought",
       sessionID: "session-1",
       messageID: "message-1",
-      time: { created: 1, end: 2 },
+      time: { start: 1, end: 2 },
     };
     const reasoningMessage: MessageWithParts = {
       info: createMessage({ id: "message-1", role: "assistant" }),
@@ -189,7 +376,29 @@ describe("MessageItem", () => {
 
     it("デフォルトでは完了済み本文を折りたたむこと", () => {
       render(<MessageItem {...defaultProps} message={reasoningMessage} />, { wrapper });
+      expect(screen.getByText("Thought")).toBeInTheDocument();
       expect(screen.queryByText(reasoningPart.text)).not.toBeInTheDocument();
+    });
+
+    it("keeps the active empty placeholder but hides a completed empty thought header", () => {
+      const activeMessage: MessageWithParts = {
+        ...reasoningMessage,
+        parts: [{ ...reasoningPart, text: "", time: { start: 1 } }],
+      };
+      const completedEmptyMessage: MessageWithParts = {
+        ...reasoningMessage,
+        parts: [{ ...reasoningPart, text: "", time: { start: 1, end: 2 } }],
+      };
+      const { rerender } = render(<MessageItem {...defaultProps} message={activeMessage} />, { wrapper });
+
+      expect(screen.getByText("Thinking…")).toBeInTheDocument();
+      expect(screen.getByTitle("Toggle thought details")).toBeInTheDocument();
+
+      rerender(<MessageItem {...defaultProps} message={completedEmptyMessage} />);
+
+      expect(screen.queryByText("Thought")).not.toBeInTheDocument();
+      expect(screen.queryByTitle("Toggle thought details")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Copy thinking as Markdown" })).not.toBeInTheDocument();
     });
 
     it("有効時は既存本文を表示し、無効化すると手動展開状態へ戻ること", () => {
@@ -207,6 +416,21 @@ describe("MessageItem", () => {
       rerender(<MessageItem {...defaultProps} message={reasoningMessage} showAllThinking />);
       rerender(<MessageItem {...defaultProps} message={reasoningMessage} showAllThinking={false} />);
       expect(screen.getByText(reasoningPart.text)).toBeInTheDocument();
+    });
+
+    it("never offers thinking copy even when reasoning is visible; answer copy remains unchanged", () => {
+      const message: MessageWithParts = {
+        info: createMessage({ id: "message-1", role: "assistant" }),
+        parts: [createTextPart("The answer stays separate."), { ...reasoningPart, text: "Private thought" }],
+      };
+      vi.mocked(postMessage).mockClear();
+      const { container } = render(<MessageItem {...defaultProps} message={message} showAllThinking />, { wrapper });
+      expect(screen.queryByRole("button", { name: /copy thinking/i })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: COPY_MARKDOWN_LABEL }));
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledWith({ type: "copyToClipboard", text: "The answer stays separate." });
+      expect(JSON.stringify(vi.mocked(postMessage).mock.calls)).not.toContain("Private thought");
+      expect(container.querySelector(".reasoningBody")).toHaveTextContent("Private thought");
     });
   });
 
@@ -423,7 +647,8 @@ describe("MessageItem", () => {
       // 生ソースと完全一致する（getCopyableAssistantMarkdownSource の戻り値がそのまま送られる）
       expect(call).toEqual({ type: "copyToClipboard", text: source });
       // KaTeX ソースが保持されている
-      expect(call?.text).toContain("$$\\frac{\\partial}{\\partial t}$$");
+      if (call?.type !== "copyToClipboard") throw new Error("Expected a copyToClipboard message");
+      expect(call.text).toContain("$$\\frac{\\partial}{\\partial t}$$");
     });
 
     // ユーザーメッセージではボタンが描画されず postMessage も発火しないこと
@@ -486,9 +711,10 @@ describe("MessageItem", () => {
       expect(postMessage).toHaveBeenCalledWith({ type: "copyToClipboard", text: source });
       // フェンスや前後に投稿された場合の文字列が含まれている
       const call = vi.mocked(postMessage).mock.calls[0]?.[0];
-      expect(call?.text).toContain("```ts");
-      expect(call?.text).toContain("const x = 1;");
-      expect(call?.text).toContain("Done.");
+      if (call?.type !== "copyToClipboard") throw new Error("Expected a copyToClipboard message");
+      expect(call.text).toContain("```ts");
+      expect(call.text).toContain("const x = 1;");
+      expect(call.text).toContain("Done.");
     });
 
     // コードブロックレベル: 同じメッセージにコードブロックが含まれていても、
@@ -504,8 +730,9 @@ describe("MessageItem", () => {
       fireEvent.click(button);
       const call = vi.mocked(postMessage).mock.calls[0]?.[0];
       // メッセージレベルは Markdown 全体を送り、コード本文のみの切り詰めは行わない
-      expect(call?.text).not.toBe("const x = 1;");
-      expect(call?.text).toBe(source);
+      if (call?.type !== "copyToClipboard") throw new Error("Expected a copyToClipboard message");
+      expect(call.text).not.toBe("const x = 1;");
+      expect(call.text).toBe(source);
     });
   });
 

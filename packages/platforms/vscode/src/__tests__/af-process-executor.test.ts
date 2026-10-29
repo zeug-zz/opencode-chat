@@ -150,7 +150,7 @@ describe("AF process executor", () => {
       ok: false,
       classification: { outcome: "unavailable", reason, structuralStatus: null },
     });
-    expect(JSON.stringify(result)).not.toContain(fact.stdout ?? "never");
+    expect(JSON.stringify(result)).not.toContain("stdout" in fact ? fact.stdout : "never");
   });
 
   it.each([

@@ -1,11 +1,17 @@
 import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { validateMemoryRetentionSummary } from "@opencode-chat/agent-opencode";
+import {
+  SCRIBE_REASONING_CONTEXT_GRACE_MS,
+  SCRIBE_REASONING_CONTEXT_MAX_BRIEF_BYTES,
+  SCRIBE_REASONING_CONTEXT_MAX_BRIEF_CHARS,
+  validateMemoryRetentionSummary,
+} from "@opencode-chat/agent-opencode";
 import type {
   AppPaths,
   BundledCommandInvocation,
   BundledResourceMetadata,
+  ChatMessageWithParts,
   ChatSandboxSettings,
   ChatSandboxStatus,
   ChatSession,
@@ -14,42 +20,145 @@ import type {
   IPlatformServices,
   MemoryProviderStatus,
   MemoryRetentionStatus,
+  ReasoningAssistBriefDeliveryResult,
+  ReasoningReviewProgressStage,
   ReasoningReviewRuntime,
+  ReasoningReviewSummary,
   UIToHostMessage,
 } from "@opencode-chat/core";
 import { DEFAULT_MEMORY_RETENTION_POLICY } from "@opencode-chat/core";
 import * as vscode from "vscode";
 import type { ChatMcpPrefs, ChatMcpPrefsStore } from "./chat-mcp-prefs";
 import { hiddenSessionRegistry } from "./vibefeld/hidden-session-registry";
-import type { ArchitectNoAssistReason } from "./vibefeld/reasoning-assist-architect";
-import {
-  appendReasoningAssistBrief,
-  composeReasoningAssistBrief,
-  composeReasoningAssistSummary,
-} from "./vibefeld/reasoning-assist-brief";
-import {
-  type ReasoningAssistUnchangedReason,
-  runReasoningAssistPreflight,
-} from "./vibefeld/reasoning-assist-orchestrator";
+import { composeReasoningAssistBrief, composeReasoningAssistSummary } from "./vibefeld/reasoning-assist-brief";
+import { runReasoningAssistPreflight } from "./vibefeld/reasoning-assist-orchestrator";
+import { classifyReasoningAssistPreScreen } from "./vibefeld/reasoning-assist-pre-screen";
 import type { ReasoningAssistStructureRecorder } from "./vibefeld/reasoning-assist-structure-recorder";
+import {
+  createReasoningDiagnosticClock,
+  createReasoningDiagnosticReporter,
+  elapsedReasoningMilliseconds,
+  type ReasoningDiagnosticOutcome,
+  type ReasoningDiagnosticReporter,
+  type ReasoningDiagnosticStage,
+} from "./vibefeld/reasoning-diagnostics";
 import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
+import {
+  normalizeReasoningReviewSummary,
+  unavailableReasoningReviewSummary,
+} from "./vibefeld/reasoning-review-publication";
 import type { ReasoningAssistRestrictedReviewAdapter } from "./vibefeld/restricted-review-adapter";
 import { resolveEffectiveVibefeldEnabled, type VibefeldPreference } from "./vibefeld/vibefeld-settings";
 import { resolveTabInputFile } from "./vscode-platform-services";
 
 type NormalPrompt = Extract<UIToHostMessage, { type: "sendMessage" }>;
 
+const AGENT_REQUIRED_MESSAGE_TYPES: ReadonlySet<UIToHostMessage["type"]> = new Set([
+  "sendMessage",
+  "requestReasoningReview",
+  "createSession",
+  "listSessions",
+  "selectSession",
+  "deleteSession",
+  "getMessages",
+  "replyPermission",
+  "replyQuestion",
+  "rejectQuestion",
+  "abort",
+  "getProviders",
+  "compressSession",
+  "revertToMessage",
+  "editAndResend",
+  "executeShell",
+  "openTerminal",
+  "setModel",
+  "forkSession",
+  "getSessionDiff",
+  "getSessionTodos",
+  "getChildSessions",
+  "getAgents",
+  "getSkills",
+  "getMcpStatus",
+  "connectMcp",
+  "disconnectMcp",
+  "shareSession",
+  "unshareSession",
+  "undoSession",
+  "redoSession",
+]);
+
+type PromptDispatch = {
+  admitted: boolean;
+};
+
 type PromptQueueState = {
   active: boolean;
   waitingForBusy: boolean;
   pending: NormalPrompt[];
+  currentDispatch?: PromptDispatch;
+  reconnectIdleDispatch?: PromptDispatch;
 };
 
 type ReasoningAssistInFlightEntry = {
   generation: number;
   controller: AbortController;
   lastToken?: string;
+  applied?: boolean;
 };
+
+type ReasoningAssistTurnEntry = {
+  turnId: string;
+  active: boolean;
+  pending: boolean;
+};
+
+type ReasoningReviewInFlightEntry = {
+  requestId: string;
+  sessionId: string;
+  messageId: string;
+  sessionOperationGeneration: number;
+  connectionRefreshGeneration: number;
+  sessionEventRevision: number;
+  startedAt: number;
+  controller?: IReasoningReviewController;
+  cancelled: boolean;
+  cancellationAcknowledged: boolean;
+  completion: Promise<void>;
+};
+
+const MANUAL_REVIEW_SOURCE_LIMIT = 12_000;
+const SAFE_REVIEW_REQUEST_ID = /^[A-Za-z0-9_-]{1,96}$/;
+
+type CompletedScoutAnswerValidation =
+  | Readonly<{ ok: true; text: string }>
+  | Readonly<{
+      ok: false;
+      outcome: Extract<
+        ReasoningDiagnosticOutcome,
+        "answer-unfinished" | "wrong-role" | "failed-answer" | "empty-answer" | "source-over-limit"
+      >;
+    }>;
+
+function validateCompletedScoutAnswer(
+  message: ChatMessageWithParts,
+  sessionId: string,
+): CompletedScoutAnswerValidation {
+  const { info, parts } = message;
+  if (info.sessionID !== sessionId || info.role !== "assistant" || info.agent !== "scout")
+    return { ok: false, outcome: "wrong-role" };
+  if (info.error != null) return { ok: false, outcome: "failed-answer" };
+  if (typeof info.time?.completed !== "number" || !Number.isFinite(info.time.completed))
+    return { ok: false, outcome: "answer-unfinished" };
+  const text = parts
+    .filter((part) => part.type === "text" && !part.synthetic && !part.ignored)
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .join("\n\n")
+    .trim();
+  if (text.length === 0) return { ok: false, outcome: "empty-answer" };
+  if (text.length > MANUAL_REVIEW_SOURCE_LIMIT) return { ok: false, outcome: "source-over-limit" };
+  return { ok: true, text };
+}
 
 /**
  * Host seam for the reasoning-review preference. The user toggle writes the
@@ -65,16 +174,17 @@ export type ReasoningReviewPreferenceSeam = Readonly<{
 const MEMORY_RETENTION_PERMISSION = "hindsight_ingest_document";
 export const MEMORY_RETENTION_CONFIRMATION_TTL_MS = 30_000;
 
-/**
- * Fixed bound on the distinct preflight outcome reasons one host instance
- * diagnoses. Reasons already tracked are never logged again, and once the
- * bound is reached no new reason is tracked, so a hostile or varied prompt
- * stream cannot grow host diagnostics without limit.
- */
-const REASONING_ASSIST_OUTCOME_DIAGNOSTIC_LIMIT = 8;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** V2 stores `model` as `{ providerID, model, variant? }`; the Webview expects "providerID/model". */
+function normalizeConfigModel(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (isRecord(value) && typeof value.providerID === "string" && typeof value.model === "string") {
+    if (value.providerID.length > 0 && value.model.length > 0) return `${value.providerID}/${value.model}`;
+  }
+  return undefined;
 }
 
 function getStructuredRetentionSummary(metadata: Record<string, unknown>): unknown {
@@ -97,6 +207,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // UI クライアント側で管理する（TUI も同様の設計）。
   private activeSession: ChatSession | null = null;
   private sessionOperationGeneration = 0;
+  private connectionRefreshGeneration = 0;
+  private refreshGeneration = 0;
+  private activeSessionEventRevision = 0;
+  private reconnectRefreshState:
+    | { sessionId: string; generation: number; inFlight: boolean; needsRefresh: boolean; idleSeen: boolean }
+    | undefined;
   private sessionListRequestGeneration = 0;
   private chatSandboxStatus: ChatSandboxStatus | undefined;
   private memoryProviderStatus: MemoryProviderStatus;
@@ -105,19 +221,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly writeSystemPrompt: string | null;
   private readonly setChatSandboxSettings?: (settings: ChatSandboxSettings) => Promise<ChatSandboxStatus>;
   private readonly reasoningReviewController?: IReasoningReviewController;
+  private readonly getReasoningReviewController?: () => IReasoningReviewController | undefined;
+  private readonly getReasoningRuntime?: () => ReasoningReviewRuntime | undefined;
   private readonly reasoningReviewPreference?: ReasoningReviewPreferenceSeam;
   /**
    * Optional host-private reasoning-assist preflight adapter. Absent means the
    * assist is fully disabled and no hidden preflight work is ever performed.
    */
   private readonly reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter;
+  private readonly getReasoningAssistAdapter?: () => ReasoningAssistRestrictedReviewAdapter | undefined;
   /**
    * Optional host-private AF structure recorder for the reasoning-assist
    * preflight. Absent means AF facts are never requested.
    */
   private readonly reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder;
+  private readonly reasoningDiagnostics: ReasoningDiagnosticReporter;
+  private readonly reasoningDiagnosticNow: () => number;
   private reasoningReviewRuntime: ReasoningReviewRuntime | undefined;
   private readonly chatMcpPrefs?: ChatMcpPrefsStore;
+  private readonly chatMcpLocked?: () => readonly string[];
+  private readonly initialAppPaths?: AppPaths;
+  private agentAvailable = true;
+  private readonly onAgentConnected?: () => void;
+  private readonly onAgentUnavailable?: () => void;
   private readonly bundledResources: readonly BundledResourceMetadata[];
   private readonly bundledCommandNames: ReadonlySet<string>;
   private readonly promptQueues = new Map<string, PromptQueueState>();
@@ -133,27 +259,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * cancellation and supersession invalidate all pending publications.
    */
   private readonly reasoningAssistInFlight = new Map<string, ReasoningAssistInFlightEntry>();
+  private readonly reasoningAssistTurnBySession = new Map<string, ReasoningAssistTurnEntry>();
+  private readonly reasoningAssistBriefBySession = new Map<string, string>();
+  private readonly reasoningAssistBriefOperations = new Map<string, Promise<void>>();
+  private readonly reasoningReviewInFlight = new Map<string, ReasoningReviewInFlightEntry>();
+  private readonly reasoningAssistPluginAvailable: boolean;
   private readonly retentionPermissions = new Map<
     string,
     { sessionId: string; validPayload: boolean; expiresAt: number }
   >();
   private readonly invalidatedRetentionPermissions = new Set<string>();
-  /**
-   * Bounded preflight outcome diagnostics: each distinct reason key (the
-   * reason, plus for invalid results its `/`-joined parse sub-reason) is
-   * logged at most once per instance, up to
-   * `REASONING_ASSIST_OUTCOME_DIAGNOSTIC_LIMIT` distinct keys. No text,
-   * packet, token, or identifier is ever logged.
-   */
-  private readonly reasoningAssistOutcomeReasons = new Set<string>();
-  private reasoningAssistArgumentLogged = false;
-
   private clearRetentionPermissions(sessionId: string): void {
     for (const [permissionId, permission] of this.retentionPermissions) {
       if (permission.sessionId !== sessionId) continue;
-      this.retentionPermissions.delete(permissionId);
-      this.invalidatedRetentionPermissions.add(permissionId);
-      setTimeout(() => this.invalidatedRetentionPermissions.delete(permissionId), MEMORY_RETENTION_CONFIRMATION_TTL_MS);
+      this.invalidateRetentionPermission(permissionId);
+    }
+  }
+
+  private invalidateRetentionPermission(permissionId: string): void {
+    this.retentionPermissions.delete(permissionId);
+    this.invalidatedRetentionPermissions.add(permissionId);
+    setTimeout(() => this.invalidatedRetentionPermissions.delete(permissionId), MEMORY_RETENTION_CONFIRMATION_TTL_MS);
+  }
+
+  private invalidateAllRetentionPermissions(): void {
+    for (const permissionId of this.retentionPermissions.keys()) {
+      this.invalidateRetentionPermission(permissionId);
     }
   }
 
@@ -197,10 +328,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       memoryProviderStatus?: MemoryProviderStatus;
       memoryRetentionStatus?: MemoryRetentionStatus;
       reasoningReviewController?: IReasoningReviewController;
+      getReasoningReviewController?: () => IReasoningReviewController | undefined;
+      getReasoningRuntime?: () => ReasoningReviewRuntime | undefined;
       reasoningReviewPreference?: ReasoningReviewPreferenceSeam;
       reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter;
+      getReasoningAssistAdapter?: () => ReasoningAssistRestrictedReviewAdapter | undefined;
       reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder;
+      reasoningAssistPluginAvailable?: boolean;
+      reasoningDiagnostics?: ReasoningDiagnosticReporter;
+      reasoningDiagnosticNow?: () => number;
       chatMcpPrefs?: ChatMcpPrefsStore;
+      /** Servers denied by higher-authority (system/managed) configuration at the last inventory. */
+      chatMcpLocked?: () => readonly string[];
+      initialAppPaths?: AppPaths;
+      agentAvailable?: boolean;
+      onAgentConnected?: () => void;
+      onAgentUnavailable?: () => void;
       bundledCommandNames?: readonly string[];
       bundledResources?: readonly BundledResourceMetadata[];
     },
@@ -219,12 +362,44 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       state: "unavailable",
     };
     this.reasoningReviewController = options?.reasoningReviewController;
+    this.getReasoningReviewController = options?.getReasoningReviewController;
+    this.getReasoningRuntime = options?.getReasoningRuntime;
     this.reasoningReviewPreference = options?.reasoningReviewPreference;
     this.reasoningAssistAdapter = options?.reasoningAssistAdapter;
+    this.getReasoningAssistAdapter = options?.getReasoningAssistAdapter;
     this.reasoningAssistStructureRecorder = options?.reasoningAssistStructureRecorder;
+    this.reasoningAssistPluginAvailable = options?.reasoningAssistPluginAvailable ?? false;
+    this.reasoningDiagnostics = options?.reasoningDiagnostics ?? createReasoningDiagnosticReporter();
+    this.reasoningDiagnosticNow = createReasoningDiagnosticClock(options?.reasoningDiagnosticNow);
     this.chatMcpPrefs = options?.chatMcpPrefs;
+    this.chatMcpLocked = options?.chatMcpLocked;
+    this.initialAppPaths = options?.initialAppPaths;
+    this.agentAvailable = options?.agentAvailable ?? true;
+    this.onAgentConnected = options?.onAgentConnected;
+    this.onAgentUnavailable = options?.onAgentUnavailable;
     this.bundledResources = options?.bundledResources ?? [];
     this.bundledCommandNames = new Set(options?.bundledCommandNames ?? []);
+  }
+
+  setAgentAvailable(available: boolean): void {
+    if (this.agentAvailable === available) return;
+    this.agentAvailable = available;
+    if (available) return;
+
+    this.refreshGeneration++;
+    this.sessionOperationGeneration++;
+    this.sessionListRequestGeneration++;
+    this.connectionRefreshGeneration++;
+    this.reconnectRefreshState = undefined;
+    this.invalidateAllRetentionPermissions();
+    this.cancelAllReasoningAssistWork();
+    this.cancelAllReasoningReviewWork();
+    this.clearAllReasoningAssistBriefs();
+    try {
+      this.onAgentUnavailable?.();
+    } catch {
+      // Optional review readiness invalidation must not affect ordinary Chat.
+    }
   }
 
   resolveWebviewView(
@@ -259,8 +434,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       ) {
         return;
       }
+      if (
+        sessionId !== undefined &&
+        sessionId === this.activeSession?.id &&
+        this.isConversationMutationEvent(event.type)
+      ) {
+        this.activeSessionEventRevision++;
+        this.cancelReasoningReviewsForSession(sessionId, true);
+      }
       let eventForWebview = event;
       if (event.type === "permission.asked" && event.properties.permission === MEMORY_RETENTION_PERMISSION) {
+        // A rehydrated request with this identity is a fresh pending interaction.
+        this.invalidatedRetentionPermissions.delete(event.properties.id);
         const metadata = event.properties.metadata;
         const input = isRecord(metadata) ? getStructuredRetentionSummary(metadata) : undefined;
         const expiresAt = Date.now() + MEMORY_RETENTION_CONFIRMATION_TTL_MS;
@@ -288,7 +473,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (event.type === "session.status") {
         this.handleSessionStatus(event.properties.sessionID, event.properties.status.type);
       } else if (event.type === "session.deleted") {
+        if (this.activeSession?.id === event.properties.info.id) {
+          this.sessionOperationGeneration++;
+          if (this.reconnectRefreshState?.sessionId === event.properties.info.id) {
+            this.reconnectRefreshState = undefined;
+          }
+        }
         this.cancelReasoningAssist(event.properties.info.id);
+        this.cancelReasoningReviewsForSession(event.properties.info.id, false);
         this.clearPromptQueue(event.properties.info.id);
         this.clearRetentionPermissions(event.properties.info.id);
       } else if (event.type === "session.error") {
@@ -300,7 +492,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       // started on a previous connection must not surface on the new one.
       const streamEventType: string = event.type;
       if (streamEventType === "server.connected") {
+        // Invalidate old-generation assist work before asking the host to
+        // publish readiness for the replacement connection.
         this.cancelAllReasoningAssistWork();
+        this.cancelAllReasoningReviewWork();
+        this.clearAllReasoningAssistBriefs();
+        const sessionId = this.activeSession?.id;
+        const promptQueue = sessionId ? this.promptQueues.get(sessionId) : undefined;
+        if (promptQueue) {
+          promptQueue.reconnectIdleDispatch = promptQueue.currentDispatch?.admitted
+            ? promptQueue.currentDispatch
+            : undefined;
+        }
+        const refreshGeneration = ++this.connectionRefreshGeneration;
+        this.sessionOperationGeneration++;
+        this.invalidateAllRetentionPermissions();
+        this.setAgentAvailable(true);
+        this.onAgentConnected?.();
+        if (sessionId && !hiddenSessionRegistry.isHiddenSessionId(sessionId)) {
+          const state = {
+            sessionId,
+            generation: refreshGeneration,
+            inFlight: false,
+            needsRefresh: true,
+            idleSeen: false,
+          };
+          this.reconnectRefreshState = state;
+          this.startReconnectRefresh(state);
+        } else {
+          this.reconnectRefreshState = undefined;
+        }
       }
 
       // コンパクション完了時にセッション + メッセージを再取得して Webview に送信する
@@ -315,6 +536,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           .getSession(sessionId)
           .then((session) => this.publishActiveSession(session, operationGeneration, sessionId))
           .catch((err) => console.error("[OpenCode] Failed to refresh after compaction:", err));
+      }
+      if (
+        event.type === "session.status" &&
+        event.properties.status.type === "idle" &&
+        event.properties.sessionID === this.activeSession?.id
+      ) {
+        const state = this.reconnectRefreshState;
+        if (state?.sessionId === event.properties.sessionID && state.needsRefresh) {
+          state.idleSeen = true;
+          this.startReconnectRefresh(state);
+        }
       }
     });
 
@@ -337,32 +569,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleWebviewMessageInner(message: UIToHostMessage): Promise<void> {
+    if (!this.agentAvailable && AGENT_REQUIRED_MESSAGE_TYPES.has(message.type)) return;
+
     switch (message.type) {
       case "ready": {
         // Webview の初期化完了時に init メッセージを送信する（locale + toolConfig を統合）
-        const paths = await this.agent.getPath();
+        const paths = this.agentAvailable ? await this.agent.getPath() : this.initialAppPaths;
+        if (!paths) throw new Error("OpenCode Scribe could not initialize local Chat paths.");
         this.postMessage({
           type: "init",
           capabilities: this.agent.getCapabilities(),
           locale: vscode.env.language,
           paths,
         });
-        if (this.reasoningReviewController) {
+        const reasoningReviewController = this.getReasoningReviewController?.() ?? this.reasoningReviewController;
+        let publishedReasoningRuntime = false;
+        if (reasoningReviewController) {
           try {
-            const runtime = await this.reasoningReviewController.getRuntime();
-            this.reasoningReviewRuntime = runtime;
-            this.postMessage({ type: "reasoningRuntime", runtime });
+            const runtime = this.getReasoningRuntime?.() ?? (await reasoningReviewController.getRuntime());
+            this.publishReasoningRuntime(runtime);
+            publishedReasoningRuntime = true;
           } catch {
             // An optional review runtime must not block ordinary initialization.
           }
         }
-        this.publishReasoningReviewPreference();
+        if (!publishedReasoningRuntime) this.publishReasoningReviewPreference();
         this.postMessage({ type: "bundledResources", resources: [...this.bundledResources] });
         this.postMcpPrefs();
         await this.refresh(undefined, paths);
-        if (this.chatSandboxStatus) {
-          this.postMessage({ type: "chatSandboxStatus", status: this.chatSandboxStatus });
-        }
         // 初期アクティブエディタを送信する
         this.publishActiveEditor();
         break;
@@ -389,8 +623,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           waitingForBusy: false,
           pending: [],
         };
+        this.cancelReasoningReviewsForSession(prompt.sessionId, true);
         this.promptQueues.set(prompt.sessionId, state);
         if (state.active || state.pending.length > 0) {
+          this.cancelReasoningAssist(prompt.sessionId);
           state.pending.push(prompt);
           this.postQueuedPromptCount(prompt.sessionId, state.pending.length);
           break;
@@ -413,6 +649,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           if (typeof incoming.workspaceOptOut === "boolean") await seam.setWorkspaceOptOut(incoming.workspaceOptOut);
         }
         this.publishReasoningReviewPreference();
+        break;
+      }
+      case "requestReasoningReview": {
+        await this.startReasoningReview(message);
+        break;
+      }
+      case "cancelReasoningReview": {
+        await this.cancelReasoningReviewRequest(message);
         break;
       }
       case "createSession": {
@@ -455,6 +699,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "deleteSession": {
         this.cancelReasoningAssist(message.sessionId);
+        this.cancelReasoningReviewsForSession(message.sessionId, false);
         this.clearPromptQueue(message.sessionId);
         const deletesActiveSession = this.activeSession?.id === message.sessionId;
         const operationGeneration = deletesActiveSession
@@ -525,6 +770,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "abort": {
         this.cancelReasoningAssist(message.sessionId);
+        this.cancelReasoningReviewsForSession(message.sessionId, true);
         await this.agent.abortSession(message.sessionId);
         break;
       }
@@ -534,13 +780,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.agent.listAllProviders(),
           this.agent.getPath(),
         ]);
-        let configModel: string | undefined;
-        try {
-          const raw = await fs.readFile(path.join(paths.config, "opencode.json"), "utf-8");
-          configModel = JSON.parse(raw).model;
-        } catch {
-          // ignore
-        }
+        const configModel = await this.readConfigModel(paths);
         this.postMessage({
           type: "providers",
           providers: providersData.providers,
@@ -572,6 +812,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "revertToMessage": {
         this.cancelReasoningAssist(message.sessionId);
+        this.cancelReasoningReviewsForSession(message.sessionId, true);
         const operationGeneration = ++this.sessionOperationGeneration;
         ++this.sessionListRequestGeneration;
         const session = await this.agent.revertSession(message.sessionId, message.messageId);
@@ -580,6 +821,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "editAndResend": {
         this.cancelReasoningAssist(message.sessionId);
+        this.cancelReasoningReviewsForSession(message.sessionId, true);
         const operationGeneration = ++this.sessionOperationGeneration;
         ++this.sessionListRequestGeneration;
         // 1. 指定メッセージまで巻き戻す（そのメッセージ以降を削除）
@@ -598,6 +840,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "executeShell": {
+        this.requireCapability("shell");
+        if (typeof message.command !== "string") break;
+        await this.agent.executeShell(message.sessionId, message.command, message.model);
         break;
       }
       case "openConfigFile": {
@@ -636,24 +881,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 ),
               );
             } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              const choice = await vscode.window.showErrorMessage(
+              vscode.window.showErrorMessage(
                 vscode.l10n.t(
-                  "OpenCode Scribe: independent TUI handoff failed ({0}). Chat is still running. Open on the OpenCode server instead?",
-                  msg.slice(0, 200),
+                  "OpenCode Scribe: independent TUI handoff is unavailable. Chat is still running. Open the OpenCode TUI manually from a separate terminal if needed.",
                 ),
-                vscode.l10n.t("Open on chat server"),
               );
-              if (choice === vscode.l10n.t("Open on chat server")) {
-                await this.platformServices.openTerminal(serverUrl, sessionId);
-              }
             }
           },
         );
         break;
       }
       case "setModel": {
-        // Delegate model persistence to the agent (OpenCode-specific config file workaround)
+        // Delegate the in-memory model default to the agent.
         await this.agent.setModel!(message.model);
         this.postMessage({ type: "modelUpdated", model: message.model, default: {} });
         break;
@@ -700,11 +939,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "getSessionDiff": {
+        this.requireCapability("sessionDiff");
         const diffs = await this.agent.getSessionDiff(message.sessionId);
         this.postMessage({ type: "sessionDiff", sessionId: message.sessionId, diffs });
         break;
       }
       case "getSessionTodos": {
+        this.requireCapability("todo");
         const todos = await this.agent.getSessionTodos(message.sessionId);
         this.postMessage({ type: "sessionTodos", sessionId: message.sessionId, todos });
         break;
@@ -749,6 +990,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "shareSession": {
+        this.requireCapability("sessionShare");
         const operationGeneration = ++this.sessionOperationGeneration;
         ++this.sessionListRequestGeneration;
         const session = await this.agent.shareSession(message.sessionId);
@@ -760,6 +1002,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "unshareSession": {
+        this.requireCapability("sessionShare");
         const operationGeneration = ++this.sessionOperationGeneration;
         ++this.sessionListRequestGeneration;
         const session = await this.agent.unshareSession(message.sessionId);
@@ -771,6 +1014,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "undoSession": {
+        this.cancelReasoningReviewsForSession(message.sessionId, true);
         const operationGeneration = ++this.sessionOperationGeneration;
         ++this.sessionListRequestGeneration;
         const session = await this.agent.revertSession(message.sessionId, message.messageId);
@@ -778,6 +1022,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "redoSession": {
+        this.cancelReasoningReviewsForSession(message.sessionId, true);
         const operationGeneration = ++this.sessionOperationGeneration;
         ++this.sessionListRequestGeneration;
         const session = await this.agent.unrevertSession(message.sessionId);
@@ -798,56 +1043,96 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   async refresh(chatSandboxStatus?: ChatSandboxStatus, paths?: AppPaths): Promise<void> {
     if (!this.view) return;
 
+    if (!this.agentAvailable) {
+      this.postMessage({ type: "memoryStatus", status: this.memoryProviderStatus });
+      const sandboxStatus = this.chatSandboxStatus ?? chatSandboxStatus;
+      if (sandboxStatus) this.postMessage({ type: "chatSandboxStatus", status: sandboxStatus });
+      return;
+    }
+
+    const refreshGeneration = ++this.refreshGeneration;
+    const isCurrentRefresh = () => refreshGeneration === this.refreshGeneration;
     const operationGeneration = this.sessionOperationGeneration;
     const activeSessionId = this.activeSession?.id;
     const listRequestGeneration = ++this.sessionListRequestGeneration;
     const resolvedPaths = paths ?? (await this.agent.getPath());
-    const sessionsPromise = this.agent.listSessions();
-    const activeSessionPromise = activeSessionId ? this.agent.getSession(activeSessionId) : Promise.resolve(null);
-    const [sessions, refreshedActiveSession, providersData, allProviders, agents, mcpStatus] = await Promise.all([
-      sessionsPromise,
-      activeSessionPromise,
-      this.agent.getProviders(),
-      this.agent.listAllProviders(),
-      this.agent.getAgents(),
-      this.agent.getMcpStatus(),
-    ]);
+    if (!isCurrentRefresh()) return;
+    const [sessionsResult, activeSessionResult, providersResult, allProvidersResult, agentsResult, mcpStatusResult] =
+      await Promise.allSettled([
+        this.agent.listSessions(),
+        activeSessionId ? this.agent.getSession(activeSessionId) : Promise.resolve(null),
+        this.agent.getProviders(),
+        this.agent.listAllProviders(),
+        this.agent.getAgents(),
+        this.agent.getMcpStatus(),
+      ]);
+    if (!isCurrentRefresh()) return;
+    // One failed catalog must not suppress the others; log only the item name.
+    const labelled = [
+      ["sessions", sessionsResult],
+      ["activeSession", activeSessionResult],
+      ["providers", providersResult],
+      ["allProviders", allProvidersResult],
+      ["agents", agentsResult],
+      ["mcpStatus", mcpStatusResult],
+    ] as const;
+    const failed = labelled.filter(([, result]) => result.status === "rejected").map(([label]) => label);
+    if (failed.length > 0) {
+      console.error(`[OpenCode] Refresh could not load: ${failed.join(", ")}.`);
+    }
 
     const sessionOperationIsCurrent = operationGeneration === this.sessionOperationGeneration;
     const listRequestIsCurrent = listRequestGeneration === this.sessionListRequestGeneration;
+    const refreshedActiveSession = activeSessionResult.status === "fulfilled" ? activeSessionResult.value : null;
     if (sessionOperationIsCurrent && this.activeSession?.id === activeSessionId && this.activeSession) {
       this.activeSession = refreshedActiveSession ?? this.activeSession;
     }
 
-    let configModel: string | undefined;
-    try {
-      const raw = await fs.readFile(path.join(resolvedPaths.config, "opencode.json"), "utf-8");
-      configModel = JSON.parse(raw).model;
-    } catch {}
+    const configModel = await this.readConfigModel(resolvedPaths);
+    if (!isCurrentRefresh()) return;
 
-    if (sessionOperationIsCurrent && listRequestIsCurrent) {
-      this.postMessage({ type: "sessions", sessions: hiddenSessionRegistry.filterSessions(sessions) });
+    if (sessionsResult.status === "fulfilled" && sessionOperationIsCurrent && listRequestIsCurrent) {
+      this.postMessage({ type: "sessions", sessions: hiddenSessionRegistry.filterSessions(sessionsResult.value) });
     }
     if (sessionOperationIsCurrent && this.activeSession?.id === activeSessionId) {
-      await this.publishActiveSession(this.activeSession, operationGeneration, activeSessionId);
+      await this.publishActiveSession(this.activeSession, operationGeneration, activeSessionId, isCurrentRefresh);
     }
-    this.postMessage({
-      type: "providers",
-      providers: providersData.providers,
-      allProviders,
-      default: providersData.default,
-      configModel,
-    });
-    this.postMessage({ type: "agents", agents: hiddenSessionRegistry.filterAgents(agents) });
-    this.postMessage({ type: "mcpStatus", status: mcpStatus });
+    if (!isCurrentRefresh()) return;
+    if (providersResult.status === "fulfilled" && allProvidersResult.status === "fulfilled") {
+      this.postMessage({
+        type: "providers",
+        providers: providersResult.value.providers,
+        allProviders: allProvidersResult.value,
+        default: providersResult.value.default,
+        configModel,
+      });
+    }
+    if (agentsResult.status === "fulfilled") {
+      this.postMessage({ type: "agents", agents: hiddenSessionRegistry.filterAgents(agentsResult.value) });
+    }
+    if (mcpStatusResult.status === "fulfilled") {
+      this.postMessage({ type: "mcpStatus", status: mcpStatusResult.value });
+    }
     this.postMessage({ type: "memoryStatus", status: this.memoryProviderStatus });
-    if (chatSandboxStatus) {
-      this.postMessage({ type: "chatSandboxStatus", status: chatSandboxStatus });
+    const sandboxStatus = this.chatSandboxStatus ?? chatSandboxStatus;
+    if (sandboxStatus) {
+      this.postMessage({ type: "chatSandboxStatus", status: sandboxStatus });
+    }
+  }
+
+  /** Reads the configured default model as the "providerID/model" string the Webview consumes. */
+  private async readConfigModel(paths: AppPaths): Promise<string | undefined> {
+    try {
+      const raw = await fs.readFile(path.join(paths.config, "opencode.json"), "utf-8");
+      return normalizeConfigModel(JSON.parse(raw).model);
+    } catch {
+      return undefined;
     }
   }
 
   publishChatSandboxStatus(status: ChatSandboxStatus): void {
     this.chatSandboxStatus = status;
+    if (status.applying) this.refreshGeneration += 1;
     this.postMessage({ type: "chatSandboxStatus", status });
   }
 
@@ -860,8 +1145,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     session: ChatSession | null,
     operationGeneration: number,
     expectedSessionId: string | undefined,
+    isCurrent: () => boolean = () => true,
   ): Promise<boolean> {
     if (
+      !isCurrent() ||
       operationGeneration !== this.sessionOperationGeneration ||
       (session && session.id !== expectedSessionId) ||
       (!session && expectedSessionId !== undefined)
@@ -870,17 +1157,131 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     if (session && hiddenSessionRegistry.isHiddenSessionId(session.id)) return false;
 
+    const previousSessionId = this.activeSession?.id;
+    if (previousSessionId && previousSessionId !== session?.id) {
+      this.cancelReasoningReviewsForSession(previousSessionId, false);
+      void this.clearReasoningAssistBrief(previousSessionId);
+    }
     this.activeSession = session;
     this.postMessage({ type: "activeSession", session });
     if (!session) return true;
     this.postQueuedPromptCount(session.id, this.promptQueues.get(session.id)?.pending.length ?? 0);
 
     const messages = await this.agent.getMessages(session.id);
-    if (operationGeneration !== this.sessionOperationGeneration || this.activeSession?.id !== session.id) {
+    if (
+      !isCurrent() ||
+      operationGeneration !== this.sessionOperationGeneration ||
+      this.activeSession?.id !== session.id
+    ) {
       return false;
     }
     this.postMessage({ type: "messages", sessionId: session.id, messages });
     return true;
+  }
+
+  private isConversationMutationEvent(eventType: string): boolean {
+    return [
+      "session.updated",
+      "session.deleted",
+      "session.error",
+      "session.status",
+      "session.compacted",
+      "session.next.context.updated",
+      "session.next.step.ended",
+      "session.next.compaction.started",
+      "session.next.compaction.ended",
+      "session.next.reasoning.started",
+      "session.next.reasoning.delta",
+      "session.next.reasoning.ended",
+      "message.updated",
+      "message.removed",
+      "message.part.updated",
+      "message.part.removed",
+      "message.part.delta",
+    ].includes(eventType);
+  }
+
+  private startReconnectRefresh(state: {
+    sessionId: string;
+    generation: number;
+    inFlight: boolean;
+    needsRefresh: boolean;
+    idleSeen: boolean;
+  }): void {
+    if (
+      !state.needsRefresh ||
+      state.inFlight ||
+      this.reconnectRefreshState !== state ||
+      state.generation !== this.connectionRefreshGeneration ||
+      state.sessionId !== this.activeSession?.id
+    ) {
+      return;
+    }
+    state.inFlight = true;
+    state.idleSeen = false;
+    void this.refreshActiveSessionAfterReconnect(state);
+  }
+
+  private async refreshActiveSessionAfterReconnect(state: {
+    sessionId: string;
+    generation: number;
+    inFlight: boolean;
+    needsRefresh: boolean;
+    idleSeen: boolean;
+  }): Promise<void> {
+    const { sessionId, generation: refreshGeneration } = state;
+    const operationGeneration = this.sessionOperationGeneration;
+    const eventRevision = this.activeSessionEventRevision;
+    try {
+      const [session, messages] = await Promise.all([
+        this.agent.getSession(sessionId),
+        this.agent.getMessages(sessionId),
+      ]);
+      const current = () =>
+        refreshGeneration === this.connectionRefreshGeneration &&
+        operationGeneration === this.sessionOperationGeneration &&
+        this.activeSession?.id === sessionId &&
+        !hiddenSessionRegistry.isHiddenSessionId(sessionId);
+      const messagesAreLocal =
+        Array.isArray(messages) &&
+        messages.every((message) => {
+          if (!isRecord(message) || !isRecord(message.info) || !Array.isArray(message.parts)) return false;
+          const messageId = message.info.id;
+          return (
+            typeof messageId === "string" &&
+            message.info.sessionID === sessionId &&
+            message.parts.every(
+              (part) => isRecord(part) && part.sessionID === sessionId && part.messageID === messageId,
+            )
+          );
+        });
+      if (!current() || !session || session.id !== sessionId || !messagesAreLocal) return;
+      if (eventRevision !== this.activeSessionEventRevision) {
+        state.needsRefresh = true;
+        return;
+      }
+      this.activeSession = session;
+      this.postMessage({ type: "activeSession", session });
+      this.postQueuedPromptCount(sessionId, this.promptQueues.get(sessionId)?.pending.length ?? 0);
+      this.postMessage({ type: "messages", sessionId, messages });
+      state.needsRefresh = false;
+    } catch {
+      // Reconnect reads are best-effort; never log server response payloads.
+      if (this.reconnectRefreshState === state && refreshGeneration === this.connectionRefreshGeneration) {
+        console.error("[OpenCode] Failed to refresh active session after reconnect.");
+      }
+    } finally {
+      state.inFlight = false;
+      if (
+        this.reconnectRefreshState === state &&
+        refreshGeneration === this.connectionRefreshGeneration &&
+        this.activeSession?.id === sessionId &&
+        state.needsRefresh &&
+        state.idleSeen
+      ) {
+        this.startReconnectRefresh(state);
+      }
+    }
   }
 
   /** アクティブなエディタまたはファイル-backed custom tab から FileAttachment を生成する。 */
@@ -918,6 +1319,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: "queuedPrompts", sessionId, count });
   }
 
+  private requireCapability(capability: keyof ReturnType<IAgent["getCapabilities"]>): void {
+    if (!this.agent.getCapabilities()[capability]) {
+      throw new Error(`OpenCode operation unavailable: ${capability}.`);
+    }
+  }
+
   private handleSessionStatus(sessionId: string, status: "busy" | "idle"): void {
     if (sessionId !== this.activeSession?.id) return;
     const state = this.promptQueues.get(sessionId);
@@ -925,15 +1332,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const activeState = state ?? { active: true, waitingForBusy: false, pending: [] };
       activeState.active = true;
       activeState.waitingForBusy = false;
+      activeState.reconnectIdleDispatch = undefined;
       this.promptQueues.set(sessionId, activeState);
       return;
     }
     if (!state?.active) return;
     if (state.waitingForBusy) {
-      return;
+      const reconnectDispatch = state.reconnectIdleDispatch;
+      if (reconnectDispatch !== state.currentDispatch || !reconnectDispatch?.admitted) return;
+      state.waitingForBusy = false;
+      state.reconnectIdleDispatch = undefined;
+    }
+    const turn = this.reasoningAssistTurnBySession.get(sessionId);
+    if (turn) {
+      turn.active = false;
+      const entry = this.reasoningAssistInFlight.get(sessionId);
+      if (entry && !entry.applied && entry.lastToken !== undefined) {
+        this.postMessage({ type: "reasoningAssistCleared", sessionId, promptToken: entry.lastToken });
+        entry.lastToken = undefined;
+      }
+      void this.clearReasoningAssistBrief(sessionId, true, turn.turnId);
+    } else {
+      void this.clearReasoningAssistBrief(sessionId);
     }
     if (state.pending.length === 0) {
       state.active = false;
+      state.currentDispatch = undefined;
       return;
     }
     state.active = true;
@@ -960,12 +1384,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private cancelReasoningAssist(sessionId: string): void {
     this.reasoningAssistGenerations.set(sessionId, (this.reasoningAssistGenerations.get(sessionId) ?? 0) + 1);
     const entry = this.reasoningAssistInFlight.get(sessionId);
-    if (!entry) return;
-    this.reasoningAssistInFlight.delete(sessionId);
-    if (entry.lastToken !== undefined) {
-      this.postMessage({ type: "reasoningAssistCleared", sessionId, promptToken: entry.lastToken });
+    const turn = this.reasoningAssistTurnBySession.get(sessionId);
+    if (entry) {
+      this.reasoningAssistInFlight.delete(sessionId);
+      if (entry.lastToken !== undefined) {
+        this.postMessage({ type: "reasoningAssistCleared", sessionId, promptToken: entry.lastToken });
+      }
+      entry.controller.abort();
     }
-    entry.controller.abort();
+    if (turn) {
+      turn.active = false;
+      this.reasoningAssistTurnBySession.delete(sessionId);
+    }
+    const turnId = turn?.turnId ?? this.reasoningAssistBriefBySession.get(sessionId);
+    if (entry || turn || this.reasoningAssistBriefBySession.has(sessionId)) {
+      void this.clearReasoningAssistBrief(sessionId, true, turnId);
+    }
   }
 
   /**
@@ -974,8 +1408,365 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * surface later.
    */
   cancelAllReasoningAssistWork(): void {
-    for (const sessionId of [...this.reasoningAssistInFlight.keys()]) {
+    const sessionIds = new Set([
+      ...this.reasoningAssistInFlight.keys(),
+      ...this.reasoningAssistTurnBySession.keys(),
+      ...this.reasoningAssistBriefBySession.keys(),
+    ]);
+    for (const sessionId of sessionIds) {
       this.cancelReasoningAssist(sessionId);
+    }
+    this.clearAllReasoningAssistBriefs();
+  }
+
+  private enqueueReasoningAssistBriefOperation<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.reasoningAssistBriefOperations.get(sessionId) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    const queued = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.reasoningAssistBriefOperations.set(sessionId, queued);
+    void queued.then(() => {
+      if (this.reasoningAssistBriefOperations.get(sessionId) === queued) {
+        this.reasoningAssistBriefOperations.delete(sessionId);
+      }
+    });
+    return current;
+  }
+
+  private async storeReasoningAssistBrief(
+    sessionId: string,
+    turnId: string,
+    brief: string,
+  ): Promise<ReasoningAssistBriefDeliveryResult> {
+    if (
+      typeof brief !== "string" ||
+      brief.length === 0 ||
+      brief.length > SCRIBE_REASONING_CONTEXT_MAX_BRIEF_CHARS ||
+      Buffer.byteLength(brief, "utf8") > SCRIBE_REASONING_CONTEXT_MAX_BRIEF_BYTES ||
+      !this.reasoningAssistPluginAvailable ||
+      this.reasoningAssistTurnBySession.get(sessionId)?.turnId !== turnId
+    ) {
+      return { accepted: false, internalGraceWaitMs: 0 };
+    }
+    this.reasoningAssistBriefBySession.set(sessionId, turnId);
+    const result = await this.enqueueReasoningAssistBriefOperation(sessionId, () =>
+      this.agent.setReasoningAssistBrief(sessionId, turnId, brief),
+    );
+    if (!result.accepted && this.reasoningAssistBriefBySession.get(sessionId) === turnId) {
+      this.reasoningAssistBriefBySession.delete(sessionId);
+    }
+    if (result.internalGraceWaitMs > 0) {
+      this.emitReasoningDiagnostic({ stage: "brief", outcome: "grace-waited", elapsedMs: result.internalGraceWaitMs });
+    }
+    return result;
+  }
+
+  private async clearReasoningAssistBrief(
+    sessionId: string,
+    force = false,
+    requestedTurnId?: string,
+  ): Promise<boolean> {
+    const queued = this.reasoningAssistBriefOperations.get(sessionId);
+    const activeTurnId =
+      requestedTurnId ??
+      this.reasoningAssistBriefBySession.get(sessionId) ??
+      this.reasoningAssistTurnBySession.get(sessionId)?.turnId;
+    if (!force && activeTurnId === undefined) {
+      await queued?.catch(() => undefined);
+      return true;
+    }
+    if (activeTurnId !== undefined && this.reasoningAssistBriefBySession.get(sessionId) === activeTurnId) {
+      this.reasoningAssistBriefBySession.delete(sessionId);
+    }
+    const result = await this.enqueueReasoningAssistBriefOperation(sessionId, () =>
+      this.agent.clearReasoningAssistBrief(sessionId, activeTurnId),
+    );
+    if (result.internalGraceWaitMs > 0) {
+      this.emitReasoningDiagnostic({ stage: "brief", outcome: "grace-waited", elapsedMs: result.internalGraceWaitMs });
+    }
+    this.emitReasoningDiagnostic({ stage: "brief", outcome: result.cleared ? "cleared" : "failed" });
+    return result.cleared;
+  }
+
+  private clearAllReasoningAssistBriefs(): void {
+    const sessionIds = new Set([
+      ...this.reasoningAssistTurnBySession.keys(),
+      ...this.reasoningAssistBriefBySession.keys(),
+      ...this.reasoningAssistInFlight.keys(),
+    ]);
+    for (const sessionId of sessionIds) {
+      const turn = this.reasoningAssistTurnBySession.get(sessionId);
+      if (turn) {
+        turn.active = false;
+        this.reasoningAssistTurnBySession.delete(sessionId);
+      }
+      const turnId = turn?.turnId ?? this.reasoningAssistBriefBySession.get(sessionId);
+      void this.clearReasoningAssistBrief(sessionId, true, turnId);
+    }
+  }
+
+  /** Publish the current host-owned AF/restricted-review readiness snapshot. */
+  publishReasoningRuntime(runtime: ReasoningReviewRuntime): void {
+    this.reasoningReviewRuntime = runtime;
+    this.publishReasoningMessage({ type: "reasoningRuntime", runtime });
+    this.publishReasoningReviewPreference();
+  }
+
+  /** Cancel and await every manual review before a holder generation is replaced. */
+  cancelAllReasoningReviewWork(): void {
+    for (const entry of [...this.reasoningReviewInFlight.values()]) {
+      void this.cancelReasoningReviewEntry(entry, true);
+    }
+  }
+
+  private async startReasoningReview(
+    request: Extract<UIToHostMessage, { type: "requestReasoningReview" }>,
+  ): Promise<void> {
+    const startedAt = this.reasoningDiagnosticNow();
+    if (!SAFE_REVIEW_REQUEST_ID.test(request.requestId)) {
+      this.emitManualReviewDiagnostic("manual-request", "invalid-request", startedAt);
+      return;
+    }
+    if (
+      !this.agentAvailable ||
+      this.activeSession?.id !== request.sessionId ||
+      hiddenSessionRegistry.isHiddenSessionId(request.sessionId)
+    ) {
+      this.emitManualReviewDiagnostic(
+        "manual-request",
+        !this.agentAvailable ? "runtime-unready" : "invalid-request",
+        startedAt,
+      );
+      return;
+    }
+
+    const key = this.reasoningReviewKey(request.sessionId, request.messageId);
+    if (this.reasoningReviewInFlight.has(key)) {
+      this.emitManualReviewDiagnostic("manual-request", "duplicate-request", startedAt);
+      return;
+    }
+    const entry: ReasoningReviewInFlightEntry = {
+      requestId: request.requestId,
+      sessionId: request.sessionId,
+      messageId: request.messageId,
+      sessionOperationGeneration: this.sessionOperationGeneration,
+      connectionRefreshGeneration: this.connectionRefreshGeneration,
+      sessionEventRevision: this.activeSessionEventRevision,
+      startedAt,
+      cancelled: false,
+      cancellationAcknowledged: false,
+      completion: Promise.resolve(),
+    };
+    this.reasoningReviewInFlight.set(key, entry);
+    this.emitManualReviewDiagnostic("manual-request", "started");
+    const completion = this.runReasoningReview(entry);
+    entry.completion = completion;
+    await completion;
+  }
+
+  private async runReasoningReview(entry: ReasoningReviewInFlightEntry): Promise<void> {
+    const isCurrent = () => this.isReasoningReviewCurrent(entry);
+    try {
+      let messages: ChatMessageWithParts[];
+      try {
+        messages = await this.agent.getMessages(entry.sessionId);
+      } catch {
+        if (isCurrent()) {
+          this.emitManualReviewDiagnostic("manual-request", "message-load-failed", entry.startedAt);
+          this.publishReasoningReviewResult(entry, unavailableReasoningReviewSummary(entry.messageId));
+        }
+        return;
+      }
+      if (!isCurrent()) {
+        this.emitManualReviewDiagnostic("manual-review", "stale", entry.startedAt);
+        return;
+      }
+      const target = messages.find((message) => message.info.id === entry.messageId);
+      if (!target) {
+        this.emitManualReviewDiagnostic("manual-request", "message-missing", entry.startedAt);
+        this.publishReasoningReviewResult(entry, unavailableReasoningReviewSummary(entry.messageId));
+        return;
+      }
+      const validation = validateCompletedScoutAnswer(target, entry.sessionId);
+      if (!validation.ok) {
+        this.emitManualReviewDiagnostic("manual-request", validation.outcome, entry.startedAt);
+        this.publishReasoningReviewResult(entry, unavailableReasoningReviewSummary(entry.messageId));
+        return;
+      }
+      const sourceText = validation.text;
+      this.emitManualReviewDiagnostic("manual-request", "answer-valid", entry.startedAt);
+
+      const controller = this.getReasoningReviewController
+        ? this.getReasoningReviewController()
+        : this.reasoningReviewController;
+      if (!controller) {
+        this.emitManualReviewDiagnostic("manual-provider", "runtime-unready", entry.startedAt);
+        this.publishReasoningReviewResult(entry, unavailableReasoningReviewSummary(entry.messageId));
+        return;
+      }
+      let runtime: ReasoningReviewRuntime | undefined;
+      try {
+        runtime = this.getReasoningRuntime
+          ? this.getReasoningRuntime()
+          : (this.reasoningReviewRuntime ?? (await controller.getRuntime()));
+      } catch {
+        runtime = undefined;
+      }
+      if (!isCurrent()) {
+        this.emitManualReviewDiagnostic("manual-review", "stale", entry.startedAt);
+        return;
+      }
+      if (runtime?.state !== "available") {
+        this.emitManualReviewDiagnostic("manual-provider", "runtime-unready", entry.startedAt);
+        this.publishReasoningReviewResult(entry, unavailableReasoningReviewSummary(entry.messageId));
+        return;
+      }
+
+      entry.controller = controller;
+      const publishProgress = (stage: ReasoningReviewProgressStage): void => {
+        if (!isCurrent()) return;
+        this.postMessage({
+          type: "reasoningReviewProgress",
+          sessionId: entry.sessionId,
+          messageId: entry.messageId,
+          requestId: entry.requestId,
+          stage,
+        });
+      };
+      publishProgress("claimProjection");
+      const summary = await controller.review({
+        sessionId: entry.sessionId,
+        messageId: entry.messageId,
+        sourceText,
+        invocation: "manual",
+        onProgress: publishProgress,
+      });
+      if (!isCurrent()) {
+        this.emitManualReviewDiagnostic("manual-review", "stale", entry.startedAt);
+        return;
+      }
+      this.emitManualReviewDiagnostic(
+        "manual-review",
+        summary.status === "unavailable" ? "unavailable" : summary.status === "audit_failed" ? "failed" : "completed",
+        entry.startedAt,
+      );
+      this.publishReasoningReviewResult(entry, normalizeReasoningReviewSummary(summary, entry.messageId));
+    } catch {
+      if (isCurrent()) {
+        this.emitManualReviewDiagnostic("manual-review", "failed", entry.startedAt);
+        this.publishReasoningReviewResult(entry, unavailableReasoningReviewSummary(entry.messageId));
+      } else {
+        this.emitManualReviewDiagnostic("manual-review", "stale", entry.startedAt);
+      }
+    } finally {
+      const key = this.reasoningReviewKey(entry.sessionId, entry.messageId);
+      if (this.reasoningReviewInFlight.get(key) === entry) this.reasoningReviewInFlight.delete(key);
+    }
+  }
+
+  private publishReasoningReviewResult(entry: ReasoningReviewInFlightEntry, summary: ReasoningReviewSummary): void {
+    const startedAt = this.reasoningDiagnosticNow();
+    if (!this.isReasoningReviewCurrent(entry)) {
+      this.emitManualReviewDiagnostic("manual-publication", "stale");
+      return;
+    }
+    let outcome: ReasoningDiagnosticOutcome = "publication-failed";
+    try {
+      this.postMessage({
+        type: "reasoningReviewResult",
+        sessionId: entry.sessionId,
+        messageId: entry.messageId,
+        requestId: entry.requestId,
+        summary: normalizeReasoningReviewSummary(summary, entry.messageId),
+      });
+      outcome = "result-published";
+    } finally {
+      this.emitManualReviewDiagnostic("manual-publication", outcome, startedAt);
+    }
+  }
+
+  private async cancelReasoningReviewRequest(
+    request: Extract<UIToHostMessage, { type: "cancelReasoningReview" }>,
+  ): Promise<void> {
+    if (!SAFE_REVIEW_REQUEST_ID.test(request.requestId)) return;
+    const entry = this.reasoningReviewInFlight.get(this.reasoningReviewKey(request.sessionId, request.messageId));
+    if (!entry || entry.requestId !== request.requestId) return;
+    await this.cancelReasoningReviewEntry(entry, true);
+  }
+
+  private async cancelReasoningReviewEntry(entry: ReasoningReviewInFlightEntry, acknowledge: boolean): Promise<void> {
+    const key = this.reasoningReviewKey(entry.sessionId, entry.messageId);
+    if (!entry.cancelled) {
+      entry.cancelled = true;
+      if (this.reasoningReviewInFlight.get(key) === entry) this.reasoningReviewInFlight.delete(key);
+      try {
+        entry.controller?.cancel(entry.sessionId, entry.messageId);
+      } catch {
+        // Cancellation is best effort; the controller's generation guard still suppresses publication.
+      }
+      this.emitManualReviewDiagnostic("manual-review", "cancelled", entry.startedAt);
+    }
+    await entry.completion.catch(() => undefined);
+    if (
+      acknowledge &&
+      !entry.cancellationAcknowledged &&
+      !hiddenSessionRegistry.isHiddenSessionId(entry.sessionId) &&
+      this.agentAvailable &&
+      this.activeSession?.id === entry.sessionId
+    ) {
+      entry.cancellationAcknowledged = true;
+      const startedAt = this.reasoningDiagnosticNow();
+      let outcome: ReasoningDiagnosticOutcome = "publication-failed";
+      try {
+        this.postMessage({
+          type: "reasoningReviewCancelled",
+          sessionId: entry.sessionId,
+          messageId: entry.messageId,
+          requestId: entry.requestId,
+        });
+        outcome = "cancellation-published";
+      } finally {
+        this.emitManualReviewDiagnostic("manual-publication", outcome, startedAt);
+      }
+    }
+  }
+
+  private cancelReasoningReviewsForSession(sessionId: string, acknowledge: boolean): void {
+    for (const entry of [...this.reasoningReviewInFlight.values()]) {
+      if (entry.sessionId === sessionId) void this.cancelReasoningReviewEntry(entry, acknowledge);
+    }
+  }
+
+  private reasoningReviewKey(sessionId: string, messageId: string): string {
+    return `${sessionId}\u0000${messageId}`;
+  }
+
+  private isReasoningReviewCurrent(entry: ReasoningReviewInFlightEntry): boolean {
+    return (
+      !entry.cancelled &&
+      this.reasoningReviewInFlight.get(this.reasoningReviewKey(entry.sessionId, entry.messageId)) === entry &&
+      this.agentAvailable &&
+      this.activeSession?.id === entry.sessionId &&
+      !hiddenSessionRegistry.isHiddenSessionId(entry.sessionId) &&
+      this.sessionOperationGeneration === entry.sessionOperationGeneration &&
+      this.connectionRefreshGeneration === entry.connectionRefreshGeneration &&
+      this.activeSessionEventRevision === entry.sessionEventRevision
+    );
+  }
+
+  private emitManualReviewDiagnostic(
+    stage: Extract<ReasoningDiagnosticStage, `manual-${string}`>,
+    outcome: ReasoningDiagnosticOutcome,
+    startedAt?: number,
+  ): void {
+    try {
+      const elapsedMs =
+        startedAt === undefined ? undefined : elapsedReasoningMilliseconds(this.reasoningDiagnosticNow, startedAt);
+      this.reasoningDiagnostics({ stage, outcome, ...(elapsedMs === undefined ? {} : { elapsedMs }) });
+    } catch {
+      // Manual-review diagnostics are optional and cannot alter review behavior.
     }
   }
 
@@ -986,6 +1777,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * feature without a workspace opt-out on an available runtime.
    */
   private isReasoningAssistEligible(prompt: NormalPrompt): boolean {
+    if (!this.reasoningAssistPluginAvailable) return false;
     if (typeof prompt.text !== "string" || prompt.text.length === 0) return false;
     if (prompt.files && prompt.files.length > 0) return false;
     if (prompt.bundledCommand) return false;
@@ -995,147 +1787,291 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return this.reasoningReviewRuntime?.state === "available";
   }
 
-  /**
-   * Record one bounded preflight outcome diagnostic. Each distinct reason key
-   * is logged at most once per host instance and no more than
-   * `REASONING_ASSIST_OUTCOME_DIAGNOSTIC_LIMIT` distinct reason keys are ever
-   * tracked; ordinary outcomes are informational while every other reason is
-   * an error-level diagnostic. For an invalid stage result the key composes
-   * `reason/parseReason` so each bounded schema-validation sub-reason gets its
-   * own line, and the message additionally names the numeric stage text
-   * length. A timed-out stage or expired preflight names the numeric elapsed
-   * stage time instead. It never names raw stage text, packet content, or
-   * identifiers.
-   */
-  private logReasoningAssistOutcome(
-    reason: ReasoningAssistUnchangedReason,
-    stageTextLength?: number,
-    parseReason?: ArchitectNoAssistReason,
-    stageElapsedMs?: number,
-  ): void {
-    const reasonKey = parseReason === undefined ? reason : `${reason}/${parseReason}`;
-    if (this.reasoningAssistOutcomeReasons.has(reasonKey)) return;
-    if (this.reasoningAssistOutcomeReasons.size >= REASONING_ASSIST_OUTCOME_DIAGNOSTIC_LIMIT) return;
-    this.reasoningAssistOutcomeReasons.add(reasonKey);
-    const stageText = stageTextLength === undefined ? "" : ` stageTextLength=${stageTextLength}`;
-    const stageElapsed = stageElapsedMs === undefined ? "" : ` stageElapsedMs=${stageElapsedMs}`;
-    const message = `[opencode-chat] Reasoning assist preflight outcome (${reasonKey})${stageText}${stageElapsed}`;
-    if (reason === "ordinary") console.log(message);
-    else console.error(message);
+  private emitReasoningDiagnostic(event: unknown): void {
+    try {
+      this.reasoningDiagnostics(event);
+    } catch {
+      // The optional host diagnostics seam is never part of prompt behavior.
+    }
+  }
+
+  private publishReasoningMessage(message: HostToUIMessage): void {
+    const startedAt = this.reasoningDiagnosticNow();
+    let outcome: "attempted" | "publication-failed" = "publication-failed";
+    try {
+      this.postMessage(message);
+      outcome = "attempted";
+    } finally {
+      const elapsedMs = elapsedReasoningMilliseconds(this.reasoningDiagnosticNow, startedAt);
+      this.emitReasoningDiagnostic({
+        stage: "publication",
+        outcome,
+        ...(elapsedMs === undefined ? {} : { elapsedMs }),
+      });
+    }
   }
 
   private async dispatchPrompt(prompt: NormalPrompt, state: PromptQueueState): Promise<void> {
+    const dispatch: PromptDispatch = { admitted: false };
+    const dispatchStartedAt = this.reasoningDiagnosticNow();
+    let dispatchDiagnosticRecorded = false;
+    const recordDispatch = (outcome: "dispatched" | "dispatch-failed"): void => {
+      if (dispatchDiagnosticRecorded) return;
+      dispatchDiagnosticRecorded = true;
+      const elapsedMs = elapsedReasoningMilliseconds(this.reasoningDiagnosticNow, dispatchStartedAt);
+      this.emitReasoningDiagnostic({
+        stage: "dispatch",
+        outcome,
+        ...(elapsedMs === undefined ? {} : { elapsedMs }),
+      });
+    };
+    state.currentDispatch = dispatch;
+    state.reconnectIdleDispatch = undefined;
+    if (
+      this.reasoningAssistInFlight.has(prompt.sessionId) ||
+      this.reasoningAssistTurnBySession.has(prompt.sessionId) ||
+      this.reasoningAssistBriefBySession.has(prompt.sessionId)
+    ) {
+      this.cancelReasoningAssist(prompt.sessionId);
+    }
+    let turnId: string | undefined;
+    let turn: ReasoningAssistTurnEntry | undefined;
+    let assistEntry: ReasoningAssistInFlightEntry | undefined;
+    let resolveAdmission: (admitted: boolean) => void = () => undefined;
+    let admissionSettled = false;
+    const admission = new Promise<boolean>((resolve) => {
+      resolveAdmission = resolve;
+    });
+    const settleAdmission = (admitted: boolean): void => {
+      if (admissionSettled) return;
+      admissionSettled = true;
+      resolveAdmission(admitted);
+    };
     try {
-      const adapter = this.reasoningAssistAdapter;
-      let assist: Readonly<{ brief: string; promptToken: string }> | undefined;
+      const adapter = this.getReasoningAssistAdapter?.() ?? this.reasoningAssistAdapter;
       if (adapter && this.isReasoningAssistEligible(prompt)) {
-        const generation = this.reasoningAssistGenerations.get(prompt.sessionId) ?? 0;
-        const entry: ReasoningAssistInFlightEntry = { generation, controller: new AbortController() };
-        this.reasoningAssistInFlight.set(prompt.sessionId, entry);
-        // A preflight is current only while it still owns this prompt's queue
-        // state and the session's in-flight slot, and no cancellation bumped
-        // its generation. Cancellation and supersession therefore invalidate
-        // every later publication from the same run.
-        const isCurrent = (): boolean =>
-          this.promptQueues.get(prompt.sessionId) === state &&
-          this.reasoningAssistInFlight.get(prompt.sessionId) === entry &&
-          (this.reasoningAssistGenerations.get(prompt.sessionId) ?? 0) === entry.generation;
-        try {
-          const result = await runReasoningAssistPreflight({
-            sessionId: prompt.sessionId,
-            userText: prompt.text,
-            adapter,
-            structureRecorder: this.reasoningAssistStructureRecorder,
-            signal: entry.controller.signal,
-            isCurrent,
-            publishProgress: (stage, promptToken) => {
-              entry.lastToken = promptToken;
-              this.postMessage({ type: "reasoningAssistProgress", sessionId: prompt.sessionId, promptToken, stage });
-            },
-          });
-          if (result.kind === "argument") {
-            // The argument map itself is a bounded, once-per-instance
-            // diagnostic fact; it never names prompt or graph content.
-            if (!this.reasoningAssistArgumentLogged) {
-              this.reasoningAssistArgumentLogged = true;
-              console.log("[opencode-chat] Reasoning assist preflight produced an argument map");
-            }
-            // Retaining a summary and adding the brief are publications too, so
-            // the currency guard gates them exactly like live progress.
-            if (isCurrent()) {
-              const input = { facts: result.facts, afState: result.afState, objections: result.objections };
-              const summary = composeReasoningAssistSummary(input);
-              const brief = composeReasoningAssistBrief(input);
-              if (summary && brief) {
-                this.postMessage({
+        const preScreenStartedAt = this.reasoningDiagnosticNow();
+        const preScreen = classifyReasoningAssistPreScreen(prompt.text);
+        const preScreenElapsedMs = elapsedReasoningMilliseconds(this.reasoningDiagnosticNow, preScreenStartedAt);
+        this.emitReasoningDiagnostic({
+          stage: "pre-screen",
+          outcome: preScreen,
+          ...(preScreenElapsedMs === undefined ? {} : { elapsedMs: preScreenElapsedMs }),
+        });
+
+        if (preScreen === "maybe-argument") {
+          try {
+            turnId = this.agent.createReasoningAssistTurnId();
+          } catch {
+            turnId = undefined;
+          }
+          if (typeof turnId === "string" && turnId.length > 0) {
+            turn = { turnId, active: true, pending: false };
+            this.reasoningAssistTurnBySession.set(prompt.sessionId, turn);
+            const generation = this.reasoningAssistGenerations.get(prompt.sessionId) ?? 0;
+            assistEntry = { generation, controller: new AbortController() };
+            this.reasoningAssistInFlight.set(prompt.sessionId, assistEntry);
+            const activeTurn = turn;
+            const entry = assistEntry;
+            const isCurrent = (): boolean =>
+              this.promptQueues.get(prompt.sessionId) === state &&
+              this.reasoningAssistInFlight.get(prompt.sessionId) === entry &&
+              (this.reasoningAssistGenerations.get(prompt.sessionId) ?? 0) === entry.generation;
+
+            // Start after invoking native admission: architect work cannot delay
+            // the prompt call or hold the user's turn on the critical path.
+            void Promise.resolve()
+              .then(() =>
+                runReasoningAssistPreflight({
+                  sessionId: prompt.sessionId,
+                  userText: prompt.text,
+                  adapter,
+                  structureRecorder: this.reasoningAssistStructureRecorder,
+                  signal: entry.controller.signal,
+                  isCurrent,
+                  now: this.reasoningDiagnosticNow,
+                  onDiagnostic: (event) => this.emitReasoningDiagnostic(event),
+                  onArgumentConfirmed: async () => {
+                    const confirmationStartedAt = this.reasoningDiagnosticNow();
+                    const reportConfirmation = (
+                      outcome: "registered" | "confirmation-failed" | "confirmation-threw" | "stale" | "turn-finished",
+                    ): void => {
+                      const elapsedMs = elapsedReasoningMilliseconds(
+                        this.reasoningDiagnosticNow,
+                        confirmationStartedAt,
+                      );
+                      this.emitReasoningDiagnostic({
+                        stage: "brief-confirmation",
+                        outcome,
+                        ...(elapsedMs === undefined ? {} : { elapsedMs }),
+                      });
+                    };
+                    if (!isCurrent()) {
+                      reportConfirmation("stale");
+                      return false;
+                    }
+                    if (!activeTurn.active) {
+                      reportConfirmation("turn-finished");
+                      return "turn-finished";
+                    }
+                    let pending: boolean;
+                    try {
+                      pending = await this.enqueueReasoningAssistBriefOperation(prompt.sessionId, () =>
+                        this.agent.pendingReasoningAssistTurn(
+                          prompt.sessionId,
+                          activeTurn.turnId,
+                          SCRIBE_REASONING_CONTEXT_GRACE_MS,
+                        ),
+                      );
+                    } catch {
+                      reportConfirmation("confirmation-threw");
+                      return false;
+                    }
+                    if (!isCurrent()) {
+                      reportConfirmation("stale");
+                      return false;
+                    }
+                    if (!activeTurn.active) {
+                      if (pending) {
+                        try {
+                          await this.clearReasoningAssistBrief(prompt.sessionId, true, activeTurn.turnId);
+                        } catch {
+                          reportConfirmation("confirmation-threw");
+                          return false;
+                        }
+                      }
+                      reportConfirmation("turn-finished");
+                      return "turn-finished";
+                    }
+                    if (!pending) {
+                      reportConfirmation("confirmation-failed");
+                      return false;
+                    }
+                    activeTurn.pending = true;
+                    reportConfirmation("registered");
+                    this.emitReasoningDiagnostic({ stage: "brief", outcome: "pending-argued" });
+                    return true;
+                  },
+                  publishProgress: (stage, promptToken) => {
+                    if (!activeTurn.active || !isCurrent()) return;
+                    entry.lastToken = promptToken;
+                    this.publishReasoningMessage({
+                      type: "reasoningAssistProgress",
+                      sessionId: prompt.sessionId,
+                      promptToken,
+                      stage,
+                    });
+                  },
+                }),
+              )
+              .then(async (result) => {
+                if (result.kind !== "argument" || !isCurrent()) return;
+                if (!activeTurn.active) {
+                  this.emitReasoningDiagnostic({ stage: "brief", outcome: "discarded" });
+                  return;
+                }
+
+                const input = { facts: result.facts, afState: result.afState };
+                const summary = composeReasoningAssistSummary(input);
+                const brief = composeReasoningAssistBrief(input);
+                if (!summary || !brief) {
+                  activeTurn.pending = false;
+                  await this.clearReasoningAssistBrief(prompt.sessionId, true, activeTurn.turnId);
+                  this.postMessage({
+                    type: "reasoningAssistCleared",
+                    sessionId: prompt.sessionId,
+                    promptToken: result.promptToken,
+                  });
+                  return;
+                }
+
+                const delivery = await this.storeReasoningAssistBrief(prompt.sessionId, activeTurn.turnId, brief);
+                const admitted = await admission;
+                if (!admitted) return;
+                if (!isCurrent()) return;
+                if (!activeTurn.active) {
+                  if (delivery.accepted) {
+                    void this.clearReasoningAssistBrief(prompt.sessionId, true, activeTurn.turnId);
+                  }
+                  this.emitReasoningDiagnostic({ stage: "brief", outcome: "discarded" });
+                  return;
+                }
+                if (!delivery.accepted) {
+                  activeTurn.pending = false;
+                  await this.clearReasoningAssistBrief(prompt.sessionId, true, activeTurn.turnId);
+                  this.postMessage({
+                    type: "reasoningAssistCleared",
+                    sessionId: prompt.sessionId,
+                    promptToken: result.promptToken,
+                  });
+                  this.emitReasoningDiagnostic({ stage: "brief", outcome: "skipped" });
+                  return;
+                }
+
+                this.emitReasoningDiagnostic({
+                  stage: "brief",
+                  outcome: delivery.internalGraceWaitMs > 0 ? "delivered-late" : "delivered",
+                });
+                this.publishReasoningMessage({
                   type: "reasoningAssistProgress",
                   sessionId: prompt.sessionId,
                   promptToken: result.promptToken,
                   stage: "preparing",
                 });
-                this.postMessage({
+                this.publishReasoningMessage({
                   type: "reasoningAssistSummary",
                   sessionId: prompt.sessionId,
                   promptToken: result.promptToken,
                   summary,
                 });
-                assist = { brief, promptToken: result.promptToken };
-              } else {
-                // Bounded failure: no valid brief means no retained row, and the
-                // prompt still dispatches unchanged.
-                this.postMessage({
-                  type: "reasoningAssistCleared",
+                this.publishReasoningMessage({
+                  type: "reasoningAssistProgress",
                   sessionId: prompt.sessionId,
                   promptToken: result.promptToken,
+                  stage: "applied",
                 });
-              }
-            }
-          } else if (result.kind === "dispatch-unchanged") {
-            // A stale preflight posts nothing so it can never clear a newer prompt
-            // row; an ordinary outcome clears only its own token-scoped row.
-            this.logReasoningAssistOutcome(
-              result.reason,
-              result.stageTextLength,
-              result.parseReason,
-              result.stageElapsedMs,
-            );
-            this.postMessage({
-              type: "reasoningAssistCleared",
-              sessionId: prompt.sessionId,
-              promptToken: result.promptToken,
-            });
-          }
-        } finally {
-          // Deleting only this entry keeps newer work registered, and a
-          // cancelled run never resurrects its slot.
-          if (this.reasoningAssistInFlight.get(prompt.sessionId) === entry) {
-            this.reasoningAssistInFlight.delete(prompt.sessionId);
+                entry.applied = true;
+              })
+              .catch(() => undefined)
+              .finally(() => {
+                if (this.reasoningAssistInFlight.get(prompt.sessionId) === entry) {
+                  this.reasoningAssistInFlight.delete(prompt.sessionId);
+                }
+                if (
+                  this.reasoningAssistTurnBySession.get(prompt.sessionId) === activeTurn &&
+                  (!activeTurn.active || !activeTurn.pending)
+                ) {
+                  this.reasoningAssistTurnBySession.delete(prompt.sessionId);
+                }
+              });
           }
         }
       }
       const baseSystem = this.getSystemPrompt(prompt.primaryAgent, prompt.system);
       await this.agent.sendMessage(prompt.sessionId, prompt.text, {
+        ...(turnId === undefined ? {} : { turnID: turnId }),
         model: prompt.model,
         files: prompt.files,
         agent: prompt.agent,
         primaryAgent: prompt.primaryAgent,
         skill: prompt.skill,
         ...(prompt.bundledCommand ? { bundledCommand: prompt.bundledCommand } : {}),
-        system: assist ? appendReasoningAssistBrief(baseSystem, assist.brief) : baseSystem,
+        system: baseSystem,
         ...(prompt.effort !== undefined && { effort: prompt.effort }),
       });
-      if (assist && this.promptQueues.get(prompt.sessionId) === state) {
-        this.postMessage({
-          type: "reasoningAssistProgress",
-          sessionId: prompt.sessionId,
-          promptToken: assist.promptToken,
-          stage: "applied",
-        });
+      recordDispatch("dispatched");
+      settleAdmission(true);
+      if (this.promptQueues.get(prompt.sessionId) === state && state.currentDispatch === dispatch) {
+        dispatch.admitted = true;
       }
     } catch (err) {
-      if (this.promptQueues.get(prompt.sessionId) === state) {
+      settleAdmission(false);
+      recordDispatch("dispatch-failed");
+      if (assistEntry || turn) this.cancelReasoningAssist(prompt.sessionId);
+      if (this.promptQueues.get(prompt.sessionId) === state && state.currentDispatch === dispatch) {
         state.active = false;
         state.waitingForBusy = false;
+        state.reconnectIdleDispatch = undefined;
         state.pending.unshift(prompt);
         this.postQueuedPromptCount(prompt.sessionId, state.pending.length);
       }
@@ -1147,8 +2083,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postMessage({
       type: "mcpPrefs",
       prefs: this.chatMcpPrefs?.read() ?? {},
-      locked: [],
+      locked: [...(this.chatMcpLocked?.() ?? [])],
     });
+  }
+
+  /** Re-publishes preferences and locked servers after the host re-resolves the MCP inventory. */
+  publishMcpPrefs(): void {
+    this.postMcpPrefs();
   }
 
   private loadSystemPrompt(filename: string): string | null {

@@ -11,8 +11,13 @@ export const DOCUMENTED_NONO_PROFILE = "opencode" as const;
 const NONO_PREFLIGHT_TIMEOUT_MS = 1_500;
 const NONO_PREFLIGHT_MAX_BUFFER = 4_096;
 
-type ExecFile = typeof nodeExecFile;
-type ReadDirectory = typeof readdirSync;
+type ExecFile = (
+  file: string,
+  args: string[],
+  options: { timeout: number; maxBuffer: number; windowsHide: boolean },
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+) => void;
+type ReadDirectory = (path: string) => string[];
 
 export type NonoResolution = {
   backend: CompanionLaunchBackend;
@@ -81,7 +86,9 @@ function executableCandidates(env: NodeJS.ProcessEnv, platform: NodeJS.Platform)
 
   return [
     ...new Set(
-      candidates.filter((candidate): candidate is string => Boolean(candidate) && path.posix.isAbsolute(candidate)),
+      candidates.filter(
+        (candidate): candidate is string => typeof candidate === "string" && path.posix.isAbsolute(candidate),
+      ),
     ),
   ];
 }

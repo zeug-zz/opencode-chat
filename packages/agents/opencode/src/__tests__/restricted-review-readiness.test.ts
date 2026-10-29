@@ -7,56 +7,71 @@ import {
 import { createRestrictedReviewProvider, mintRestrictedReviewProvenance } from "../restricted-review-provider";
 
 const identifier = /^[A-Za-z][A-Za-z0-9_-]*$/;
+const nativeDefaultPermissions = [
+  { action: "*", resource: "*", effect: "allow" },
+  { action: "read", resource: "*.env", effect: "ask" },
+  { action: "read", resource: "*.env.*", effect: "ask" },
+  { action: "read", resource: "*.env.example", effect: "allow" },
+];
 
-function client(config: unknown) {
-  return {
-    config: { get: vi.fn().mockResolvedValue({ data: config }) },
+function makeProvider(
+  data: unknown,
+  location = { directory: "/workspace" },
+  modelResolution: "pinned" | "native-default" = "pinned",
+) {
+  const client = {
+    agent: { get: vi.fn().mockResolvedValue({ location, data }) },
     session: {
       create: vi.fn(),
-      promptAsync: vi.fn(),
-      messages: vi.fn(),
-      abort: vi.fn(),
-      delete: vi.fn(),
+      wait: vi.fn(),
+      instructions: { entry: { put: vi.fn() } },
+      prompt: vi.fn(),
+      interrupt: vi.fn(),
+      remove: vi.fn(),
     },
+    message: { list: vi.fn() },
   };
-}
-
-function config(model = "provider/model", prompt = RESTRICTED_REVIEW_PROMPT, dynamicToolNames = ["mcp_tool"]) {
-  const permission = Object.fromEntries(
-    ["*", ...RESTRICTED_REVIEW_AUTHORITIES, ...dynamicToolNames].map((name) => [name, "deny"]),
-  );
-  return { agent: { [RESTRICTED_REVIEW_AGENT_NAME]: { model, prompt, permission } } };
-}
-
-function withPermission(permission: Record<string, string>) {
-  const baseline = config();
-  return {
-    ...baseline,
-    agent: {
-      [RESTRICTED_REVIEW_AGENT_NAME]: {
-        ...baseline.agent[RESTRICTED_REVIEW_AGENT_NAME],
-        permission,
-      },
-    },
-  };
-}
-
-function provider(readback: unknown, generation: object = {}) {
-  const sdk = client(readback);
-  const currentGeneration = vi.fn(() => generation);
-  const instance = createRestrictedReviewProvider({
-    client: sdk as never,
-    restrictedReview: {
-      model: "provider/model",
-      prompt: RESTRICTED_REVIEW_PROMPT,
-      maxSteps: 4,
-      dynamicToolNames: ["mcp_tool"],
-    },
+  const provider = createRestrictedReviewProvider({
+    client: client as never,
+    directory: "/workspace",
+    restrictedReview:
+      modelResolution === "native-default"
+        ? {
+            modelResolution,
+            prompt: RESTRICTED_REVIEW_PROMPT,
+            maxSteps: 4,
+            dynamicToolNames: ["dynamic"],
+          }
+        : {
+            model: "provider/model",
+            prompt: RESTRICTED_REVIEW_PROMPT,
+            maxSteps: 4,
+            dynamicToolNames: ["dynamic"],
+          },
     hostPinnedModel: { providerID: "provider", modelID: "model" },
-    generation,
-    currentGeneration,
   });
-  return { instance, sdk, currentGeneration };
+  return { client, provider };
+}
+
+function agent(
+  permissions = [
+    ...nativeDefaultPermissions,
+    ...["*", ...RESTRICTED_REVIEW_AUTHORITIES, "dynamic"].map((action) => ({
+      action,
+      resource: "*",
+      effect: "deny",
+    })),
+  ],
+) {
+  return {
+    id: RESTRICTED_REVIEW_AGENT_NAME,
+    model: { id: "model", providerID: "provider" },
+    system: RESTRICTED_REVIEW_PROMPT,
+    steps: 4,
+    mode: "subagent",
+    hidden: true,
+    permissions,
+  };
 }
 
 describe("restricted review provenance", () => {
@@ -112,50 +127,115 @@ describe("restricted review provenance", () => {
 });
 
 describe("restricted review readiness", () => {
-  it("is ready only after a matching read-only effective config check", async () => {
-    const { instance, sdk } = provider(config());
-    await expect(instance.checkReadiness()).resolves.toBe(true);
-    expect(instance.isReady()).toBe(true);
-    expect(sdk.config.get).toHaveBeenCalledTimes(1);
-    expect(sdk.session.create).not.toHaveBeenCalled();
-    expect(sdk.session.promptAsync).not.toHaveBeenCalled();
-    expect(sdk.session.messages).not.toHaveBeenCalled();
-    expect(sdk.session.abort).not.toHaveBeenCalled();
-    expect(sdk.session.delete).not.toHaveBeenCalled();
+  it("checks native agent readback at the active location without creating sessions", async () => {
+    const { client, provider } = makeProvider(agent());
+    await expect(provider.checkReadiness()).resolves.toBe(true);
+    expect(client.agent.get).toHaveBeenCalledWith(
+      { agentID: RESTRICTED_REVIEW_AGENT_NAME, location: { directory: "/workspace" } },
+      expect.anything(),
+    );
+    expect(client.session.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts native default allow/ask rules shadowed by the later wildcard deny", async () => {
+    const { provider } = makeProvider(agent());
+    await expect(provider.checkReadiness()).resolves.toBe(true);
+  });
+
+  it("accepts additional well-formed earlier rules shadowed by the last wildcard deny", async () => {
+    const { provider } = makeProvider(
+      agent([
+        ...nativeDefaultPermissions,
+        { action: "unknown-earlier-tool", resource: "*", effect: "ask" },
+        ...["*", ...RESTRICTED_REVIEW_AUTHORITIES, "dynamic"].map((action) => ({
+          action,
+          resource: "*",
+          effect: "deny",
+        })),
+      ]),
+    );
+    await expect(provider.checkReadiness()).resolves.toBe(true);
+  });
+
+  it("accepts a model-inheriting hidden agent after the native default is pinned", async () => {
+    const inheritedAgent = { ...agent(), model: undefined };
+    const { client, provider } = makeProvider(inheritedAgent, { directory: "/workspace" }, "native-default");
+
+    await expect(provider.checkReadiness()).resolves.toBe(true);
+    expect(client.agent.get).toHaveBeenCalledWith(
+      { agentID: RESTRICTED_REVIEW_AGENT_NAME, location: { directory: "/workspace" } },
+      expect.anything(),
+    );
+    expect(inheritedAgent.model).toBeUndefined();
+    expect(inheritedAgent.permissions).toContainEqual({ action: "execute", resource: "*", effect: "deny" });
+    expect(client.session.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a nonempty reviewer model even when it differs from the UI-selected model", async () => {
+    const { provider } = makeProvider(
+      { ...agent(), model: { providerID: "ui-selected-provider", id: "ui-selected-model" } },
+      { directory: "/workspace" },
+      "native-default",
+    );
+    await expect(provider.checkReadiness()).resolves.toBe(false);
+  });
+
+  it("still requires every configured deny in the effective suffix", async () => {
+    const actions = ["*", ...RESTRICTED_REVIEW_AUTHORITIES, "dynamic"].filter(
+      (action) => action !== RESTRICTED_REVIEW_AUTHORITIES[0],
+    );
+    const { provider } = makeProvider(
+      agent([...nativeDefaultPermissions, ...actions.map((action) => ({ action, resource: "*", effect: "deny" }))]),
+    );
+    await expect(provider.checkReadiness()).resolves.toBe(false);
   });
 
   it.each([
-    ["absent", {}],
-    ["malformed", { agent: { [RESTRICTED_REVIEW_AGENT_NAME]: null } }],
-    ["permissive", withPermission({ "*": "allow" })],
-    ["missing", withPermission({ "*": "deny" })],
-    ["extra", withPermission({ ...config().agent[RESTRICTED_REVIEW_AGENT_NAME].permission, extra: "deny" })],
-    ["model", config("other/model")],
-    ["prompt", config("provider/model", "other prompt")],
-    ["absent data", undefined],
-  ])("stays dormant for %s read-back", async (_name, readback) => {
-    const { instance } = provider(readback);
-    await expect(instance.checkReadiness()).resolves.toBe(false);
-    expect(instance.isReady()).toBe(false);
+    [
+      "missing wildcard",
+      agent(RESTRICTED_REVIEW_AUTHORITIES.map((action) => ({ action, resource: "*", effect: "deny" }))),
+    ],
+    [
+      "allow after wildcard deny",
+      agent([
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "read", resource: "*", effect: "allow" },
+      ]),
+    ],
+    [
+      "ask after wildcard deny",
+      agent([
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "read", resource: "*", effect: "ask" },
+      ]),
+    ],
+    [
+      "malformed earlier rule",
+      agent([
+        { action: "read", resource: "*.env", effect: "permit" },
+        ...nativeDefaultPermissions,
+        ...["*", ...RESTRICTED_REVIEW_AUTHORITIES, "dynamic"].map((action) => ({
+          action,
+          resource: "*",
+          effect: "deny",
+        })),
+      ]),
+    ],
+    ["malformed rule", agent([null as never])],
+    ["wrong agent", { ...agent(), id: "other" }],
+    ["wrong model", { ...agent(), model: { providerID: "provider", id: "other" } }],
+    ["malformed string model", { ...agent(), model: "provider/model" }],
+    ["wrong system", { ...agent(), system: "other" }],
+    ["wrong mode", { ...agent(), mode: "all" }],
+    ["visible", { ...agent(), hidden: false }],
+    ["wrong steps", { ...agent(), steps: 9 }],
+  ])("stays unavailable for %s readback", async (_label, data) => {
+    const { provider } = makeProvider(data);
+    await expect(provider.checkReadiness()).resolves.toBe(false);
   });
 
-  it("invalidates a ready result on generation drift, explicit invalidation, and SDK rejection", async () => {
-    const generation = {};
-    const current = { value: generation };
-    const sdk = client(config("provider/model", RESTRICTED_REVIEW_PROMPT, []));
-    const instance = createRestrictedReviewProvider({
-      client: sdk as never,
-      restrictedReview: { model: "provider/model", prompt: RESTRICTED_REVIEW_PROMPT, maxSteps: 4 },
-      hostPinnedModel: { providerID: "provider", modelID: "model" },
-      generation,
-      currentGeneration: () => current.value,
-    });
-    await expect(instance.checkReadiness()).resolves.toBe(true);
-    current.value = {};
-    expect(instance.isReady()).toBe(false);
-    instance.invalidate();
-    await expect(instance.checkReadiness()).resolves.toBe(false);
-    sdk.config.get.mockRejectedValue(new Error("unavailable"));
-    expect(instance.isReady()).toBe(false);
+  it("rejects an active-location mismatch", async () => {
+    const { provider } = makeProvider(agent(), { directory: "/other" });
+    await expect(provider.checkReadiness()).resolves.toBe(false);
   });
 });

@@ -5,6 +5,33 @@
  */
 import { vi } from "vitest";
 
+export const showInformationMessage = vi
+  .fn<(message: string, ...items: string[]) => Promise<string | undefined>>()
+  .mockResolvedValue(undefined);
+export const showErrorMessage = vi
+  .fn<(message: string, ...items: string[]) => Promise<string | undefined>>()
+  .mockResolvedValue(undefined);
+
+export type MockLogOutputChannel = {
+  name: string;
+  info: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+};
+export const outputChannels: MockLogOutputChannel[] = [];
+export const createOutputChannel = vi.fn((name: string, _options?: { log: true }) => {
+  const channel: MockLogOutputChannel = {
+    name,
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    dispose: vi.fn(),
+  };
+  outputChannels.push(channel);
+  return channel;
+});
+
 // --- workspace ---
 export const workspace = {
   workspaceFolders: [{ uri: { fsPath: "/workspace", scheme: "file" } }],
@@ -31,10 +58,11 @@ export const workspace = {
 
 // --- window ---
 export const window = {
+  createOutputChannel,
   registerWebviewViewProvider: vi.fn(() => ({ dispose: vi.fn() })),
   showWarningMessage: vi.fn(),
-  showErrorMessage: vi.fn().mockResolvedValue(undefined),
-  showInformationMessage: vi.fn().mockResolvedValue(undefined),
+  showErrorMessage,
+  showInformationMessage,
   showQuickPick: vi.fn().mockResolvedValue(undefined),
   showTextDocument: vi.fn().mockResolvedValue(undefined),
   activeTextEditor: undefined as unknown,

@@ -82,7 +82,11 @@ export function App() {
   const {
     runtime: reasoningReviewRuntime,
     preference: reasoningReviewPreference,
+    reviews: reasoningReviews,
     updatePreference: updateReasoningReviewPreference,
+    requestReview: requestReasoningReview,
+    cancelReview: cancelReasoningReview,
+    clearReviews: clearReasoningReviews,
     handleHostMessage: handleReasoningReviewHostMessage,
   } = review;
   const handleReasoningReviewPreferenceChange = useCallback(
@@ -101,6 +105,9 @@ export function App() {
   useEffect(() => {
     clearPendingReasoningAssist();
   }, [session.activeSession?.id, clearPendingReasoningAssist]);
+  useEffect(() => {
+    clearReasoningReviews();
+  }, [session.activeSession?.id, clearReasoningReviews]);
   // プリフライトは送信直後に進捗を公開するため、その時点では対応するユーザー
   // メッセージがまだ届いていないことがある。プロンプトが届いたら、アンカーの
   // 無い行をそのメッセージへ固定する（対象が無ければ state は変わらない）。
@@ -481,6 +488,11 @@ export function App() {
         case "reasoningReviewPreference":
           handleReasoningReviewHostMessage(data);
           break;
+        case "reasoningReviewProgress":
+        case "reasoningReviewResult":
+        case "reasoningReviewCancelled":
+          if (data.sessionId === activeSessionRef.current?.id) handleReasoningReviewHostMessage(data);
+          break;
         case "reasoningAssistProgress":
         case "reasoningAssistSummary":
         case "reasoningAssistCleared": {
@@ -781,8 +793,8 @@ export function App() {
             activeSession={session.activeSession}
             onNewSession={session.handleNewSession}
             onToggleSessionList={session.toggleSessionList}
-            onShareSession={msg.messages.length > 0 ? handleShareSession : undefined}
-            onUnshareSession={handleUnshareSession}
+            onShareSession={capabilities?.sessionShare && msg.messages.length > 0 ? handleShareSession : undefined}
+            onUnshareSession={capabilities?.sessionShare ? handleUnshareSession : undefined}
             onNavigateToParent={isChildSession ? handleNavigateToParent : undefined}
             onUndo={handleUndo}
             onRedo={handleRedo}
@@ -808,6 +820,10 @@ export function App() {
                 showAllThinking={showAllThinking}
                 questions={quest.questions}
                 reasoningAssistRows={assist.rowsForSession(session.activeSession?.id ?? "")}
+                reasoningReviewAvailable={reasoningReviewRuntime?.state === "available"}
+                reasoningReviews={reasoningReviews}
+                onRequestReasoningReview={requestReasoningReview}
+                onCancelReasoningReview={cancelReasoningReview}
                 onEditAndResend={handleEditAndResend}
                 onRevertToCheckpoint={handleRevertToCheckpoint}
                 onForkFromCheckpoint={handleForkFromCheckpoint}
@@ -852,6 +868,7 @@ export function App() {
                   skills={skills}
                   bundledResources={bundledResources}
                   mcpServers={capabilities?.mcp ? mcp.servers : null}
+                  mcpLocked={capabilities?.mcp ? mcp.locked : undefined}
                   onMcpToggle={capabilities?.mcp ? mcp.toggle : undefined}
                   onMcpRefresh={capabilities?.mcp ? mcp.refresh : undefined}
                   chatSandboxStatus={chatSandboxStatus ?? undefined}

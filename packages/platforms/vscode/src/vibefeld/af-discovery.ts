@@ -42,7 +42,7 @@ const isUsableHomePath = (homePath: string): boolean =>
 
 /** Build the approved roots in deterministic system-then-home order. */
 export const createAfDiscoveryRoots = (homePath: string): readonly string[] => {
-  const roots = [...AF_DISCOVERY_ROOTS];
+  const roots: string[] = [...AF_DISCOVERY_ROOTS];
   if (isUsableHomePath(homePath)) {
     roots.push(path.join(homePath, "go", "bin"), path.join(homePath, "bin"), path.join(homePath, ".local", "bin"));
   }
