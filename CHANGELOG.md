@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Overview
+
+- **0.18.0 is a major architectural rebuild for OpenCode V2 only**, not an incremental fork update. It replaces the legacy integration with a native V2 adapter, an authenticated extension-owned foreground server, in-memory overlays, and native event, session, and reasoning integrations, while retaining Scout research, Write reports, and independent TUI handoff.
+
 ### Changed
 
 - Reasoning assist uses an ephemeral current-turn brief through Scribe's bundled private plugin; completed-answer review is available under secondary **More actions**, without dedicated thinking/review Markdown-copy controls.
 - **Breaking:** Scribe now runs on OpenCode V2 only. Production version eligibility accepts stable canonical OpenCode versions `>=2.1.3` and `<3.0.0`; exact patch equality is not required. This does not qualify every future release: the private authenticated child PID, endpoint, version/location binding, and response-contract checks remain fail-closed. V1 support is removed.
-- Native V2 Code Mode (`execute`/search over permitted tools) for Scout, the research worker and Write; restricted reviewers stay tool-free.
+- Native V2 Code Mode (`execute`/search over permitted tools) for Scout, the research worker and Write; restricted reviewers stay tool-free. This composes existing permitted tools and adds no shell or security authority.
 - Hindsight memory is detected through the exact approved plugin being active in the native plugin list (V2 has no tool-ID catalog).
 - Plugin load failures are isolated per plugin by OpenCode V2; the former plugin-free retry was removed.
 - MCP servers denied by managed/system configuration now show as locked.
