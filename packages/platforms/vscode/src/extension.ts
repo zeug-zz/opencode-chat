@@ -7,13 +7,14 @@ import {
   type OpenCodeLaunchConfiguration,
   RESTRICTED_REVIEW_MAX_STEPS,
   RESTRICTED_REVIEW_PROMPT,
-  type RestrictedReviewModel,
+  type RestrictedReviewProvider,
   readEffectiveOpenCodeConfiguration,
   readHindsightPackageMetadata,
   resolveHindsightPlugin,
   resolveMcpInventory,
 } from "@opencode-chat/agent-opencode";
 import type {
+  AppPaths,
   BundledResourceMetadata,
   ChatSandboxSettings,
   ChatSandboxStatus,
@@ -41,17 +42,26 @@ import {
   abandonLocalInstaller,
   checkForPrivateReleaseUpdates,
   downloadAndValidatePrivateRelease,
+  type LocalInstallerUri,
 } from "./private-release-updater";
+import { resolveBundledScribeContextPlugin } from "./scribe-context-plugin";
 import { resolveAfRuntime } from "./vibefeld/af-runtime-resolution";
 import { ClaimProjectionReasoningReviewController } from "./vibefeld/claim-projection-reasoning-review-controller";
+import type { ClaimProjectionSeam } from "./vibefeld/claim-projection-seam";
 import { createCurrentVibefeldClaimProjectionSeam } from "./vibefeld/current-vibefeld-claim-projection";
 import { HIDDEN_SESSION_MARKER_PREFIX } from "./vibefeld/hidden-session-registry";
 import {
   createReasoningAssistStructureRecorder,
   type ReasoningAssistStructureRecorder,
 } from "./vibefeld/reasoning-assist-structure-recorder";
+import {
+  createReasoningDiagnosticClock,
+  createReasoningDiagnosticReporter,
+  elapsedReasoningMilliseconds,
+  type ReasoningDiagnosticReporter,
+} from "./vibefeld/reasoning-diagnostics";
 import type { IReasoningReviewController } from "./vibefeld/reasoning-review-controller";
-import type { ReasoningAssistRestrictedReviewAdapter } from "./vibefeld/restricted-review-adapter";
+import { type RestrictedReviewBinding, RestrictedReviewHolder } from "./vibefeld/restricted-review-holder";
 import {
   DORMANT_REASONING_REVIEW_RUNTIME,
   deriveReasoningReviewRuntime,
@@ -73,11 +83,10 @@ import {
 import { resolveOpencodeBinary, VscodePlatformServices } from "./vscode-platform-services";
 
 let agent!: OpenCodeAgent;
-let restrictedReviewDisposal: (() => Promise<void>) | undefined;
-let reasoningAssistDisposal: (() => void) | undefined;
-let resolvedRestrictedReviewModel: RestrictedReviewModel | undefined;
+let restrictedReviewHolder: RestrictedReviewHolder | undefined;
 let chatInitialization: Promise<ChatViewProvider | undefined> | undefined;
 let sandboxController: ChatSandboxController<ChatSandboxStatus> | undefined;
+let disposeHostDiagnosticChannel: (() => void) | undefined;
 let memoryProviderStatus: MemoryProviderStatus = {
   id: "none",
   displayName: "No memory provider",
@@ -87,12 +96,188 @@ let memoryProviderStatus: MemoryProviderStatus = {
 const MCP_INVENTORY_ERROR_MESSAGE =
   "OpenCode Scribe could not resolve its MCP inventory. Repair the OpenCode configuration and reload the extension.";
 const MAX_STARTUP_HIDDEN_SESSION_SCAVENGE = 8;
+// Keep the host fail-closed bound just beyond the adapter's bounded 18-second activation barrier.
+const HINDSIGHT_TOOL_INVENTORY_TIMEOUT_MS = 20_000;
+const SAFE_DIAGNOSTIC_PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const MAX_SAFE_CONNECTION_ERROR_LENGTH = 320;
+const SAFE_PRIVATE_V2_STARTUP_ERROR =
+  /^Private OpenCode V2 startup failed \((?:spawn-error|early-exit|output-limit|readiness-timeout|malformed-output|non-loopback-endpoint|authentication-failed|identity-mismatch|version-mismatch|location-mismatch|redirect-rejected|readiness-failed|cleanup-failed)\); child output and credentials were discarded\.(?: Scribe requires stable OpenCode V2 >=\d{1,4}\.\d{1,4}\.\d{1,4} and <\d{1,4}\.\d{1,4}\.\d{1,4}; update OpenCode or Scribe\.)?$/;
+const SAFE_AVAILABILITY_FAILURES = new Set([
+  "Private OpenCode companion exited unexpectedly; Chat is unavailable.",
+  "OpenCode event stream disconnected; Chat is unavailable.",
+  "Private OpenCode companion cleanup failed; availability is uncertain.",
+]);
+const GENERIC_CONNECTION_FAILURE =
+  "OpenCode Scribe could not connect to its private OpenCode server. Check the OpenCode Scribe output for a bounded diagnostic, then retry.";
+const DATABASE_LOCKED_CONNECTION_FAILURE =
+  "Another OpenCode process may be using the project database. Close other OpenCode instances and reconnect.";
+
+type LaunchDiagnosticTransition = "initial" | "settings";
+type LaunchDiagnosticStage = "started" | "ready" | "failed";
+type DiagnosticLevel = "info" | "warn" | "error";
+type HostDiagnosticSink = (level: DiagnosticLevel, message: string) => void;
+
+function createHostDiagnosticSink(context: vscode.ExtensionContext): HostDiagnosticSink | undefined {
+  let channel: vscode.LogOutputChannel;
+  try {
+    channel = vscode.window.createOutputChannel("OpenCode Scribe", { log: true });
+  } catch {
+    return undefined;
+  }
+
+  let disposed = false;
+  let disposable: vscode.Disposable;
+  try {
+    disposable = new vscode.Disposable(() => {
+      if (disposed) return;
+      disposed = true;
+      try {
+        channel.dispose();
+      } catch {
+        // Disposing diagnostics must not affect extension shutdown.
+      }
+    });
+    context.subscriptions.push(disposable);
+  } catch {
+    try {
+      channel.dispose();
+    } catch {
+      // The optional log channel is best effort.
+    }
+    return undefined;
+  }
+
+  const dispose = () => {
+    try {
+      disposable.dispose();
+    } catch {
+      // The output channel is optional and shutdown is best effort.
+    }
+  };
+  disposeHostDiagnosticChannel = dispose;
+  return (level, message) => {
+    if (disposed) return;
+    try {
+      if (level === "error") channel.error(message);
+      else if (level === "warn") channel.warn(message);
+      else channel.info(message);
+    } catch {
+      // Logging failures never change launch or prompt behavior.
+    }
+  };
+}
+
+function emitHostDiagnostic(sink: HostDiagnosticSink | undefined, level: DiagnosticLevel, message: string): void {
+  try {
+    if (sink) {
+      sink(level, message);
+      return;
+    }
+  } catch {
+    // Fall back to the bounded console diagnostic if host logging is unavailable.
+  }
+  if (level === "error") console.error(message);
+  else if (level === "warn") console.warn(message);
+  else console.info(message);
+}
+
+function diagnosticBackend(value: unknown): "sdk" | "vscode" | "nono" | "unknown" {
+  return value === "sdk" || value === "vscode" || value === "nono" ? value : "unknown";
+}
+
+function diagnosticPreflight(value: unknown): string {
+  switch (value) {
+    case "disabled":
+    case "unsupported-platform":
+    case "resolved-and-preflighted":
+    case "missing-executable":
+    case "non-executable":
+    case "preflight-failed":
+    case "preflight-unsupported":
+      return value;
+    default:
+      return "unknown";
+  }
+}
+
+function diagnosticProfile(value: unknown, sandboxEnabled: boolean): string {
+  if (!sandboxEnabled) return "not-selected";
+  const profile = value ?? "opencode";
+  return typeof profile === "string" &&
+    SAFE_DIAGNOSTIC_PROFILE_NAME.test(profile) &&
+    profile !== "." &&
+    profile !== ".."
+    ? profile
+    : "redacted";
+}
+
+function logLaunchDiagnostic(
+  fields: {
+    attempt: number;
+    transition: LaunchDiagnosticTransition;
+    stage: LaunchDiagnosticStage;
+    backend: unknown;
+    preflight: unknown;
+    profile: unknown;
+    sandboxEnabled: boolean;
+    binaryResolved: boolean;
+    workspace: "selected" | "location-bound";
+    containment: "nono-selected" | "vscode-selected" | "none";
+    hindsight: "approved-descriptor" | "ignored-descriptor" | "absent";
+  },
+  sink?: HostDiagnosticSink,
+): void {
+  const line =
+    `[OpenCode] companion launch attempt=${fields.attempt} transition=${fields.transition} stage=${fields.stage}` +
+    ` backend=${diagnosticBackend(fields.backend)} preflight=${diagnosticPreflight(fields.preflight)}` +
+    ` profile=${diagnosticProfile(fields.profile, fields.sandboxEnabled)}` +
+    ` binary=${fields.binaryResolved ? "absolute-resolved" : "command-fallback"}` +
+    ` workspace=${fields.workspace} containment-requested=${fields.containment}` +
+    ` hindsight=${fields.hindsight}${fields.stage === "failed" ? " failure=connect-failed" : ""}`;
+  emitHostDiagnostic(sink, fields.stage === "failed" ? "error" : "info", line);
+}
+
+/**
+ * Plugin activation is a bounded optional startup probe. If it does not finish,
+ * callers fail the provider closed and reconnect on the already-selected backend
+ * without the unverified Hindsight integration.
+ */
+async function awaitHindsightToolInventory<T>(inventory: PromiseLike<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(inventory),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Hindsight plugin activation timed out.")),
+          HINDSIGHT_TOOL_INVENTORY_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 class McpInventoryError extends Error {
   constructor() {
     super(MCP_INVENTORY_ERROR_MESSAGE);
     this.name = "McpInventoryError";
   }
+}
+
+function safeConnectionFailure(error: unknown): string {
+  if (error instanceof McpInventoryError) return MCP_INVENTORY_ERROR_MESSAGE;
+  if (!(error instanceof Error)) return GENERIC_CONNECTION_FAILURE;
+
+  const kind = classifyConnectError(error);
+  if (kind === "not-found") return "OpenCode executable was not found. Install OpenCode, then reconnect.";
+  if (kind === "database-locked") return DATABASE_LOCKED_CONNECTION_FAILURE;
+  if (error.message.length <= MAX_SAFE_CONNECTION_ERROR_LENGTH && SAFE_PRIVATE_V2_STARTUP_ERROR.test(error.message)) {
+    return error.message;
+  }
+  if (SAFE_AVAILABILITY_FAILURES.has(error.message)) return error.message;
+  return GENERIC_CONNECTION_FAILURE;
 }
 
 // Extension Host プロセスが強制終了された場合でもサーバーを停止する
@@ -129,7 +314,11 @@ export async function activate(context: vscode.ExtensionContext) {
     let installerUri: Awaited<ReturnType<typeof downloadAndValidatePrivateRelease>>;
     try {
       installerUri = await downloadAndValidatePrivateRelease(release, context.globalStorageUri, {
-        uriFactory: (filePath) => vscode.Uri.file(filePath),
+        uriFactory: (filePath) => {
+          const uri = vscode.Uri.file(filePath);
+          if (!isLocalInstallerUri(uri)) throw new Error("release installer URI must use the file scheme");
+          return uri;
+        },
       });
       if (!installerUri) throw new Error("release artifact validation failed");
       await vscode.commands.executeCommand("workbench.extensions.installExtension", installerUri);
@@ -190,12 +379,17 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Scribe requires an open workspace folder."));
     return;
   }
+  const hostDiagnosticSink = createHostDiagnosticSink(context);
+  const reasoningDiagnostics = createReasoningDiagnosticReporter(hostDiagnosticSink);
+  const reasoningDiagnosticNow = createReasoningDiagnosticClock();
+  reasoningDiagnostics({ stage: "initialization", outcome: "started" });
 
   const workspaceUri = vscode.Uri.file(workspaceFolder);
   const memoryRetentionSettings = DEFAULT_MEMORY_RETENTION_SETTINGS;
   const chatMcpPrefs = new VscodeChatMcpPrefsStore(context.workspaceState);
   const sandboxSettings = resolveChatSandboxSettings(workspaceUri);
   const storedNonoProfile = readSelectedNonoProfile(workspaceUri);
+  let selectedNonoProfile = storedNonoProfile;
   let initialCustomProfiles: string[] = [];
   if (
     sandboxSettings.enabled &&
@@ -205,13 +399,18 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     initialCustomProfiles = await discoverNonoProfiles();
   }
   let selectedLaunchResolution: NonoResolution = await resolveNonoBackend(sandboxSettings.enabled, {
-    selectedProfile: storedNonoProfile,
+    selectedProfile: selectedNonoProfile,
   });
   let selectedLaunchBackend = selectedLaunchResolution.backend;
   const executablePath = resolveOpencodeBinary();
   const resolvedExecutablePath = path.isAbsolute(executablePath) ? executablePath : undefined;
   const extensionPath = context.extensionPath ?? context.extensionUri.fsPath;
   const bundledResourceRoot = path.join(extensionPath, "dist", "skills-commands");
+  const reasoningContextPlugin = await resolveBundledScribeContextPlugin(extensionPath);
+  const scribePluginSource: OpenCodeLaunchConfiguration["pluginSources"] = reasoningContextPlugin.available
+    ? [{ package: reasoningContextPlugin.sourcePath }]
+    : [];
+  reasoningDiagnostics({ stage: "brief", outcome: reasoningContextPlugin.available ? "ready" : "unavailable" });
   const bundledResources = await loadBundledResearchResources(bundledResourceRoot);
   const bundledSkills = bundledResources.resources.filter(
     (resource): resource is Extract<BundledResource, { type: "skill" }> => resource.type === "skill",
@@ -241,22 +440,19 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   const openCodePaths = resolveOpenCodePaths();
   let inheritedPluginSources: OpenCodeLaunchConfiguration["pluginSources"] = [];
   let hindsightResolution: Awaited<ReturnType<typeof resolveHindsightPlugin>>;
-  let resolvedModel: string | undefined;
   let hindsightResolutionFailed = false;
   try {
     const effectiveConfig = readEffectiveOpenCodeConfiguration(openCodePaths.config, workspaceFolder);
-    resolvedModel = effectiveConfig.model;
-    inheritedPluginSources = (effectiveConfig.plugin ?? []) as OpenCodeLaunchConfiguration["pluginSources"];
+    inheritedPluginSources = effectiveConfig.plugins ?? [];
     hindsightResolution = await resolveHindsightPlugin(effectiveConfig, readHindsightPackageMetadata);
   } catch {
     hindsightResolutionFailed = true;
     hindsightResolution = undefined;
   }
-  resolvedRestrictedReviewModel = parseRestrictedReviewModel(resolvedModel);
   // The preflight launch must keep provider hooks disabled. Exact observed
   // inventory verification below is the gate that activates lifecycle
   // retention on the final launch.
-  let activeHindsightCompanionIntegration =
+  let activeHindsightCompanionIntegration: OpenCodeLaunchConfiguration["hindsightCompanionIntegration"] =
     hindsightResolution &&
     (memoryRetentionSettings.policy.automaticSessionRetention || memoryRetentionSettings.policy.enabled)
       ? {
@@ -266,11 +462,13 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
           environment: { HINDSIGHT_DISABLE_HOOKS: "1" as const },
         }
       : undefined;
-  let initialMcpOverlay: ReturnType<typeof buildMcpOverlay> = { mcp: {} };
+  let initialMcpOverlay: ReturnType<typeof buildMcpOverlay> = { mcp: { servers: {} } };
   let initialMcpTransport: OpenCodeLaunchConfiguration["mcpTransport"] = {};
   let inventoryError: McpInventoryError | undefined;
+  let chatMcpLocked: readonly string[] = [];
   try {
     const inventory = resolveMcpInventory(openCodePaths.config, workspaceFolder);
+    chatMcpLocked = inventory.locked;
     initialMcpOverlay = buildMcpOverlay(inventory, chatMcpPrefs.read());
     initialMcpTransport = Object.fromEntries(
       Object.entries(inventory.servers).map(([name, server]) => [name, server.transport]),
@@ -327,6 +525,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     if (recordAsInitialLaunch) initialLaunchProviderAvailable = providerPathsAvailable;
     return {
       workspacePath: workspaceFolder,
+      hostPaths: { config: openCodePaths.config, state: openCodePaths.state },
       backend: selectedLaunchBackend,
       sandbox: {
         mode: settings.enabled ? "on" : "off",
@@ -339,7 +538,9 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
         }),
       },
       executable: { path: executablePath },
-      ...(inheritedPluginSources.length ? { pluginSources: inheritedPluginSources } : {}),
+      ...(inheritedPluginSources.length || scribePluginSource.length
+        ? { pluginSources: [...inheritedPluginSources, ...scribePluginSource] }
+        : {}),
       mcpOverlay: { mcp: mcpOverlay.mcp },
       mcpTransport,
       ...(Object.keys(guidanceOverlay).length ? { guidanceOverlay } : {}),
@@ -357,15 +558,11 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
       ...(hindsightIntegration && providerPathsAvailable
         ? { hindsightCompanionIntegration: hindsightIntegration }
         : {}),
-      ...(resolvedRestrictedReviewModel
-        ? {
-            restrictedReview: {
-              model: `${resolvedRestrictedReviewModel.providerID}/${resolvedRestrictedReviewModel.modelID}`,
-              prompt: RESTRICTED_REVIEW_PROMPT,
-              maxSteps: RESTRICTED_REVIEW_MAX_STEPS,
-            },
-          }
-        : {}),
+      restrictedReview: {
+        modelResolution: "native-default",
+        prompt: RESTRICTED_REVIEW_PROMPT,
+        maxSteps: RESTRICTED_REVIEW_MAX_STEPS,
+      },
     };
   };
   const launchConfiguration = createLaunchConfiguration(
@@ -375,7 +572,11 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     activeHindsightCompanionIntegration,
     true,
   );
-  agent = new OpenCodeAgent(launchConfiguration);
+  agent = new OpenCodeAgent(
+    launchConfiguration,
+    hostDiagnosticSink,
+    reasoningContextPlugin.available ? reasoningContextPlugin.sourcePath : undefined,
+  );
   const refreshHindsightIntegration = async (): Promise<void> => {
     if (!hindsightResolution) {
       activeHindsightCompanionIntegration = undefined;
@@ -383,7 +584,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
       return;
     }
     try {
-      const toolIds = (await agent.getToolIds()).map((tool) => tool.id);
+      const toolIds = (await awaitHindsightToolInventory(agent.getToolIds())).map((tool) => tool.id);
       const observedToolIds = toolIds;
       const detectedStatus = await detectCompanionMemoryProviderFromInventory(observedToolIds);
       const result = buildHindsightCompanionIntegration(
@@ -412,67 +613,112 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   };
   let chatViewProvider: ChatViewProvider | undefined;
   let initialSandboxStatus: ChatSandboxStatus = sandboxSettings;
-  const reportSandboxError = (error: unknown, status?: ChatSandboxStatus) => {
-    if (error instanceof McpInventoryError) {
-      const sandboxStatus: ChatSandboxStatus = status ?? {
-        ...sandboxSettings,
-        enabled: false,
-        applying: false,
-        error: MCP_INVENTORY_ERROR_MESSAGE,
-      };
-      initialSandboxStatus = sandboxStatus;
-      chatViewProvider?.publishChatSandboxStatus(sandboxStatus);
-      vscode.window.showErrorMessage(vscode.l10n.t(MCP_INVENTORY_ERROR_MESSAGE));
-      return;
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.startsWith("Inherited OpenCode plugins were unavailable during startup")) {
-      vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Scribe: {0}", message));
-      return;
-    }
-    const sandboxStatus: ChatSandboxStatus = status ?? {
-      ...sandboxSettings,
-      enabled: false,
+  let agentAvailable = false;
+  let connectionFailure: string | undefined;
+  const markAgentUnavailable = (error: unknown, status?: ChatSandboxStatus): string => {
+    const message = safeConnectionFailure(error);
+    agentAvailable = false;
+    connectionFailure = message;
+    initialSandboxStatus = {
+      ...(status ?? initialSandboxStatus),
       applying: false,
       error: message,
     };
-    initialSandboxStatus = sandboxStatus;
-    chatViewProvider?.publishChatSandboxStatus(sandboxStatus);
+    chatViewProvider?.setAgentAvailable(false);
+    chatViewProvider?.publishChatSandboxStatus(initialSandboxStatus);
+    return message;
+  };
+  const markAgentAvailable = (): void => {
+    agentAvailable = true;
+    chatViewProvider?.setAgentAvailable(true);
+    if (!connectionFailure) return;
+    if (initialSandboxStatus.error === connectionFailure) {
+      const status = { ...initialSandboxStatus };
+      delete status.error;
+      initialSandboxStatus = status;
+      chatViewProvider?.publishChatSandboxStatus(status);
+    }
+    connectionFailure = undefined;
+  };
+  const reportSandboxError = (error: unknown, status?: ChatSandboxStatus) => {
+    const rawMessage = error instanceof Error ? error.message : "";
+    if (rawMessage.startsWith("Inherited OpenCode plugins were unavailable during startup")) {
+      vscode.window.showWarningMessage(vscode.l10n.t("OpenCode Scribe: inherited OpenCode plugins are unavailable."));
+      return;
+    }
+    const message = markAgentUnavailable(error, status);
+    if (error instanceof McpInventoryError) {
+      vscode.window.showErrorMessage(vscode.l10n.t(MCP_INVENTORY_ERROR_MESSAGE));
+      return;
+    }
     vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Scribe: {0}", message));
   };
   agent.onAvailabilityError = (error) => reportSandboxError(error);
 
-  const connectAgent = async (sandboxEnabled: boolean) => {
+  let launchDiagnosticAttempt = 0;
+  const connectAgent = async (sandboxEnabled: boolean, transition: LaunchDiagnosticTransition) => {
+    const attempt = ++launchDiagnosticAttempt;
     agent.workspaceFolder = workspaceFolder;
-    if (sandboxEnabled) {
-      await agent.connect();
-      return;
-    }
-
-    // SDK の createOpencodeServer は cwd オプションを持たないため、
-    // プロセスのカレントディレクトリを変更してからサーバーを起動する。
-    const originalCwd = process.cwd();
-    process.chdir(workspaceFolder);
+    const launchBackend = selectedLaunchResolution.backend;
+    const launchContainment =
+      launchBackend === "nono" ? "nono-selected" : launchBackend === "vscode" ? "vscode-selected" : "none";
+    const integration = agent.launchConfiguration?.hindsightCompanionIntegration;
+    const launchHindsight =
+      integration === undefined
+        ? "absent"
+        : integration.packageName === "@vectorize-io/hindsight-coding-agents"
+          ? "approved-descriptor"
+          : "ignored-descriptor";
+    const recordLaunch = (stage: LaunchDiagnosticStage, workspace: "selected" | "location-bound") =>
+      logLaunchDiagnostic(
+        {
+          attempt,
+          transition,
+          stage,
+          backend: launchBackend,
+          preflight: selectedLaunchResolution.diagnostic,
+          profile: selectedLaunchResolution.profile ?? selectedNonoProfile,
+          sandboxEnabled,
+          binaryResolved: resolvedExecutablePath !== undefined,
+          workspace,
+          containment: launchContainment,
+          hindsight: launchHindsight,
+        },
+        hostDiagnosticSink,
+      );
+    recordLaunch("started", "selected");
     try {
-      await agent.connect();
-    } finally {
-      process.chdir(originalCwd);
+      if (sandboxEnabled) {
+        await agent.connect();
+      } else {
+        // SDK の createOpencodeServer は cwd オプションを持たないため、
+        // プロセスのカレントディレクトリを変更してからサーバーを起動する。
+        const originalCwd = process.cwd();
+        process.chdir(workspaceFolder);
+        try {
+          await agent.connect();
+        } finally {
+          process.chdir(originalCwd);
+        }
+      }
+      markAgentAvailable();
+      void restrictedReviewHolder?.rebind();
+      recordLaunch("ready", "location-bound");
+    } catch (error) {
+      markAgentUnavailable(error);
+      recordLaunch("failed", "selected");
+      throw error;
     }
   };
 
   let connectFailed = false;
   if (inventoryError) {
     connectFailed = true;
-    initialSandboxStatus = {
-      ...sandboxSettings,
-      enabled: false,
-      applying: false,
-      error: MCP_INVENTORY_ERROR_MESSAGE,
-    };
+    markAgentUnavailable(new McpInventoryError());
     vscode.window.showErrorMessage(vscode.l10n.t(MCP_INVENTORY_ERROR_MESSAGE));
   } else {
     try {
-      await connectAgent(sandboxSettings.enabled);
+      await connectAgent(sandboxSettings.enabled, "initial");
       await scavengeLeftoverRestrictedReviewSessions();
     } catch (error) {
       const kind = classifyConnectError(error);
@@ -485,26 +731,11 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
         return;
       }
       connectFailed = true;
-      if (sandboxSettings.enabled) {
-        initialSandboxStatus = {
-          ...sandboxSettings,
-          enabled: false,
-          applying: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
       if (kind === "database-locked") {
-        vscode.window.showErrorMessage(
-          vscode.l10n.t(
-            "OpenCode Scribe: Another OpenCode process may be using the project database. Please close other OpenCode instances (e.g., terminal UI) and reload the window.",
-          ),
-        );
+        vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Scribe: {0}", DATABASE_LOCKED_CONNECTION_FAILURE));
       } else {
-        const message = error instanceof Error ? error.message : String(error);
-        const truncated = message.length > 500 ? `${message.slice(0, 500)}...` : message;
-        vscode.window.showErrorMessage(
-          vscode.l10n.t("OpenCode Scribe: Failed to start OpenCode server. {0}", truncated),
-        );
+        const message = safeConnectionFailure(error);
+        vscode.window.showErrorMessage(vscode.l10n.t("OpenCode Scribe: Failed to start OpenCode server. {0}", message));
       }
     }
   }
@@ -513,7 +744,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     memoryProviderStatus = blockedHindsightStatus();
   } else if (activeHindsightCompanionIntegration && !connectFailed) {
     try {
-      const toolIds = await agent.getToolIds();
+      const toolIds = await awaitHindsightToolInventory(agent.getToolIds());
       const observedToolIds = toolIds.map((tool) => tool.id);
       const detectedStatus = await detectCompanionMemoryProviderFromInventory(observedToolIds);
       const result = buildHindsightCompanionIntegration(
@@ -540,14 +771,14 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
           result.integration,
         );
         agent.updateLaunchConfiguration(finalConfiguration);
-        await connectAgent(sandboxSettings.enabled);
+        await connectAgent(sandboxSettings.enabled, "initial");
       } else {
         activeHindsightCompanionIntegration = undefined;
         await agent.stopForReconnect();
         agent.updateLaunchConfiguration(
           createLaunchConfiguration(sandboxSettings, initialMcpOverlay, initialMcpTransport, null),
         );
-        await connectAgent(sandboxSettings.enabled);
+        await connectAgent(sandboxSettings.enabled, "initial");
       }
     } catch {
       activeHindsightCompanionIntegration = undefined;
@@ -557,7 +788,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
         agent.updateLaunchConfiguration(
           createLaunchConfiguration(sandboxSettings, initialMcpOverlay, initialMcpTransport, null),
         );
-        await connectAgent(sandboxSettings.enabled);
+        await connectAgent(sandboxSettings.enabled, "initial");
       } catch {
         // Keep the original connection error handling nonfatal.
       }
@@ -609,11 +840,79 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   // Dynamic selection: the composition above is constructed once and this is
   // the only bridge preflight of the extension activation. Ordinary messages,
   // session switches, and later view resolves reuse the injected controller.
-  const {
-    controller: reasoningReviewController,
-    reasoningAssistAdapter,
-    reasoningAssistStructureRecorder,
-  } = await selectReasoningReviewDependencies(vibefeldActivation);
+  const reasoningReviewSelection = await selectReasoningReviewDependencies(vibefeldActivation, {
+    diagnostics: reasoningDiagnostics,
+    now: reasoningDiagnosticNow,
+  });
+  restrictedReviewHolder = new RestrictedReviewHolder({
+    afRuntime: reasoningReviewSelection.runtime,
+    createProvider: () =>
+      agent.createRestrictedReviewProviderForNativeDefault({
+        observe: reasoningDiagnostics,
+        now: reasoningDiagnosticNow,
+      }),
+    createBinding: async (provider: RestrictedReviewProvider): Promise<RestrictedReviewBinding> => {
+      const { createRestrictedReviewAdapter } = await import("./vibefeld/restricted-review-adapter");
+      const adapter = createRestrictedReviewAdapter({
+        provider,
+        diagnostics: reasoningDiagnostics,
+        now: reasoningDiagnosticNow,
+        createAutomaticProvider: async () => {
+          const resolution = await agent.createRestrictedReviewProviderForNativeDefault({
+            observe: reasoningDiagnostics,
+            now: reasoningDiagnosticNow,
+          });
+          return resolution.ok ? resolution.provider : undefined;
+        },
+        stageTimeoutMs: 30_000,
+      });
+      if (!reasoningReviewSelection.claimAvailable || !reasoningReviewSelection.claimSeam) {
+        throw new Error("Required claim-projection capability unavailable.");
+      }
+      const [
+        { ComposedReasoningReviewController },
+        { createAdversarialReviewSeam },
+        { createCompletedAnswerClaimMapper },
+      ] = await Promise.all([
+        import("./vibefeld/composed-reasoning-review-controller"),
+        import("./vibefeld/adversarial-review-seam"),
+        import("./vibefeld/completed-answer-claim-mapper"),
+      ]);
+      const seam = createAdversarialReviewSeam(adapter);
+      if (!seam.getCapability().supported) throw new Error("Required restricted-review capability unavailable.");
+      const controller = new ComposedReasoningReviewController(reasoningReviewSelection.claimSeam, seam, {
+        readinessCheck: async () => {
+          if (!provider.isReady()) {
+            reasoningDiagnostics({ stage: "manual-provider", outcome: "precheck-not-ready" });
+            return false;
+          }
+          if ((await provider.checkReadiness()) !== true) return false;
+          if (!provider.isReady()) {
+            reasoningDiagnostics({ stage: "manual-provider", outcome: "postcheck-not-ready" });
+            return false;
+          }
+          return true;
+        },
+        mapCompletedAnswer: createCompletedAnswerClaimMapper(adapter, {
+          stageTimeoutMs: 30_000,
+          diagnostics: reasoningDiagnostics,
+          now: reasoningDiagnosticNow,
+        }),
+        reviewLifecycle: provider,
+        diagnostics: reasoningDiagnostics,
+        now: reasoningDiagnosticNow,
+      });
+      return { adapter, controller };
+    },
+    cancelWork: () => {
+      chatViewProvider?.cancelAllReasoningAssistWork();
+      chatViewProvider?.cancelAllReasoningReviewWork();
+    },
+    onChange: (snapshot) => chatViewProvider?.publishReasoningRuntime(snapshot.runtime),
+    report: (stage, outcome, elapsedMs) =>
+      reasoningDiagnostics({ stage, outcome, ...(elapsedMs === undefined ? {} : { elapsedMs }) }),
+    now: reasoningDiagnosticNow,
+  });
   const reasoningReviewPreference = {
     read: () => readVibefeldPreference(workspaceUri),
     setUserEnabled: (value: boolean) => updateVibefeldEnabled(value, workspaceUri),
@@ -628,18 +927,30 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
   let lastResolvedKey = resolvedSettingsKey(sandboxSettings);
   chatViewProvider = new ChatViewProvider(context.extensionUri, agent, platformServices, {
     chatMcpPrefs,
+    chatMcpLocked: () => chatMcpLocked,
     memoryProviderStatus,
     memoryRetentionStatus,
-    reasoningReviewController,
-    // Host-private reasoning-assist dependencies selected by the single
-    // activation composition above; both are optional and the assist stays
-    // dormant whenever either is absent.
-    ...(reasoningAssistAdapter ? { reasoningAssistAdapter } : {}),
-    ...(reasoningAssistStructureRecorder ? { reasoningAssistStructureRecorder } : {}),
+    reasoningReviewController: reasoningReviewSelection.controller,
+    getReasoningReviewController: () => restrictedReviewHolder?.getSnapshot().controller,
+    getReasoningRuntime: () => restrictedReviewHolder?.getSnapshot().runtime,
+    getReasoningAssistAdapter: () => restrictedReviewHolder?.getSnapshot().adapter,
+    reasoningAssistStructureRecorder: reasoningReviewSelection.reasoningAssistStructureRecorder,
+    reasoningAssistPluginAvailable: reasoningContextPlugin.available,
+    reasoningDiagnostics,
+    reasoningDiagnosticNow,
     // Availability-gated preference seam: the user toggle writes the Global
     // target and the workspace opt-out writes the Workspace target for this
     // workspace. Reads and writes stay within the two bounded boolean keys.
     reasoningReviewPreference,
+    initialAppPaths: { config: openCodePaths.config, state: openCodePaths.state, directory: workspaceFolder },
+    agentAvailable,
+    onAgentConnected: () => {
+      markAgentAvailable();
+      void restrictedReviewHolder?.rebind();
+    },
+    onAgentUnavailable: () => {
+      void restrictedReviewHolder?.invalidate();
+    },
     bundledResources: bundledResourceMetadata,
     bundledCommandNames: bundledCommands.map((resource) => resource.name),
     setChatSandboxSettings: async (settings: ChatSandboxSettings) => {
@@ -656,30 +967,41 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
         return status;
       } catch (error) {
         lastResolvedKey = previousKey;
-        initialSandboxStatus = previousStatus;
+        if (connectionFailure) {
+          initialSandboxStatus = { ...previousStatus, applying: false, error: connectionFailure };
+          chatViewProvider?.publishChatSandboxStatus(initialSandboxStatus);
+        } else {
+          initialSandboxStatus = previousStatus;
+        }
         throw error;
       } finally {
         panelUpdateInProgress = false;
       }
     },
   });
-  // The assist preflight holds host-private lifecycle state: deactivation must
-  // stop every in-flight preflight before adapters and sessions are torn down.
-  reasoningAssistDisposal = () => chatViewProvider?.cancelAllReasoningAssistWork();
+  // The initial connection predates holder construction; bind it once now.
+  if (agentAvailable) void restrictedReviewHolder.rebind();
   sandboxController = new ChatSandboxController<ChatSandboxStatus>({
-    stop: () => agent.stopForReconnect(),
+    stop: async () => {
+      agentAvailable = false;
+      chatViewProvider?.setAgentAvailable(false);
+      await restrictedReviewHolder?.invalidate();
+      await agent.stopForReconnect();
+    },
     start: async (settings) => {
       const resolved = resolveChatSandboxSettings(workspaceUri);
       // Re-resolve only when a new settings transition creates a connection;
       // reconnects within that connection retain the selected discriminant.
+      selectedNonoProfile = readSelectedNonoProfile(workspaceUri);
       selectedLaunchResolution = await resolveNonoBackend(resolved.enabled, {
-        selectedProfile: readSelectedNonoProfile(workspaceUri),
+        selectedProfile: selectedNonoProfile,
       });
       selectedLaunchBackend = selectedLaunchResolution.backend;
       let mcpOverlay: ReturnType<typeof buildMcpOverlay>;
       let mcpTransport: OpenCodeLaunchConfiguration["mcpTransport"];
       try {
         const inventory = resolveMcpInventory(openCodePaths.config, workspaceFolder);
+        chatMcpLocked = inventory.locked;
         mcpOverlay = buildMcpOverlay(inventory, chatMcpPrefs.read());
         mcpTransport = Object.fromEntries(
           Object.entries(inventory.servers).map(([name, server]) => [name, server.transport]),
@@ -689,7 +1011,7 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
       }
       const launchIntegration = activeHindsightCompanionIntegration;
       agent.updateLaunchConfiguration(createLaunchConfiguration(resolved, mcpOverlay, mcpTransport, launchIntegration));
-      await connectAgent(resolved.enabled);
+      await connectAgent(resolved.enabled, "settings");
       // Inventory is authoritative after every reconnect. If the provider
       // failed or became unsafe, reconnect once on the same requested
       // sandbox mode with the ordinary fallback rather than leaving stale
@@ -699,15 +1021,21 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
       if (launchIntegration && !providerBlockedForLaunch && !activeHindsightCompanionIntegration) {
         await agent.stopForReconnect();
         agent.updateLaunchConfiguration(createLaunchConfiguration(resolved, mcpOverlay, mcpTransport, null));
-        await connectAgent(resolved.enabled);
+        await connectAgent(resolved.enabled, "settings");
       }
       return resolveChatSandboxSettings(workspaceUri);
     },
     publishStatus: (status) => chatViewProvider?.publishChatSandboxStatus(status),
-    onReconnected: async (status) => {
+    onReconnected: () => {
       if (currentLaunchProviderBlocked) memoryProviderStatus = blockedHindsightStatus();
       chatViewProvider?.publishMemoryProviderStatus(memoryProviderStatus);
-      await chatViewProvider?.refresh(status);
+      chatViewProvider?.publishMcpPrefs();
+      const refresh = chatViewProvider?.refresh();
+      if (refresh) {
+        void refresh.catch(() => {
+          console.error("[OpenCode] Chat refresh failed after sandbox reconnect.");
+        });
+      }
     },
     onError: (error, status) => reportSandboxError(error, status),
   });
@@ -741,8 +1069,8 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
       const nextKey = resolvedSettingsKey(resolved);
       if (nextKey === lastResolvedKey && !nonoChanged) return;
       lastResolvedKey = nextKey;
-      void sandboxController?.update(resolved).catch((error) => {
-        console.error("[OpenCode] Failed to apply sandbox configuration change:", error);
+      void sandboxController?.update(resolved).catch(() => {
+        console.error("[OpenCode] Failed to apply sandbox configuration change.");
       });
     }),
   );
@@ -753,12 +1081,9 @@ async function initializeChat(context: vscode.ExtensionContext): Promise<ChatVie
     void promptForInitialNonoProfile(workspaceUri, initialCustomProfiles).catch(() => undefined);
   }
 
-  // When connectFailed is true (database-locked or other non-ENOENT), the agent
-  // has no client. The webview provider is still registered so the sidebar is
-  // not an infinite spinner. The ready handler will throw from agent methods
-  // (getPath, listSessions, etc.) with "OpenCode client is not connected".
-  // Those errors are caught by ChatViewProvider.handleWebviewMessage and
-  // logged. The webview shows an error surface rather than hanging silently.
+  // Keep the provider alive after a failed connection so it can publish local
+  // initialization and settings while gating requests that require the agent.
+  reasoningDiagnostics({ stage: "initialization", outcome: "ready" });
   return chatViewProvider;
 }
 
@@ -792,13 +1117,14 @@ const CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME: ReasoningReviewRunt
 };
 
 /**
- * The bounded set of host-private review dependencies selected by the single
- * activation composition. The assist dependencies stay optional and are
- * omitted whenever their runtime gate fails.
+ * The activation-scoped AF result. Restricted provider readiness is bound
+ * separately to each OpenCode connection by RestrictedReviewHolder.
  */
 type ReasoningReviewSelection = Readonly<{
   controller: IReasoningReviewController;
-  reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter;
+  runtime: ReasoningReviewRuntime;
+  claimAvailable: boolean;
+  claimSeam?: ClaimProjectionSeam;
   reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder;
 }>;
 
@@ -817,41 +1143,57 @@ type ReasoningReviewSelection = Readonly<{
  * from this single outcome, so later status reads never re-preflight,
  * discover, or spawn.
  *
- * The readiness-gated restricted-provider attempt runs independently of the
- * claim-path selection: a ready provider always builds the host-private
- * adapter and registers its disposal, the adapter is injected for the
- * reasoning-assist only when the preflight is ready, and the adversarial
- * controller is selected exactly when no claim controller was selected. The
- * structure recorder is built from the already-preflighted claim seam only
- * when its single guarded capability read reports support. Every attempt
- * failure is fail-closed and never changes the controller fallback.
+ * Restricted-provider setup is intentionally absent here: AF discovery and
+ * preflight happen once per activation, while model resolution and provider
+ * readiness are re-run by the connection-scoped holder.
  */
 async function selectReasoningReviewDependencies(
   composition: VibefeldActivationComposition,
   options: RestrictedReviewSelectionOptions = {},
 ): Promise<ReasoningReviewSelection> {
+  const now = createReasoningDiagnosticClock(options.now);
+  const report = (stage: "runtime" | "provider" | "adapter", outcome: string, startedAt?: number): void => {
+    const elapsedMs = startedAt === undefined ? undefined : elapsedReasoningMilliseconds(now, startedAt);
+    try {
+      options.diagnostics?.({ stage, outcome, ...(elapsedMs === undefined ? {} : { elapsedMs }) });
+    } catch {
+      // Optional diagnostics must not affect runtime or provider readiness.
+    }
+  };
   let runtime: ReasoningReviewRuntime =
     composition.state === "composed" ? PREFLIGHT_FAILED_REASONING_REVIEW_RUNTIME : DORMANT_REASONING_REVIEW_RUNTIME;
   let claimAvailable = false;
   let preflightReady = false;
+  let runtimeOutcome: "ready" | "af-unavailable" | "readiness-rejected" = "af-unavailable";
+  let runtimeStartedAt: number | undefined;
   let claimSeam: ReturnType<typeof createCurrentVibefeldClaimProjectionSeam> | undefined;
   try {
     if (composition.state === "composed") {
+      runtimeStartedAt = now();
       const preflight = await composition.bridge.preflight();
       if (preflight.state === "ready") {
         preflightReady = true;
-        claimSeam = createCurrentVibefeldClaimProjectionSeam(composition.bridge);
+        runtimeOutcome = "ready";
+        claimSeam = createCurrentVibefeldClaimProjectionSeam(composition.bridge, {
+          observer: (outcome) => options.diagnostics?.({ stage: "af-projection", outcome }),
+        });
         claimAvailable = claimSeam.getCapability().supported;
         runtime = claimAvailable
           ? deriveReasoningReviewRuntime(preflight)
           : CLAIM_CAPABILITY_UNAVAILABLE_REASONING_REVIEW_RUNTIME;
       } else {
+        runtimeOutcome = "readiness-rejected";
         runtime = deriveReasoningReviewRuntime(preflight);
       }
+      report("runtime", runtimeOutcome, runtimeStartedAt);
     }
   } catch {
     // A rejected preflight is nonfatal; the bounded failure status stays.
+    runtimeOutcome = "readiness-rejected";
+    if (composition.state === "composed") report("runtime", runtimeOutcome, runtimeStartedAt);
   }
+  if (composition.state !== "composed") report("runtime", "af-unavailable");
+  if (!preflightReady) report("adapter", runtimeOutcome);
 
   let controller: IReasoningReviewController | undefined;
   if (claimAvailable && claimSeam) {
@@ -859,48 +1201,6 @@ async function selectReasoningReviewDependencies(
       new ClaimProjectionReasoningReviewController(claimSeam),
       runtime,
     );
-  }
-
-  let reasoningAssistAdapter: ReasoningAssistRestrictedReviewAdapter | undefined;
-  try {
-    const model = options.model ?? resolvedRestrictedReviewModel;
-    const createProvider =
-      options.createProvider ??
-      ((pinnedModel: RestrictedReviewModel) => agent?.createRestrictedReviewProvider(pinnedModel));
-    const provider = model ? createProvider(model) : undefined;
-    if (provider && (await provider.checkReadiness())) {
-      // Keep the adversarial implementation dormant-by-construction when no
-      // host-pinned model/provider exists on the current host.
-      const [
-        { AdversarialReviewReasoningReviewController },
-        { createAdversarialReviewSeam },
-        { createRestrictedReviewAdapter },
-      ] = await Promise.all([
-        import("./vibefeld/adversarial-review-reasoning-review-controller"),
-        import("./vibefeld/adversarial-review-seam"),
-        import("./vibefeld/restricted-review-adapter"),
-      ]);
-      const adapter = createRestrictedReviewAdapter({ provider });
-      // Every constructed adapter owns host-private lifecycle state, so its
-      // disposal is registered whether it is injected for the assist or only
-      // selected behind the adversarial fallback controller.
-      restrictedReviewDisposal = adapter.dispose;
-      if (preflightReady) reasoningAssistAdapter = adapter;
-      if (!controller) {
-        const seam = createAdversarialReviewSeam(adapter);
-        if (seam.getCapability().supported) {
-          controller = new RuntimeReportingReasoningReviewController(
-            new AdversarialReviewReasoningReviewController(seam, {
-              readinessCheck: () => provider.checkReadiness(),
-            }),
-            { state: "available" },
-          );
-        }
-      }
-    }
-  } catch {
-    // Restricted review is optional and fails closed.
-    reasoningAssistAdapter = undefined;
   }
 
   let reasoningAssistStructureRecorder: ReasoningAssistStructureRecorder | undefined;
@@ -916,30 +1216,17 @@ async function selectReasoningReviewDependencies(
   return {
     controller:
       controller ?? new RuntimeReportingReasoningReviewController(new UnavailableReasoningReviewController(), runtime),
-    reasoningAssistAdapter,
+    runtime,
+    claimAvailable,
+    ...(claimAvailable && claimSeam ? { claimSeam } : {}),
     reasoningAssistStructureRecorder,
   };
 }
 
 type RestrictedReviewSelectionOptions = Readonly<{
-  model?: RestrictedReviewModel;
-  createProvider?: (model: RestrictedReviewModel) => ReturnType<OpenCodeAgent["createRestrictedReviewProvider"]>;
+  diagnostics?: ReasoningDiagnosticReporter;
+  now?: () => number;
 }>;
-
-function parseRestrictedReviewModel(value: string | undefined): RestrictedReviewModel | undefined {
-  if (
-    !value ||
-    value.length > 256 ||
-    [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
-  )
-    return undefined;
-  const separator = value.indexOf("/");
-  if (separator <= 0 || separator === value.length - 1) return undefined;
-  const providerID = value.slice(0, separator);
-  const modelID = value.slice(separator + 1);
-  if (!providerID || !modelID || providerID.length > 128 || modelID.length > 256) return undefined;
-  return { providerID, modelID };
-}
 
 class LazyChatViewProvider implements vscode.WebviewViewProvider {
   constructor(private readonly resolveProvider: () => Promise<ChatViewProvider | undefined>) {}
@@ -956,31 +1243,31 @@ class LazyChatViewProvider implements vscode.WebviewViewProvider {
 
 export async function deactivate() {
   sandboxController = undefined;
-  // Stop host-private assist work before restricted children and the agent
-  // connection are torn down; a provider without in-flight work is a no-op.
-  const disposeAssist = reasoningAssistDisposal;
-  reasoningAssistDisposal = undefined;
-  if (disposeAssist) {
+  const holder = restrictedReviewHolder;
+  restrictedReviewHolder = undefined;
+  if (holder) {
     try {
-      disposeAssist();
+      await holder.dispose();
     } catch {
-      // Assist cleanup is best effort during shutdown.
-    }
-  }
-  const dispose = restrictedReviewDisposal;
-  restrictedReviewDisposal = undefined;
-  if (dispose) {
-    try {
-      await dispose();
-    } catch {
-      // Restricted child cleanup is best effort during shutdown.
+      // Restricted holder cleanup is best effort during shutdown.
     }
   }
   agent?.disconnect();
+  const disposeDiagnostics = disposeHostDiagnosticChannel;
+  disposeHostDiagnosticChannel = undefined;
+  try {
+    disposeDiagnostics?.();
+  } catch {
+    // Diagnostics are best effort during shutdown.
+  }
 }
 
 export function getMemoryProviderStatus(): MemoryProviderStatus {
   return memoryProviderStatus;
+}
+
+function isLocalInstallerUri(uri: vscode.Uri): uri is vscode.Uri & LocalInstallerUri {
+  return uri.scheme === "file" && typeof uri.fsPath === "string" && typeof uri.toString === "function";
 }
 
 async function safelyDetectMemoryProvider(

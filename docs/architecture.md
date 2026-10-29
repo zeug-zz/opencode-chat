@@ -48,6 +48,8 @@ opencode-scribe
 
 `@opencode-ai/sdk` をラップし、`IAgent` を実装するアダプター。
 
+OpenCode V2 migration target (not yet delivered): native Code Mode `execute` composes each role's otherwise-permitted tools, not shell/process access. Native `fetch` is distinct from `webfetch`, may use side-effecting methods/headers/bodies, and has no Scribe-defined tool allowlist or execution limits.
+
 | モジュール | 説明 |
 |-----------|------|
 | `opencode-agent.ts` | `IAgent` を実装する `OpenCodeAgent` クラス — SDK、互換サンドボックス、外部 nono の子プロセスライフサイクル、イベント転送、エージェント操作 |

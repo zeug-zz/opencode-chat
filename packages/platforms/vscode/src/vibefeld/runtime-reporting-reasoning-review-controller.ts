@@ -1,5 +1,5 @@
 import type { ReasoningReviewRuntime } from "@opencode-chat/core";
-import type { IReasoningReviewController } from "./reasoning-review-controller";
+import type { IReasoningReviewController, ReasoningReviewControllerInput } from "./reasoning-review-controller";
 import type { AfBridgeResult } from "./vibefeld-runtime";
 
 /**
@@ -78,7 +78,7 @@ export class RuntimeReportingReasoningReviewController implements IReasoningRevi
     return this.runtime;
   }
 
-  review(input: { sessionId: string; messageId: string; sourceText: string; invocation?: "manual" | "automatic" }) {
+  review(input: ReasoningReviewControllerInput) {
     return this.delegate.review(input);
   }
 

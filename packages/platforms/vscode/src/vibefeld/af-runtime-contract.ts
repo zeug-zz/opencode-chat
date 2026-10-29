@@ -118,6 +118,13 @@ export type AfResultClassification =
  * execution-boundary failures remain non-success, even if a child emitted
  * data that resembles a valid result.
  */
+export function classifyAfRuntimeResult(
+  kind: "success",
+): Extract<AfResultClassification, { outcome: "observed-success" }>;
+export function classifyAfRuntimeResult(
+  kind: Exclude<AfRuntimeResultKind, "success">,
+): Extract<AfResultClassification, { outcome: "unavailable" | "audit-failed" }>;
+export function classifyAfRuntimeResult(kind: AfRuntimeResultKind): AfResultClassification;
 export function classifyAfRuntimeResult(kind: AfRuntimeResultKind): AfResultClassification {
   if (kind === "success") {
     return { outcome: "observed-success", structuralStatus: null };
@@ -302,9 +309,17 @@ const normalizeRuntime = (value: unknown): AfRuntimeIdentity | undefined => {
   if (!isRecord(value)) return undefined;
   const buildDate = value.buildDate ?? value.build_date;
   const goVersion = value.goVersion ?? value.go_version;
-  if (![value.executableName, value.version, value.commit, buildDate, goVersion].every(readString)) return undefined;
+  if (
+    !readString(value.executableName) ||
+    value.executableName !== "af" ||
+    !readString(value.version) ||
+    !readString(value.commit) ||
+    !readString(buildDate) ||
+    !readString(goVersion)
+  )
+    return undefined;
   return {
-    executableName: value.executableName === "af" ? "af" : (value.executableName as "af"),
+    executableName: "af",
     version: value.version,
     commit: value.commit,
     buildDate,
@@ -357,7 +372,10 @@ const normalizeResult = (value: unknown, errors: AfFixtureValidationError[]): Af
     errors.push(error("invalid-shape", "observed result has an unsupported outcome"));
     return undefined;
   }
-  if (typeof value.exitCode !== "undefined" && (!Number.isInteger(value.exitCode) || value.exitCode < 0)) {
+  if (
+    typeof value.exitCode !== "undefined" &&
+    (typeof value.exitCode !== "number" || !Number.isInteger(value.exitCode) || value.exitCode < 0)
+  ) {
     errors.push(error("invalid-shape", "observed exit code is invalid"));
   }
   if (typeof value.signal !== "undefined" && !readString(value.signal))

@@ -2,14 +2,19 @@ import { AF_MAX_REFINE_STATEMENTS } from "./af-command-schema";
 import { AF_FIXTURE_LIMITS } from "./af-runtime-contract";
 import type { ClaimGraph } from "./claim-graph";
 import {
+  CLAIM_PROJECTION_DIAGNOSTIC_FAILURE_CLASSES,
   type ClaimProjectionCapability,
   type ClaimProjectionDelegate,
+  type ClaimProjectionDiagnosticFailureClass,
+  type ClaimProjectionDiagnosticObserver,
+  type ClaimProjectionDiagnosticOperation,
+  type ClaimProjectionDiagnosticOutcome,
   type ClaimProjectionSeam,
   createClaimProjectionSeam,
   createUnsupportedClaimProjectionSeam,
   type NormalizedProjectionOutcome,
 } from "./claim-projection-seam";
-import type { AfBridgeResult, VibefeldRuntimeBridge } from "./vibefeld-runtime";
+import type { AfBridgeOperation, AfBridgeResult, VibefeldRuntimeBridge } from "./vibefeld-runtime";
 
 /**
  * The bridge operations the production claim seam may reach. Claim projection
@@ -34,6 +39,7 @@ const PROJECTION_ROOT_ROLE = "prover" as const;
 const SHELL_TOKEN = /[;&|`$\n\r]|\$\(|\b(?:sh|bash|zsh|fish|powershell|cmd)\s+-c\b/i;
 
 const CLAIM_CAPABILITY_KEYS = ["supported", "operation"] as const;
+const DIAGNOSTIC_FAILURE_CLASSES = new Set<string>(CLAIM_PROJECTION_DIAGNOSTIC_FAILURE_CLASSES);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -105,6 +111,45 @@ function failureOutcome(result: AfBridgeResult): NormalizedProjectionOutcome {
 /** A ready result must not also carry a bounded failure reason. */
 const isReadyResult = (result: AfBridgeResult): boolean => result.state === "ready" && result.reason === undefined;
 
+function boundedFailureClass(reason: unknown): ClaimProjectionDiagnosticFailureClass {
+  return typeof reason === "string" && DIAGNOSTIC_FAILURE_CLASSES.has(reason)
+    ? (reason as ClaimProjectionDiagnosticFailureClass)
+    : "other";
+}
+
+function beginFailureDiagnostic(result: AfBridgeResult): ClaimProjectionDiagnosticOutcome {
+  const reason = boundedFailureClass(result.reason);
+  if (reason === "cancelled") return "projection-cancelled";
+  return reason === "operation-not-ready" ? "projection-begin-not-ready" : `projection-begin-${reason}`;
+}
+
+function operationFailureDiagnostic(
+  operation: ClaimProjectionDiagnosticOperation,
+  reason: unknown,
+): ClaimProjectionDiagnosticOutcome {
+  const failureClass = boundedFailureClass(reason);
+  return failureClass === "cancelled" ? "projection-cancelled" : `projection-${operation}-failed-${failureClass}`;
+}
+
+function projectionStatementDiagnostic(statement: unknown): ClaimProjectionDiagnosticOutcome | undefined {
+  if (typeof statement !== "string") return undefined;
+  if (statement.length === 0) return "projection-statement-empty";
+  if (statement.length > AF_FIXTURE_LIMITS.stringLength) return "projection-statement-too-long";
+  if (SHELL_TOKEN.test(statement)) return "projection-statement-shell-token";
+  return undefined;
+}
+
+function invalidGraphDiagnostic(graph: unknown): ClaimProjectionDiagnosticOutcome {
+  if (isRecord(graph) && Array.isArray(graph.nodes)) {
+    for (const node of graph.nodes) {
+      if (!isRecord(node)) continue;
+      const statementOutcome = projectionStatementDiagnostic(node.statement);
+      if (statementOutcome) return statementOutcome;
+    }
+  }
+  return "projection-graph-invalid";
+}
+
 const isBoundedStatement = (statement: unknown): statement is string =>
   typeof statement === "string" &&
   statement.length > 0 &&
@@ -134,52 +179,113 @@ const isStatusFacts = (facts: unknown, totalNodes: number): boolean =>
  * never leave this function.
  */
 function createBridgeProjection(runtime: CurrentVibefeldRuntimeBoundary): ClaimProjectionDelegate {
-  return async (graph: ClaimGraph, signal: AbortSignal): Promise<NormalizedProjectionOutcome> => {
-    if (signal.aborted) return CANCELLED_OUTCOME;
+  return async (
+    graph: ClaimGraph,
+    signal: AbortSignal,
+    observer: ClaimProjectionDiagnosticObserver,
+  ): Promise<NormalizedProjectionOutcome> => {
+    const report = (outcome: ClaimProjectionDiagnosticOutcome): void => {
+      try {
+        observer(outcome);
+      } catch {
+        // Projection diagnostics are observational.
+      }
+    };
+
+    if (signal.aborted) {
+      report("projection-cancelled");
+      return CANCELLED_OUTCOME;
+    }
 
     const conclusion = graph.nodes.find((node) => node.id === graph.conclusionId);
     // Defensive only: the seam validates the graph before the delegate runs.
-    if (!conclusion) return MALFORMED_OUTCOME;
+    if (!conclusion) {
+      report("projection-graph-invalid");
+      return MALFORMED_OUTCOME;
+    }
     const statements = graph.nodes.filter((node) => node.id !== graph.conclusionId).map((node) => node.statement);
     // Bounds are checked before any bridge call; over-limit input is refused, never truncated.
-    if (!isBoundedStatement(conclusion.statement) || !statements.every(isBoundedStatement)) return OVERSIZED_OUTCOME;
+    const allStatements = [conclusion.statement, ...statements];
+    const statementOutcome = allStatements.map(projectionStatementDiagnostic).find(Boolean);
+    if (statementOutcome) {
+      report(statementOutcome);
+      return OVERSIZED_OUTCOME;
+    }
+    if (!allStatements.every(isBoundedStatement)) {
+      report("projection-graph-invalid");
+      return OVERSIZED_OUTCOME;
+    }
 
-    const review = await runtime.beginReview();
+    let review: AfBridgeResult<never>;
+    try {
+      review = await runtime.beginReview();
+    } catch (error) {
+      report("projection-begin-other");
+      throw error;
+    }
     if (signal.aborted) return CANCELLED_OUTCOME;
-    if (!isReadyResult(review)) return failureOutcome(review);
+    if (!isReadyResult(review)) {
+      report(beginFailureDiagnostic(review));
+      return failureOutcome(review);
+    }
 
-    const initialized = await runtime.run(
-      { operation: "init", conjecture: conclusion.statement, author: PROJECTION_AUTHOR },
-      signal,
-    );
-    if (signal.aborted) return CANCELLED_OUTCOME;
-    if (!isReadyResult(initialized)) return failureOutcome(initialized);
-    if (!isInitFacts(initialized.facts)) return UNRESOLVED_OUTCOME;
+    const run = async (operation: AfBridgeOperation): Promise<AfBridgeResult> => {
+      try {
+        return await runtime.run(operation, signal);
+      } catch (error) {
+        report(signal.aborted ? "projection-cancelled" : operationFailureDiagnostic(operation.operation, "other"));
+        throw error;
+      }
+    };
 
-    const claimed = await runtime.run(
-      { operation: "claim", nodeId: PROJECTION_ROOT_NODE_ID, role: PROJECTION_ROOT_ROLE },
-      signal,
-    );
+    const initialized = await run({ operation: "init", conjecture: conclusion.statement, author: PROJECTION_AUTHOR });
     if (signal.aborted) return CANCELLED_OUTCOME;
-    if (!isReadyResult(claimed)) return failureOutcome(claimed);
-    if (!isClaimFacts(claimed.facts)) return UNRESOLVED_OUTCOME;
+    if (!isReadyResult(initialized)) {
+      report(operationFailureDiagnostic("init", initialized.reason));
+      return failureOutcome(initialized);
+    }
+    if (!isInitFacts(initialized.facts)) {
+      report("projection-init-facts-mismatch");
+      return UNRESOLVED_OUTCOME;
+    }
+
+    const claimed = await run({ operation: "claim", nodeId: PROJECTION_ROOT_NODE_ID, role: PROJECTION_ROOT_ROLE });
+    if (signal.aborted) return CANCELLED_OUTCOME;
+    if (!isReadyResult(claimed)) {
+      report(operationFailureDiagnostic("claim", claimed.reason));
+      return failureOutcome(claimed);
+    }
+    if (!isClaimFacts(claimed.facts)) {
+      report("projection-claim-facts-mismatch");
+      return UNRESOLVED_OUTCOME;
+    }
 
     for (let index = 0; index < statements.length; index += AF_MAX_REFINE_STATEMENTS) {
       const chunk = statements.slice(index, index + AF_MAX_REFINE_STATEMENTS);
-      const refined = await runtime.run(
-        { operation: "refine", parentId: PROJECTION_ROOT_NODE_ID, statements: [...chunk] },
-        signal,
-      );
+      const refined = await run({ operation: "refine", parentId: PROJECTION_ROOT_NODE_ID, statements: [...chunk] });
       if (signal.aborted) return CANCELLED_OUTCOME;
-      if (!isReadyResult(refined)) return failureOutcome(refined);
-      if (!isRefineFacts(refined.facts, chunk.length)) return UNRESOLVED_OUTCOME;
+      if (!isReadyResult(refined)) {
+        report(operationFailureDiagnostic("refine", refined.reason));
+        return failureOutcome(refined);
+      }
+      if (!isRefineFacts(refined.facts, chunk.length)) {
+        report("projection-refine-facts-mismatch");
+        return UNRESOLVED_OUTCOME;
+      }
     }
 
-    const status = await runtime.run({ operation: "status" }, signal);
+    const status = await run({ operation: "status" });
     if (signal.aborted) return CANCELLED_OUTCOME;
-    if (!isReadyResult(status)) return failureOutcome(status);
-    if (!isStatusFacts(status.facts, 1 + statements.length)) return UNRESOLVED_OUTCOME;
+    if (!isReadyResult(status)) {
+      report(operationFailureDiagnostic("status", status.reason));
+      return failureOutcome(status);
+    }
+    if (!isStatusFacts(status.facts, 1 + statements.length)) {
+      report("projection-status-facts-mismatch");
+      return UNRESOLVED_OUTCOME;
+    }
 
+    report("projection-completed");
     return STRUCTURALLY_CHECKED_OUTCOME;
   };
 }
@@ -191,8 +297,15 @@ function createBridgeProjection(runtime: CurrentVibefeldRuntimeBoundary): ClaimP
  * dormant, incompatible, or unready runtime never projects. Construction and
  * capability reads never preflight, spawn, or allocate.
  */
-export function createCurrentVibefeldClaimProjectionSeam(runtime: CurrentVibefeldRuntimeBoundary): ClaimProjectionSeam {
+export function createCurrentVibefeldClaimProjectionSeam(
+  runtime: CurrentVibefeldRuntimeBoundary,
+  options: Readonly<{ observer?: ClaimProjectionDiagnosticObserver }> = {},
+): ClaimProjectionSeam {
   const capability = readClaimCapability(runtime);
-  if (!capability.supported) return createUnsupportedClaimProjectionSeam();
-  return createClaimProjectionSeam({ capability, project: createBridgeProjection(runtime) });
+  const seamOptions = {
+    ...(options.observer ? { observer: options.observer } : {}),
+    classifyInvalidGraph: invalidGraphDiagnostic,
+  };
+  if (!capability.supported) return createUnsupportedClaimProjectionSeam(seamOptions);
+  return createClaimProjectionSeam({ capability, project: createBridgeProjection(runtime) }, seamOptions);
 }

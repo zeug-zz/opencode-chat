@@ -1,13 +1,17 @@
 import type {
   MessagePart,
   QuestionRequest,
+  ReasoningEvidenceStatus,
   ReasoningPart as ReasoningPartType,
+  ReasoningReviewChallengeSeverity,
+  ReasoningReviewStatus,
   TextPart,
   ToolPart,
 } from "@opencode-chat/core";
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { MessageWithParts } from "../../../App";
 import { useAppContext } from "../../../contexts/AppContext";
+import type { ReasoningReviewViewState } from "../../../hooks/useReasoningReview";
 import { useLocale } from "../../../locales";
 import { postMessage } from "../../../vscode-api";
 import { ActionButton } from "../../atoms/ActionButton";
@@ -29,6 +33,10 @@ type Props = {
   activeSessionId: string;
   showAllThinking?: boolean;
   questions: Map<string, QuestionRequest>;
+  reasoningReviewAvailable?: boolean;
+  reasoningReview?: ReasoningReviewViewState;
+  onRequestReasoningReview?: (sessionId: string, messageId: string) => void;
+  onCancelReasoningReview?: (sessionId: string, messageId: string) => void;
   onEditAndResend?: (messageId: string, text: string) => void;
 };
 
@@ -72,7 +80,82 @@ export function getCopyableAssistantMarkdownSource(
   return getAssistantMarkdownSource(parts);
 }
 
-function MessageItemInner({ message, showAllThinking = false, questions, onEditAndResend }: Props) {
+function getReasoningReviewStatusLabel(status: ReasoningReviewStatus, t: ReturnType<typeof useLocale>): string {
+  switch (status) {
+    case "not_reviewed":
+      return t["reasoningReview.status.notReviewed"];
+    case "reviewing":
+      return t["reasoningReview.status.reviewing"];
+    case "structurally_checked":
+      return t["reasoningReview.status.structurallyChecked"];
+    case "conditional":
+      return t["reasoningReview.status.conditional"];
+    case "unresolved":
+      return t["reasoningReview.status.unresolved"];
+    case "refuted":
+      return t["reasoningReview.status.refuted"];
+    case "blocked":
+      return t["reasoningReview.status.blocked"];
+    case "audit_failed":
+      return t["reasoningReview.status.auditFailed"];
+    case "unavailable":
+      return t["reasoningReview.status.unavailable"];
+  }
+}
+
+function getReasoningEvidenceLabel(status: ReasoningEvidenceStatus, t: ReturnType<typeof useLocale>): string {
+  switch (status) {
+    case "not_assessed":
+      return t["reasoningReview.evidence.notAssessed"];
+    case "not_required":
+      return t["reasoningReview.evidence.notRequired"];
+    case "source_recorded":
+      return t["reasoningReview.evidence.sourceRecorded"];
+    case "unverified":
+      return t["reasoningReview.evidence.unverified"];
+    case "human_verified":
+      return t["reasoningReview.evidence.humanVerified"];
+    case "conflicted":
+      return t["reasoningReview.evidence.conflicted"];
+  }
+}
+
+function getReasoningSeverityLabel(
+  severity: ReasoningReviewChallengeSeverity,
+  t: ReturnType<typeof useLocale>,
+): string {
+  switch (severity) {
+    case "critical":
+      return t["reasoningReview.severity.critical"];
+    case "major":
+      return t["reasoningReview.severity.major"];
+    case "minor":
+      return t["reasoningReview.severity.minor"];
+    case "note":
+      return t["reasoningReview.severity.note"];
+  }
+}
+
+function getReasoningStageLabel(
+  stage: "claimProjection" | "adversarialReview",
+  t: ReturnType<typeof useLocale>,
+): string {
+  return stage === "claimProjection"
+    ? t["reasoningReview.stage.claimProjection"]
+    : t["reasoningReview.stage.adversarialReview"];
+}
+
+function MessageItemInner({
+  message,
+  activeSessionId,
+  showAllThinking = false,
+  questions,
+  reasoningReviewAvailable = false,
+  reasoningReview,
+  onRequestReasoningReview,
+  onCancelReasoningReview,
+  onEditAndResend,
+}: Props) {
   const t = useLocale();
   const { isShellMessage, childSessions, onNavigateToChild } = useAppContext();
   const { info, parts } = message;
@@ -81,6 +164,7 @@ function MessageItemInner({ message, showAllThinking = false, questions, onEditA
   const isShell = !isUser && isShellMessage(info.id);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
+  const [messageActionsOpen, setMessageActionsOpen] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
   // コピー直後にチェックマークへ切り替えるための短時間フラグ。
   // 連続クリックでも前のタイマーが残らないように ref で管理する。
@@ -122,6 +206,15 @@ function MessageItemInner({ message, showAllThinking = false, questions, onEditA
   // コピー対象の Markdown ソースを組み立てる。
   // user メッセージ / shell 結果 / 可視テキスト無しの場合は null。
   const copyableMarkdown = getCopyableAssistantMarkdownSource(parts, { isUser, isShell });
+  const reviewableAnswer =
+    !isUser &&
+    !isShell &&
+    info.sessionID === activeSessionId &&
+    info.agent === "scout" &&
+    typeof info.time?.completed === "number" &&
+    Number.isFinite(info.time.completed) &&
+    info.error == null &&
+    parts.some((part) => part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0);
 
   const handleStartEdit = useCallback(() => {
     if (!isUser || !userText) return;
@@ -274,6 +367,97 @@ function MessageItemInner({ message, showAllThinking = false, questions, onEditA
               <span dangerouslySetInnerHTML={{ __html: copied ? CHECK_ICON : COPY_ICON }} />
             </button>
           )}
+          {reviewableAnswer &&
+            reasoningReviewAvailable &&
+            reasoningReview?.phase !== "reviewing" &&
+            reasoningReview?.phase !== "cancelling" && (
+              <details
+                className={styles.messageActions}
+                onToggle={(event) => setMessageActionsOpen(event.currentTarget.open)}
+              >
+                <summary aria-label={t["message.moreActions"]} title={t["message.moreActions"]}>
+                  <span aria-hidden="true">…</span>
+                </summary>
+                <div className={styles.messageActionsMenu} hidden={!messageActionsOpen}>
+                  <ActionButton
+                    variant="ghost"
+                    size="sm"
+                    className={styles.reviewAction}
+                    onClick={() => onRequestReasoningReview?.(activeSessionId, info.id)}
+                  >
+                    {t["reasoningReview.action"]}
+                  </ActionButton>
+                </div>
+              </details>
+            )}
+          {reviewableAnswer && (reasoningReview?.phase === "reviewing" || reasoningReview?.phase === "cancelling") && (
+            <div className={styles.reviewProgress} aria-live="polite">
+              <span>
+                {reasoningReview.phase === "cancelling"
+                  ? t["reasoningReview.cancelling"]
+                  : `${t["reasoningReview.inProgress"]}: ${getReasoningStageLabel(reasoningReview.stage, t)}`}
+              </span>
+              {reasoningReview.phase === "reviewing" && (
+                <ActionButton
+                  variant="ghost"
+                  size="sm"
+                  className={styles.reviewAction}
+                  onClick={() => onCancelReasoningReview?.(activeSessionId, info.id)}
+                >
+                  {t["reasoningReview.cancel"]}
+                </ActionButton>
+              )}
+            </div>
+          )}
+          {reviewableAnswer && reasoningReview?.phase === "cancelled" && (
+            <p className={styles.reviewCancelled} role="status">
+              {t["reasoningReview.cancelled"]}
+            </p>
+          )}
+          {reviewableAnswer && reasoningReview?.phase === "result" && (
+            <section className={styles.reviewResult} aria-label={t["reasoningReview.resultLabel"]}>
+              <p className={styles.reviewConclusion}>{reasoningReview.summary.conclusion}</p>
+              {reasoningReview.summary.interpretiveBoundary && (
+                <p className={styles.reviewConclusion}>
+                  <strong>{t["reasoningReview.boundaryLabel"]}: </strong>
+                  {reasoningReview.summary.interpretiveBoundary}
+                </p>
+              )}
+              <dl className={styles.reviewFacts}>
+                <div>
+                  <dt>{t["reasoningReview.statusLabel"]}</dt>
+                  <dd>{getReasoningReviewStatusLabel(reasoningReview.summary.status, t)}</dd>
+                </div>
+                <div>
+                  <dt>{t["reasoningReview.evidenceLabel"]}</dt>
+                  <dd>{getReasoningEvidenceLabel(reasoningReview.summary.evidenceStatus, t)}</dd>
+                </div>
+              </dl>
+              {reasoningReview.summary.assumptions.length > 0 && (
+                <div>
+                  <h4>{t["reasoningReview.assumptionsLabel"]}</h4>
+                  <ul>
+                    {reasoningReview.summary.assumptions.map((assumption, index) => (
+                      <li key={`${index}-${assumption}`}>{assumption}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {reasoningReview.summary.openChallenges.length > 0 && (
+                <div>
+                  <h4>{t["reasoningReview.challengesLabel"]}</h4>
+                  <ul>
+                    {reasoningReview.summary.openChallenges.map((challenge, index) => (
+                      <li key={`${index}-${challenge.target}`}>
+                        <strong>{getReasoningSeverityLabel(challenge.severity, t)}</strong> ·{" "}
+                        <code>{challenge.target}</code>: {challenge.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
     </div>
@@ -285,6 +469,10 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
     prev.message === next.message &&
     prev.activeSessionId === next.activeSessionId &&
     prev.showAllThinking === next.showAllThinking &&
+    prev.reasoningReviewAvailable === next.reasoningReviewAvailable &&
+    prev.reasoningReview === next.reasoningReview &&
+    prev.onRequestReasoningReview === next.onRequestReasoningReview &&
+    prev.onCancelReasoningReview === next.onCancelReasoningReview &&
     getMessageQuestionsSignature(prev.questions, prev.message.info.id) ===
       getMessageQuestionsSignature(next.questions, next.message.info.id) &&
     // onEditAndResend is stable during streaming (uses a ref for msg.messages
@@ -301,15 +489,6 @@ const ReasoningPartView = memo(
     const isComplete = !!part.time?.end;
     const visible = showAllThinking || expanded;
     const previousTextLengthRef = useRef(part.text.length);
-    const bodyRef = useRef<HTMLDivElement>(null);
-
-    useLayoutEffect(() => {
-      const el = bodyRef.current;
-      if (el && el.textContent !== part.text) {
-        el.textContent = part.text;
-      }
-    }, [part.text, visible]);
-
     useEffect(() => {
       const previousLength = previousTextLengthRef.current;
       const nextLength = part.text.length;
@@ -322,7 +501,6 @@ const ReasoningPartView = memo(
           sessionID: part.sessionID,
           previousLength,
           nextLength,
-          nextTextPreview: nextLength === 0 ? "" : part.text.slice(0, 80),
           expanded,
           complete: !!part.time?.end,
           reason: nextLength === 0 ? "rendered reasoning part became empty" : "rendered reasoning part shrank",
@@ -331,6 +509,8 @@ const ReasoningPartView = memo(
 
       previousTextLengthRef.current = Math.max(previousLength, nextLength);
     }, [part.id, part.messageID, part.sessionID, part.text, part.time?.end, expanded]);
+
+    if (part.time?.end && part.text.length === 0) return null;
 
     return (
       <div className={`${styles.reasoningPart} ${isComplete ? "" : styles.reasoningActive}`}>
@@ -347,7 +527,11 @@ const ReasoningPartView = memo(
             <ChevronRightIcon />
           </span>
         </div>
-        {visible && <div ref={bodyRef} className={styles.reasoningBody} />}
+        {visible && (
+          <div className={styles.reasoningBody}>
+            <TextPartView part={{ ...part, type: "text" }} />
+          </div>
+        )}
       </div>
     );
   },

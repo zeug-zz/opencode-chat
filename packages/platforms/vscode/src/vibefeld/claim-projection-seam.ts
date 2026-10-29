@@ -1,4 +1,5 @@
 import { type ClaimGraph, validateClaimGraph } from "./claim-graph";
+import type { AfBridgeFailureReason } from "./vibefeld-runtime";
 
 export type { ClaimGraph } from "./claim-graph";
 
@@ -15,6 +16,78 @@ export type ClaimProjectionFailureReason =
   | "cleanup"
   | "audit";
 
+export const CLAIM_PROJECTION_DIAGNOSTIC_FAILURE_CLASSES = [
+  "unsupported-platform",
+  "missing-executable",
+  "policy-unavailable",
+  "preflight-failed",
+  "runtime-mismatch",
+  "operation-not-ready",
+  "cancelled",
+  "timeout",
+  "malformed",
+  "oversized",
+  "non-zero",
+  "signaled",
+  "cleanup-failure",
+  "audit-failure",
+  "other",
+] as const satisfies readonly (AfBridgeFailureReason | "other")[];
+
+export const CLAIM_PROJECTION_DIAGNOSTIC_OPERATIONS = ["init", "claim", "refine", "status"] as const;
+
+export type ClaimProjectionDiagnosticFailureClass = (typeof CLAIM_PROJECTION_DIAGNOSTIC_FAILURE_CLASSES)[number];
+export type ClaimProjectionDiagnosticOperation = (typeof CLAIM_PROJECTION_DIAGNOSTIC_OPERATIONS)[number];
+export type ClaimProjectionDiagnosticOutcome =
+  | "projection-unsupported"
+  | "projection-graph-invalid"
+  | "projection-statement-empty"
+  | "projection-statement-too-long"
+  | "projection-statement-shell-token"
+  | "projection-begin-not-ready"
+  | `projection-begin-${Exclude<ClaimProjectionDiagnosticFailureClass, "operation-not-ready" | "cancelled">}`
+  | `projection-${ClaimProjectionDiagnosticOperation}-failed-${Exclude<ClaimProjectionDiagnosticFailureClass, "cancelled">}`
+  | `projection-${ClaimProjectionDiagnosticOperation}-facts-mismatch`
+  | "projection-cancelled"
+  | "projection-completed"
+  | "projection-unresolved"
+  | "projection-result-invalid"
+  | "projection-result-failed";
+
+export type ClaimProjectionDiagnosticObserver = (outcome: ClaimProjectionDiagnosticOutcome) => void;
+
+export type ClaimProjectionSeamOptions = Readonly<{
+  observer?: ClaimProjectionDiagnosticObserver;
+  classifyInvalidGraph?: (graph: unknown) => ClaimProjectionDiagnosticOutcome;
+}>;
+
+const PROJECTION_OPERATION_FAILURE_OUTCOMES = CLAIM_PROJECTION_DIAGNOSTIC_OPERATIONS.flatMap((operation) =>
+  CLAIM_PROJECTION_DIAGNOSTIC_FAILURE_CLASSES.filter((reasonClass) => reasonClass !== "cancelled").map(
+    (reasonClass) => `projection-${operation}-failed-${reasonClass}` as const,
+  ),
+);
+const PROJECTION_BEGIN_FAILURE_OUTCOMES = CLAIM_PROJECTION_DIAGNOSTIC_FAILURE_CLASSES.filter(
+  (reasonClass) => reasonClass !== "operation-not-ready" && reasonClass !== "cancelled",
+).map((reasonClass) => `projection-begin-${reasonClass}` as const);
+
+/** The fixed labels the extension diagnostic reporter may accept for claim projection. */
+export const CLAIM_PROJECTION_DIAGNOSTIC_OUTCOMES: readonly ClaimProjectionDiagnosticOutcome[] = Object.freeze([
+  "projection-unsupported",
+  "projection-graph-invalid",
+  "projection-statement-empty",
+  "projection-statement-too-long",
+  "projection-statement-shell-token",
+  "projection-begin-not-ready",
+  ...PROJECTION_BEGIN_FAILURE_OUTCOMES,
+  ...PROJECTION_OPERATION_FAILURE_OUTCOMES,
+  ...CLAIM_PROJECTION_DIAGNOSTIC_OPERATIONS.map((operation) => `projection-${operation}-facts-mismatch` as const),
+  "projection-cancelled",
+  "projection-completed",
+  "projection-unresolved",
+  "projection-result-invalid",
+  "projection-result-failed",
+]);
+
 export type NormalizedProjectionOutcome =
   | Readonly<{ status: ClaimProjectionStructuralStatus }>
   | Readonly<{ status: "unavailable" | "audit_failed"; reason: ClaimProjectionFailureReason }>;
@@ -24,7 +97,11 @@ export type ClaimProjectionCapability =
   | Readonly<{ supported: true; operation: "claim_projection" }>;
 
 /** The only delegate input is a validated, host-private graph and cancellation signal. */
-export type ClaimProjectionDelegate = (graph: ClaimGraph, signal: AbortSignal) => unknown | Promise<unknown>;
+export type ClaimProjectionDelegate = (
+  graph: ClaimGraph,
+  signal: AbortSignal,
+  observer: ClaimProjectionDiagnosticObserver,
+) => unknown | Promise<unknown>;
 
 export type ClaimProjectionDelegateAdapter = Readonly<{
   capability: ClaimProjectionCapability;
@@ -150,7 +227,10 @@ function normalizedResult(value: unknown): NormalizedProjectionOutcome {
   });
 }
 
-function createSeam(adapter?: ClaimProjectionDelegateAdapter): ClaimProjectionSeam {
+function createSeam(
+  adapter?: ClaimProjectionDelegateAdapter,
+  options: ClaimProjectionSeamOptions = {},
+): ClaimProjectionSeam {
   const capability: ClaimProjectionCapability =
     adapter &&
     isRecord(adapter) &&
@@ -171,14 +251,40 @@ function createSeam(adapter?: ClaimProjectionDelegateAdapter): ClaimProjectionSe
   return {
     getCapability: () => capability,
     async project(graph: ClaimGraph, signal?: AbortSignal): Promise<NormalizedProjectionOutcome> {
-      if (signal?.aborted) return cancelled();
-      if (!capability.supported || !delegate) return unsupported();
-      if (!hasPrivateGraphShape(graph) || !validateClaimGraph(graph).ok)
+      let diagnosticReported = false;
+      const report = (outcome: ClaimProjectionDiagnosticOutcome): void => {
+        if (diagnosticReported) return;
+        diagnosticReported = true;
+        try {
+          options.observer?.(outcome);
+        } catch {
+          // Diagnostics are observational and must not change the projection result.
+        }
+      };
+
+      if (signal?.aborted) {
+        report("projection-cancelled");
+        return cancelled();
+      }
+      if (!capability.supported || !delegate) {
+        report("projection-unsupported");
+        return unsupported();
+      }
+      if (!hasPrivateGraphShape(graph) || !validateClaimGraph(graph).ok) {
+        let diagnostic: ClaimProjectionDiagnosticOutcome = "projection-graph-invalid";
+        try {
+          const classified = options.classifyInvalidGraph?.(graph);
+          if (classified && CLAIM_PROJECTION_DIAGNOSTIC_OUTCOMES.includes(classified)) diagnostic = classified;
+        } catch {
+          // Invalid graph classification is best effort and never receives graph content in output.
+        }
+        report(diagnostic);
         return Object.freeze({ status: "unavailable", reason: "malformed" as const });
+      }
 
       let onAbort: (() => void) | undefined;
       try {
-        const result = Promise.resolve().then(() => delegate(graph, signal ?? new AbortController().signal));
+        const result = Promise.resolve().then(() => delegate(graph, signal ?? new AbortController().signal, report));
         const cancellation = signal
           ? new Promise<NormalizedProjectionOutcome>((resolve) => {
               onAbort = () => resolve(cancelled());
@@ -186,8 +292,23 @@ function createSeam(adapter?: ClaimProjectionDelegateAdapter): ClaimProjectionSe
             })
           : undefined;
         const value = cancellation ? await Promise.race([result, cancellation]) : await result;
-        return signal?.aborted ? cancelled() : normalizedResult(value);
+        if (signal?.aborted) {
+          report("projection-cancelled");
+          return cancelled();
+        }
+        const normalized = normalizedResult(value);
+        if (!diagnosticReported) {
+          if ("reason" in normalized) {
+            report(normalized.reason === "malformed" ? "projection-result-invalid" : "projection-result-failed");
+          } else if (normalized.status === "unresolved") {
+            report("projection-unresolved");
+          } else {
+            report("projection-completed");
+          }
+        }
+        return normalized;
       } catch {
+        report("projection-result-failed");
         return Object.freeze({ status: "audit_failed", reason: "audit" as const });
       } finally {
         if (signal && onAbort) signal.removeEventListener("abort", onAbort);
@@ -197,8 +318,11 @@ function createSeam(adapter?: ClaimProjectionDelegateAdapter): ClaimProjectionSe
 }
 
 /** Default production seam: capability is absent and no delegate is invoked. */
-export const createUnsupportedClaimProjectionSeam = (): ClaimProjectionSeam => createSeam();
+export const createUnsupportedClaimProjectionSeam = (options?: ClaimProjectionSeamOptions): ClaimProjectionSeam =>
+  createSeam(undefined, options);
 
 /** Narrow injected seam for a later fixture-derived capability or focused tests. */
-export const createClaimProjectionSeam = (adapter: ClaimProjectionDelegateAdapter): ClaimProjectionSeam =>
-  createSeam(adapter);
+export const createClaimProjectionSeam = (
+  adapter: ClaimProjectionDelegateAdapter,
+  options?: ClaimProjectionSeamOptions,
+): ClaimProjectionSeam => createSeam(adapter, options);

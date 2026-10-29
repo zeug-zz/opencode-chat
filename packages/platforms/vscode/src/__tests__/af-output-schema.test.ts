@@ -155,4 +155,12 @@ describe("AF output schema", () => {
       failure: { outcome: "audit-failed", reason: "audit-failure", structuralStatus: null },
     });
   });
+
+  it.each([undefined, null, "0"])("rejects malformed fixture exit codes: %s", (exitCode) => {
+    const version = JSON.parse(fixture("version.json")) as Record<string, unknown>;
+    expect(parseAfVersionOutput(JSON.stringify({ ...version, exitCode }))).toEqual({
+      ok: false,
+      failure: { outcome: "unavailable", reason: "malformed", structuralStatus: null },
+    });
+  });
 });

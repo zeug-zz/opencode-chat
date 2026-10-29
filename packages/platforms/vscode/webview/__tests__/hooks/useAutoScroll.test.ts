@@ -32,7 +32,7 @@ describe("useAutoScroll", () => {
     it("最下部付近にいれば scrollIntoView が呼ばれること", () => {
       const scrollIntoViewMock = vi.fn();
       const { result, rerender } = renderHook((props: { messages: unknown[] }) => useAutoScroll(props.messages), {
-        initialProps: { messages: [] },
+        initialProps: { messages: [] as unknown[] },
       });
 
       const bottomEl = document.createElement("div");
@@ -53,7 +53,7 @@ describe("useAutoScroll", () => {
     it("scrollIntoView が呼ばれないこと（上部にスクロール済み）", () => {
       const scrollIntoViewMock = vi.fn();
       const { result, rerender } = renderHook((props: { messages: unknown[] }) => useAutoScroll(props.messages), {
-        initialProps: { messages: [] },
+        initialProps: { messages: [] as unknown[] },
       });
 
       const containerEl = document.createElement("div");
@@ -83,7 +83,7 @@ describe("useAutoScroll", () => {
     it("最下部に戻った後に scrollIntoView が再び呼ばれること", () => {
       const scrollIntoViewMock = vi.fn();
       const { result, rerender } = renderHook((props: { messages: unknown[] }) => useAutoScroll(props.messages), {
-        initialProps: { messages: [] },
+        initialProps: { messages: [] as unknown[] },
       });
 
       const containerEl = document.createElement("div");

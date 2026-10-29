@@ -9,13 +9,20 @@ export type ReapplyAction = { server: string; action: "connect" | "disconnect" }
  * actions needed to bring actual state in line with desired prefs.
  *
  * Only servers present in **both** prefs and status are considered.
- * Pref keys for servers absent from status are silently ignored.
+ * Pref keys for servers absent from status are silently ignored. A server in
+ * `locked` (denied by higher-authority configuration) is never connected; its
+ * stored preference is kept.
  */
-export function computeReapplyActions(prefs: Record<string, boolean>, status: McpStatus): ReapplyAction[] {
+export function computeReapplyActions(
+  prefs: Record<string, boolean>,
+  status: McpStatus,
+  locked: readonly string[] = [],
+): ReapplyAction[] {
   const actions: ReapplyAction[] = [];
   for (const [server, serverStatus] of Object.entries(status)) {
     const pref = prefs[server];
     if (pref === undefined) continue;
+    if (pref && locked.includes(server)) continue;
     if (pref && !serverStatus.connected && (serverStatus.status === "disabled" || serverStatus.status === "unknown")) {
       actions.push({ server, action: "connect" });
     } else if (!pref && serverStatus.connected) {
@@ -34,6 +41,8 @@ export function computeReapplyActions(prefs: Record<string, boolean>, status: Mc
 export function useMcp(capabilities?: { mcp?: boolean }) {
   const [prefs, setPrefsState] = useState<Record<string, boolean>>(() => getPersistedState()?.mcpEnabledByServer ?? {});
   const [servers, setServers] = useState<McpStatus>({});
+  const [locked, setLocked] = useState<readonly string[]>([]);
+  const lockedRef = useRef<readonly string[]>([]);
   const lastNotifiedPrefsRef = useRef<Record<string, boolean> | null>(null);
   const lastProcessedActionsRef = useRef<
     Record<string, { status: McpStatus[string]["status"]; action: ReapplyAction["action"] }>
@@ -67,7 +76,7 @@ export function useMcp(capabilities?: { mcp?: boolean }) {
 
     const currentPrefs = getPersistedState()?.mcpEnabledByServer ?? {};
     if (Object.keys(currentPrefs).length > 0) {
-      const actions = computeReapplyActions(currentPrefs, status);
+      const actions = computeReapplyActions(currentPrefs, status, lockedRef.current);
       for (const { server, action } of actions) {
         const previous = lastProcessedActionsRef.current[server];
         if (previous?.status === status[server].status && previous.action === action) continue;
@@ -86,6 +95,8 @@ export function useMcp(capabilities?: { mcp?: boolean }) {
 
   const handleMcpPrefs = useCallback((message: { prefs: Record<string, boolean>; locked: string[] }) => {
     const nextPrefs = message.prefs;
+    lockedRef.current = message.locked;
+    setLocked(message.locked);
     const adoptedPrefs = { ...nextPrefs };
     lastProcessedActionsRef.current = {};
     lastNotifiedPrefsRef.current = adoptedPrefs;
@@ -98,6 +109,7 @@ export function useMcp(capabilities?: { mcp?: boolean }) {
    * Persists the preference, sends the RPC, and refreshes status.
    */
   const toggle = useCallback((server: string, enabled: boolean) => {
+    if (lockedRef.current.includes(server)) return;
     setPrefsState((prev) => {
       const next = { ...prev, [server]: enabled };
       setPersistedState({ ...getPersistedState(), mcpEnabledByServer: next });
@@ -115,6 +127,7 @@ export function useMcp(capabilities?: { mcp?: boolean }) {
   return {
     prefs,
     servers,
+    locked,
     toggle,
     refresh,
     handleMcpStatus,

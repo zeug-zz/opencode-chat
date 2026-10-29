@@ -13,6 +13,7 @@
  * action. Send/edit payloads are intentionally NOT inspected here —
  * that lives in task 3.1+.
  */
+import type { ProviderInfo } from "@opencode-chat/core";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,7 +32,7 @@ import { renderApp, sendExtMessage } from "../helpers";
 // (reasoning: true, no variants) and must remain unsupported for
 // cycling per the discovery findings.
 
-const openaiAllProvider = {
+const openaiAllProvider: ProviderInfo = {
   id: "openai",
   name: "OpenAI",
   env: [],
@@ -107,7 +108,7 @@ const deepseekConnectedProvider = createProvider("deepseek", {
   },
 });
 
-const deepseekAllProvider = {
+const deepseekAllProvider: ProviderInfo = {
   id: "deepseek",
   name: "DeepSeek",
   env: [],
@@ -141,7 +142,7 @@ async function setupWithVariants(
     providers,
     allProviders: createAllProvidersData(
       providers.map((p) => p.id),
-      [allProvidersRoot as any],
+      [allProvidersRoot],
     ),
     default: { general: defaultModel },
     configModel: defaultModel,
@@ -181,7 +182,7 @@ function makeBareProps(overrides: Record<string, unknown> = {}) {
     onAbort: vi.fn(),
     isBusy: false,
     providers: [openaiConnectedProvider],
-    allProvidersData: createAllProvidersData(["openai"], [openaiAllProvider as any]),
+    allProvidersData: createAllProvidersData(["openai"], [openaiAllProvider]),
     selectedModel: { providerID: "openai", modelID: "gpt-5.4" },
     onModelSelect: vi.fn(),
     selectedPrimaryAgent: null,

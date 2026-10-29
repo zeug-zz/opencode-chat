@@ -77,6 +77,34 @@ describe("ファイル変更差分表示", () => {
     });
   });
 
+  // Entries whose content cannot be shown get a note instead of a diff body
+  context("内容を表示できない差分を含む場合", () => {
+    // shows the localized note and keeps good entries
+    it("注記が表示され、他のファイルの差分は維持されること", async () => {
+      await setupWithDiffs([
+        { file: "docs/a.pdf", before: "", after: "", additions: 0, deletions: 0, contentUnavailable: "binary" } as any,
+        {
+          file: "src/big.txt",
+          before: "",
+          after: "",
+          additions: 5,
+          deletions: 0,
+          contentUnavailable: "unavailable",
+        } as any,
+        { file: "src/app.ts", before: "old code", after: "new code", additions: 1, deletions: 1 },
+      ]);
+      const user = userEvent.setup();
+      await user.click(screen.getByTitle("File changes"));
+      expect(screen.getByText("a.pdf")).toBeInTheDocument();
+      expect(screen.getByText("big.txt")).toBeInTheDocument();
+      await user.click(screen.getByText("a.pdf"));
+      expect(screen.getByRole("note")).toHaveTextContent("Binary file: content cannot be shown.");
+      await user.click(screen.getByText("big.txt"));
+      expect(screen.getAllByRole("note")[1]).toHaveTextContent("Content is unavailable for this change.");
+      expect(screen.getAllByTitle("Open in diff editor")).toHaveLength(1);
+    });
+  });
+
   // sessionDiff for a different session is ignored
   context("異なるセッションの sessionDiff を受信した場合", () => {
     // does not show FileChangesHeader

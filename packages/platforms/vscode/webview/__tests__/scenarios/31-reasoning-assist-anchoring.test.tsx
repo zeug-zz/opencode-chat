@@ -3,7 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MessageWithParts } from "../../../App";
+import type { MessageWithParts } from "../../hooks/useMessages";
 import { getPersistedState } from "../../vscode-api";
 import { createMessage, createSession, createTextPart } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
@@ -15,10 +15,6 @@ const summary: ReasoningAssistSummary = {
   candidateConclusion: "Structure supports one bounded conclusion.",
   assumptions: ["Assumption one", "Assumption two"],
   evidenceBoundary: "Only same-thread evidence was considered.",
-  criticObjections: [
-    { target: "candidate_conclusion", objection: "Scope may exceed the evidence." },
-    { target: "assumption", objection: "The second assumption may not hold." },
-  ],
   afFact: "recorded_structure",
 };
 
@@ -234,9 +230,6 @@ describe("reasoning assist のアンカー", () => {
       expect(screen.getByText(assumption)).toBeInTheDocument();
     }
     expect(screen.getByText(summary.evidenceBoundary)).toBeInTheDocument();
-    for (const objection of summary.criticObjections) {
-      expect(screen.getByText(objection.objection)).toBeInTheDocument();
-    }
     expect(screen.getByText("AF recorded structure")).toBeInTheDocument();
     expect(screen.queryByText("Uncertainty")).not.toBeInTheDocument();
     expect(container.textContent).not.toContain("tok-applied-1");

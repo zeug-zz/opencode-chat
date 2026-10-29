@@ -1,5 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { buildChatOverlay } from "../../../../agents/opencode/src/opencode-agent";
+import {
+  CHAT_REASONING_CRITIC_AGENT_NAME,
+  CHAT_REASONING_VERIFIER_AGENT_NAME,
+  RESTRICTED_REVIEW_AGENT_NAME,
+  RESTRICTED_REVIEW_PROMPT,
+} from "../../../../agents/opencode/src/restricted-review-overlay";
 import { RESTRICTED_REVIEW_PERMISSION_ATTESTATION } from "../vibefeld/adversarial-review-contract";
 import { createAdversarialReviewSeam, type RestrictedReviewAdapter } from "../vibefeld/adversarial-review-seam";
 import { compileClaimGraph } from "../vibefeld/claim-graph";
@@ -35,6 +42,7 @@ const productionSources = (relativeDirectory: string): readonly ProductionSource
 const extensionSource = readSource("../extension.ts");
 const chatViewSource = readSource("../chat-view-provider.ts");
 const agentSource = readSource("../../../../agents/opencode/src/opencode-agent.ts");
+const reasoningContextPluginSource = readSource("../../../../agents/opencode/src/scribe-context-plugin/server.js");
 const launchConfigSource = readSource("../../../../agents/opencode/src/launch-config.ts");
 const agentInterfaceSource = readSource("../../../../core/src/agent.interface.ts");
 const protocolSource = readSource("../../../../core/src/protocol.ts");
@@ -53,6 +61,7 @@ const currentClaimProjectionSource = readSource("../vibefeld/current-vibefeld-cl
 const restrictedOverlaySource = readSource("../../../../agents/opencode/src/restricted-review-overlay.ts");
 const restrictedProviderSource = readSource("../../../../agents/opencode/src/restricted-review-provider.ts");
 const restrictedAdapterSource = readSource("../vibefeld/restricted-review-adapter.ts");
+const restrictedHolderSource = readSource("../vibefeld/restricted-review-holder.ts");
 const reasoningAssistArchitectSource = readSource("../vibefeld/reasoning-assist-architect.ts");
 const reasoningAssistCriticSource = readSource("../vibefeld/reasoning-assist-critic.ts");
 const reasoningAssistOrchestratorSource = readSource("../vibefeld/reasoning-assist-orchestrator.ts");
@@ -77,6 +86,24 @@ const adversarialPrivateSources = [
   readSource("../vibefeld/adversarial-review-reasoning-review-controller.ts"),
   readSource("../vibefeld/fixture-adversarial-review-seam.ts"),
 ];
+const nativeAgentOverlay = buildChatOverlay(undefined, undefined, undefined, undefined, undefined, undefined, {
+  model: "provider/model",
+  prompt: RESTRICTED_REVIEW_PROMPT,
+  maxSteps: 1,
+  dynamicToolNames: [],
+}).agents as Record<
+  string,
+  {
+    mode: string;
+    hidden?: boolean;
+    steps?: number;
+    permissions: Array<{ action: string; resource: string; effect: string }>;
+  }
+>;
+const nativeWorkerPermissions = nativeAgentOverlay["chat-research-worker"].permissions;
+const nativeWorkerMcpAllows = nativeWorkerPermissions
+  .filter(({ action, effect }) => action.endsWith("_*") && effect === "allow")
+  .map(({ action }) => action);
 
 const bridgeIntegrationTokens = [
   "VibefeldRuntimeBridge",
@@ -150,13 +177,26 @@ describe("Vibefeld runtime bridge security negatives", () => {
     }
 
     expect(extensionSource).toContain("UnavailableReasoningReviewController");
-    expect(extensionSource).toContain("AdversarialReviewReasoningReviewController");
+    expect(extensionSource).toContain("ComposedReasoningReviewController");
     expect(extensionSource).toContain("createAdversarialReviewSeam");
     expect(extensionSource).toContain("createRestrictedReviewAdapter");
     expect(extensionSource).toContain("provider.checkReadiness()");
+    const selectionSource =
+      extensionSource.match(
+        /async function selectReasoningReviewDependencies[\s\S]*?\n\}\n\ntype RestrictedReviewSelectionOptions/u,
+      )?.[0] ?? "";
+    expect(selectionSource).not.toBe("");
+    expect(selectionSource).not.toContain("createRestrictedReviewProvider");
+    expect(extensionSource).toContain("new RestrictedReviewHolder({");
     expect(extensionSource).toMatch(
-      /if \(provider && \(await provider\.checkReadiness\(\)\)\) \{[\s\S]*?createRestrictedReviewAdapter\(\{ provider \}\)/u,
+      /createProvider: \(\) =>\s*agent\.createRestrictedReviewProviderForNativeDefault\(\{[\s\S]*?observe: reasoningDiagnostics[\s\S]*?\}\)/u,
     );
+    expect(extensionSource).toContain("void restrictedReviewHolder?.rebind()");
+    expect(extensionSource).toContain("restrictedReviewHolder?.invalidate()");
+    expect(restrictedHolderSource).toMatch(/await provider\.checkReadiness\(\)[\s\S]*?provider\.isReady\(\)/u);
+    expect(restrictedHolderSource).toContain("provider.invalidate()");
+    expect(restrictedHolderSource).toContain("this.cancelWork()");
+    expect(restrictedHolderSource).toContain('this.options.afRuntime.state === "available" ? AVAILABLE_RUNTIME');
     expect(extensionSource).not.toMatch(/createFixtureOnlyAdversarialReviewAdapter|fixture-adversarial/iu);
     expect(extensionSource).not.toMatch(/vibefeld-prover|vibefeld-verifier/iu);
     expect(chatViewSource).not.toContain("AdversarialReviewReasoningReviewController");
@@ -172,13 +212,17 @@ describe("Vibefeld runtime bridge security negatives", () => {
       expect(source).not.toMatch(/vibefeld-prover|vibefeld-verifier|adversarial-review/iu);
     }
 
-    expect(agentSource).toMatch(/"chat-research-worker":\s*\{[\s\S]*?mode:\s*"subagent"/u);
-    expect(agentSource).toMatch(/"\*":\s*"deny"/u);
-    expect(agentSource).toContain('"chat-research-worker": "allow"');
+    expect(nativeAgentOverlay["chat-research-worker"]).toMatchObject({ mode: "subagent" });
+    expect(nativeWorkerPermissions).toContainEqual({ action: "*", resource: "*", effect: "deny" });
+    expect(nativeAgentOverlay.scout.permissions).toContainEqual({
+      action: "subagent",
+      resource: "chat-research-worker",
+      effect: "allow",
+    });
     expect(launchConfigSource).toMatch(/pluginSources\?:/);
     expect(launchConfigSource).toMatch(/mcpOverlay\?:/);
     expect(launchConfigSource).not.toMatch(/(?:prover|verifier|customTools|agentOverlay)/iu);
-    expect(agentSource).not.toMatch(/(?:vibefeld|adversarial|prover|verifier|customTools)/iu);
+    expect(agentSource).not.toMatch(/(?:vibefeld|adversarial|prover|customTools)/iu);
   });
 
   it("fails closed on a deliberately widened activation fixture", () => {
@@ -216,13 +260,12 @@ describe("Vibefeld runtime bridge security negatives", () => {
       expect(source).not.toMatch(/adversarial-review|vibefeld-prover|vibefeld-verifier/iu);
     }
 
-    // The constrained selection is the sole production exception: its
-    // internally constructed provider is host-private and never an ordinary
-    // configuration, profile, workspace, or proof-workspace authority.
+    // Restricted review resolves only OpenCode's native location-bound default;
+    // effective configuration and catalog/UI selections are not model sources.
     expect(extensionSource).toContain("readEffectiveOpenCodeConfiguration");
-    expect(extensionSource).toContain("effectiveConfig.model");
+    expect(extensionSource).not.toContain("effectiveConfig.model");
     expect(extensionSource).toContain("restrictedReview:");
-    expect(extensionSource).toContain("createRestrictedReviewProvider");
+    expect(extensionSource).toContain("createRestrictedReviewProviderForNativeDefault");
     expect(extensionSource).not.toMatch(/createFixtureOnlyAdversarialReviewAdapter|fixture-adversarial/iu);
     expect(extensionSource).not.toMatch(/vibefeld-prover|vibefeld-verifier/iu);
     const selectionSource =
@@ -286,21 +329,36 @@ describe("Vibefeld runtime bridge security negatives", () => {
     expect(vibefeldActivationSource).not.toMatch(/configuration\.update|profile.*(?:create|promote|broaden)/iu);
   });
 
-  it("keeps Scout, Write, and the only delegated worker free of bridge authority", () => {
+  it("keeps Scout, Write, and all exact delegation targets free of bridge authority", () => {
     for (const prompt of [chatPrompt, writePrompt]) {
       expect(prompt).not.toMatch(/\b(?:af|vibefeld)\b/iu);
       expect(prompt).not.toMatch(/(?:run|invoke|execute)\s+(?:the\s+)?(?:af|vibefeld)/iu);
     }
 
-    expect(agentSource).toMatch(/"chat-research-worker":\s*\{[\s\S]*?mode:\s*"subagent"/u);
-    expect(agentSource).toMatch(/"\*":\s*"deny"/u);
-    expect(agentSource).toMatch(/"chat-research-worker":\s*"allow"/u);
+    expect(nativeAgentOverlay["chat-research-worker"]).toMatchObject({ mode: "subagent" });
+    expect(nativeWorkerPermissions).toContainEqual({ action: "*", resource: "*", effect: "deny" });
+    expect(nativeAgentOverlay.scout.permissions).toContainEqual({
+      action: "subagent",
+      resource: "chat-research-worker",
+      effect: "allow",
+    });
+    expect(nativeAgentOverlay.scout.permissions).not.toContainEqual(
+      expect.objectContaining({ action: "subagent", resource: "*", effect: "allow" }),
+    );
     expect(agentSource).not.toMatch(/(?:\baf\b|vibefeld|proofWorkspace|customTools)/iu);
-    expect(chatPrompt).toContain("delegating only to the injected read-only `chat-research-worker`");
+    expect(chatPrompt).toMatch(/delegate only to\s+the injected read-only `chat-research-worker`/u);
+    expect(chatPrompt).toContain("`chat-reasoning-critic` and `chat-reasoning-verifier` are hidden agent IDs,");
+    expect(chatPrompt).toContain("Invoke via native subagent with `agent` set to the exact ID");
+    expect(chatPrompt).toContain("absent from the agent catalog; omission is not unavailability");
+    expect(chatPrompt).toContain("verifier only for\n  critic objections");
+    expect(chatPrompt).toContain("Never call either for ordinary questions");
+    expect(chatPrompt).toContain("subagent tool is");
+    expect(chatPrompt).toContain("invocation actually fails/is denied");
+    expect(chatPrompt).toContain("once per user turn");
     expect(writePrompt).toContain("Write never uses task or subagent workflows");
   });
 
-  it("does not add AF operations to IAgent or the webview protocol", () => {
+  it("keeps AF operations out of IAgent and exposes only a typed manual-review protocol", () => {
     for (const source of [agentInterfaceSource, protocolSource]) {
       expect(source).not.toMatch(/\b(?:af|vibefeld)\b/iu);
       expect(source).not.toMatch(/(?:runAf|invokeAf|proofRoot|approvedOperations)/u);
@@ -308,24 +366,27 @@ describe("Vibefeld runtime bridge security negatives", () => {
 
     expect(protocolSource).toContain('type: "reasoningRuntime"');
     expect(protocolSource).toContain('type: "reasoningReviewPreference"');
-    // The retired completed-message review and feedback discriminants stay out
-    // of both protocol directions.
-    expect(protocolSource).not.toContain('type: "requestReasoningReview"');
-    expect(protocolSource).not.toContain('type: "cancelReasoningReview"');
+    expect(protocolSource).toContain('type: "requestReasoningReview"');
+    expect(protocolSource).toContain('type: "cancelReasoningReview"');
+    expect(protocolSource).toContain('type: "reasoningReviewProgress"');
+    expect(protocolSource).toContain('type: "reasoningReviewResult"');
+    expect(protocolSource).toContain('type: "reasoningReviewCancelled"');
     expect(protocolSource).not.toContain('type: "setReasoningReviewFeedback"');
     expect(protocolSource).not.toMatch(/type: "reasoningReview"/u);
     expect(agentInterfaceSource).not.toMatch(/VibefeldRuntimeBridge|ReasoningReviewController/u);
   });
 
-  it("has no post-response review route and never compiles completed assistant prose", () => {
-    // The only production route that converted completed visible assistant text
-    // into the private compile grammar is gone.
+  it("routes only explicit manual review of completed Scout answers and never schedules an automatic audit", () => {
     expect(existsSync(new URL("../vibefeld/reasoning-review-source-packet.ts", import.meta.url))).toBe(false);
     for (const source of [chatViewSource, extensionSource]) {
       expect(source).not.toMatch(/buildReasoningReviewSourcePacket|reasoning-review-source-packet|compileClaimGraph/u);
-      // No ordinary host route invokes a review controller at all.
-      expect(source).not.toMatch(/\.review\(\{|controller\.review/u);
     }
+    expect(chatViewSource).toContain('case "requestReasoningReview"');
+    expect(chatViewSource).toContain('case "cancelReasoningReview"');
+    expect(chatViewSource).toContain("this.startReasoningReview(message)");
+    expect(chatViewSource).toContain("validateCompletedScoutAnswer(target, entry.sessionId)");
+    expect(chatViewSource).toMatch(/await controller\.review\(\{[\s\S]*?invocation: "manual"/u);
+    expect(chatViewSource).not.toMatch(/routeAutomaticReview|automaticReview|automatic-routing|AutomaticRouting/iu);
 
     // No production module under src/ references the deleted source packet.
     const productionSources = readdirSync(new URL("..", import.meta.url))
@@ -335,13 +396,16 @@ describe("Vibefeld runtime bridge security negatives", () => {
       expect(source, name).not.toMatch(/buildReasoningReviewSourcePacket|reasoning-review-source-packet/u);
     }
 
-    // No message handler or retained metadata for a manual or automatic
-    // post-response review remains in the ordinary host routes.
+    // No automatic post-response audit, qualification metadata, or response
+    // gate exists; the only answer review is the typed user request above.
     expect(chatViewSource).not.toMatch(
-      /requestReasoningReview|cancelReasoningReview|setReasoningReviewFeedback|type: "reasoningReview"|automatic-routing|AutomaticRouting|qualification|routeAutomaticReview/u,
+      /setReasoningReviewFeedback|automatic-routing|AutomaticRouting|routeAutomaticReview/u,
     );
     expect(extensionSource).not.toMatch(
       /automatic-routing|AutomaticRouting|QualificationRecorder|createQualificationFileStore|qualification-recorder|qualification-store/u,
+    );
+    expect([agentSource, launchConfigSource, chatPrompt, writePrompt].join("\n")).not.toMatch(
+      /requestReasoningReview|cancelReasoningReview|model-visible AF|AF route/iu,
     );
   });
 
@@ -354,9 +418,8 @@ describe("Vibefeld runtime bridge security negatives", () => {
     // Activation may reach claim projection only through the constrained,
     // host-private dynamic selection: no fixture seam, fixture adapter, or
     // model-visible route is added.
-    expect(extensionSource).not.toMatch(
-      /fixture-claim-projection|createFixtureOnly|fixtureClaimProjection|claim-projection-seam/u,
-    );
+    expect(extensionSource).not.toMatch(/fixture-claim-projection|createFixtureOnly|fixtureClaimProjection/u);
+    expect(extensionSource).toContain('import type { ClaimProjectionSeam } from "./vibefeld/claim-projection-seam";');
     expect(extensionSource).toContain("ClaimProjectionReasoningReviewController");
     expect(extensionSource).toContain("createCurrentVibefeldClaimProjectionSeam");
     expect(extensionSource).toContain("createRestrictedReviewAdapter");
@@ -382,7 +445,9 @@ describe("Vibefeld runtime bridge security negatives", () => {
     expect(restrictedOverlaySource).toContain('"*"');
     expect(restrictedOverlaySource).toContain('mode: "subagent"');
     expect(restrictedProviderSource).toContain("Object.is(recordedGeneration, currentGeneration())");
-    expect(restrictedProviderSource).toContain("client.config.get()");
+    expect(restrictedProviderSource).toContain("client.agent.get(");
+    expect(restrictedProviderSource).toContain("{ agentID: RESTRICTED_REVIEW_AGENT_NAME, location: { directory } }");
+    expect(restrictedProviderSource).toContain("hasExpectedRestrictedAgent(response, restrictedReview, tools)");
     expect(restrictedAdapterSource).toContain("RESTRICTED_REVIEW_PERMISSION_ATTESTATION");
     expect(adversarialControllerSource).toMatch(/if \(invocation === "automatic"\) \{[\s\S]{0,120}unavailableSummary/u);
     expect(redactionSource).toContain("redactReviewReason");
@@ -419,9 +484,14 @@ describe("Vibefeld runtime bridge security negatives", () => {
     expect(selectionSource).toMatch(
       /runtime = claimAvailable\s*\?[\s\S]{0,120}deriveReasoningReviewRuntime\(preflight\)/u,
     );
-    expect(selectionSource).toMatch(/const provider = model \? createProvider\(model\) : undefined;/u);
-    expect(selectionSource).toMatch(/provider && \(await provider\.checkReadiness\(\)\)/u);
-    expect(selectionSource).toContain('{ state: "available" }');
+    expect(selectionSource).not.toContain("createRestrictedReviewProvider");
+    expect(extensionSource).toMatch(
+      /createRestrictedReviewAdapter\(\{[\s\S]*?createAutomaticProvider: async \(\) => \{[\s\S]*?agent\.createRestrictedReviewProviderForNativeDefault\(\{[\s\S]*?observe: reasoningDiagnostics[\s\S]*?\}\)[\s\S]*?stageTimeoutMs: 30_000,[\s\S]*?\}\)/u,
+    );
+    expect(extensionSource).toContain("getReasoningRuntime: () => restrictedReviewHolder?.getSnapshot().runtime");
+    expect(restrictedHolderSource).toContain("provider.checkReadiness()");
+    expect(restrictedHolderSource).toContain("provider.isReady()");
+    expect(restrictedHolderSource).toContain('unavailable("restricted-agent-unavailable")');
     expect(selectionSource).not.toMatch(/enforced isolation|isolation enforced/iu);
 
     // The published status stays the bounded two-field constant.
@@ -449,9 +519,12 @@ describe("Vibefeld runtime bridge security negatives", () => {
     // which reads the bridge capability report and composes the unsupported
     // seam for every non-contracted boundary — never a fixture declaration.
     expect(extensionSource).toContain("createCurrentVibefeldClaimProjectionSeam");
+    expect(extensionSource).toMatch(
+      /createCurrentVibefeldClaimProjectionSeam\(composition\.bridge,\s*\{\s*observer: \(outcome\) => options\.diagnostics\?\.\(\{ stage: "af-projection", outcome \}\)/u,
+    );
     expect(currentClaimProjectionSource).toContain("createCurrentVibefeldClaimProjectionSeam");
     expect(currentClaimProjectionSource).toContain("getClaimCapability");
-    expect(currentClaimProjectionSource).toContain("createUnsupportedClaimProjectionSeam()");
+    expect(currentClaimProjectionSource).toContain("createUnsupportedClaimProjectionSeam(seamOptions)");
     // Capability reads and seam construction take no process, workspace
     // allocation, child-process, sandbox-manager, or configuration authority.
     expect(currentClaimProjectionSource).not.toMatch(
@@ -655,8 +728,10 @@ describe("Vibefeld runtime bridge security negatives", () => {
 
   it("keeps ordinary activation dormant and retains the unavailable manual controller", async () => {
     expect(extensionSource).toContain("import { UnavailableReasoningReviewController }");
-    expect(extensionSource).toContain("selectReasoningReviewDependencies(vibefeldActivation)");
-    expect(extensionSource).toContain("reasoningReviewController,");
+    expect(extensionSource).toMatch(
+      /selectReasoningReviewDependencies\(vibefeldActivation,\s*\{\s*diagnostics:\s*reasoningDiagnostics,\s*now:\s*reasoningDiagnosticNow,\s*\}\)/u,
+    );
+    expect(extensionSource).toContain("reasoningReviewController: reasoningReviewSelection.controller,");
     expect(extensionSource).not.toMatch(/new\s+VibefeldRuntimeBridge|\.allocate\(\)/u);
     // Exactly one bounded activation preflight; no other module may preflight.
     expect(extensionSource.match(/\.preflight\(\)/gu) ?? []).toHaveLength(1);
@@ -688,11 +763,29 @@ describe("Vibefeld runtime bridge security negatives", () => {
 });
 
 describe("Reasoning-assist security negatives", () => {
-  it("keeps the assist surface host-owned with no IAgent or protocol route", () => {
-    // `IAgent` gains no assist member and no assist/architect/critic type, so no
-    // model-visible caller reaches a preflight, stage, or restricted adapter
-    // through the agent contract.
-    expect(agentInterfaceSource).not.toMatch(
+  it("keeps the ephemeral pending/brief RPC narrow and exposes no preflight or protocol route", () => {
+    // The provider-neutral contract exposes only native-ID creation and the
+    // narrow operations needed to deliver/clear a brief; classification and
+    // review stay host-owned.
+    expect(
+      [
+        ...agentInterfaceSource.matchAll(
+          /\b(?:createReasoningAssistTurnId|pendingReasoningAssistTurn|setReasoningAssistBrief|clearReasoningAssistBrief)\b/gu,
+        ),
+      ].map(([name]) => name),
+    ).toEqual([
+      "createReasoningAssistTurnId",
+      "pendingReasoningAssistTurn",
+      "setReasoningAssistBrief",
+      "clearReasoningAssistBrief",
+    ]);
+    const agentInterfaceWithoutBriefRpc = agentInterfaceSource
+      .replace(
+        /\b(?:createReasoningAssistTurnId|pendingReasoningAssistTurn|setReasoningAssistBrief|clearReasoningAssistBrief)\b/gu,
+        "",
+      )
+      .replace(/\bReasoningAssistBrief(?:Clear|Delivery)Result\b/gu, "");
+    expect(agentInterfaceWithoutBriefRpc).not.toMatch(
       /reasoningAssist|ReasoningAssist|architect|critic|restrictedReview[\s\S]{0,80}stage|runReasoningAssistStage|ReasoningAssistRestrictedReviewAdapter|compileClaimGraph/iu,
     );
 
@@ -718,10 +811,34 @@ describe("Reasoning-assist security negatives", () => {
     expect(protocolSource).not.toMatch(/requestReasoningAssist|cancelReasoningAssist|activateReasoningAssist/u);
   });
 
-  it("keeps architect, critic, and assist wiring out of model-visible agent, launch, and prompt surfaces", () => {
-    for (const source of [agentSource, launchConfigSource, chatPrompt, writePrompt]) {
+  it("keeps host assist execution out of model-visible surfaces while exposing the fixed reviewer guidance", () => {
+    expect(
+      [
+        ...agentSource.matchAll(
+          /\b(?:createReasoningAssistTurnId|pendingReasoningAssistTurn|setReasoningAssistBrief|clearReasoningAssistBrief)\b/gu,
+        ),
+      ].map(([name]) => name),
+    ).toEqual([
+      "clearReasoningAssistBrief",
+      "createReasoningAssistTurnId",
+      "pendingReasoningAssistTurn",
+      "setReasoningAssistBrief",
+      "clearReasoningAssistBrief",
+    ]);
+    const agentSourceWithoutBriefRpc = agentSource
+      .replace(
+        /\b(?:createReasoningAssistTurnId|pendingReasoningAssistTurn|setReasoningAssistBrief|clearReasoningAssistBrief)\b/gu,
+        "",
+      )
+      .replace(/\bReasoningAssistBrief(?:Clear|Delivery)Result\b/gu, "");
+    const agentSourceWithoutScoutGuidance = agentSourceWithoutBriefRpc
+      .replace(/const SCOUT_REASONING_REVIEW_GUIDANCE =\s*"[^"]*";/u, "")
+      .replace(/"chat-reasoning-(?:critic|verifier)"/gu, "");
+    for (const source of [agentSourceWithoutScoutGuidance, launchConfigSource, writePrompt]) {
       expect(source).not.toMatch(/architect|critic|reasoningAssist|reasoning-assist/iu);
     }
+    expect(chatPrompt).toContain("chat-reasoning-critic");
+    expect(chatPrompt).toContain("chat-reasoning-verifier");
 
     expect(packageSource).not.toMatch(/reasoningAssist|reasoning-assist|architect|critic/iu);
     // The launch configuration gains no assist/AF option: only the existing
@@ -759,40 +876,151 @@ describe("Reasoning-assist security negatives", () => {
     }
   });
 
-  it("keeps the single delegated worker and the deny-by-default task map as the only delegation route", () => {
-    // Exactly one allow target: the wildcard denies everything else, so no
-    // architect/critic task target can be delegated to.
-    expect(agentSource).toMatch(/task:\s*\{\s*"\*":\s*"deny",\s*"chat-research-worker":\s*"allow",\s*\},/u);
-    expect(agentSource).toMatch(/"chat-research-worker":\s*\{\s*mode:\s*"subagent"/u);
-    expect(agentSource).not.toMatch(/architect|critic|reasoningAssist|reasoning-assist/iu);
+  it("keeps the exact Scout delegation set and hidden reasoning profiles tool-less", () => {
+    // The host overlay grants only these exact targets, and the Scribe plugin
+    // reasserts the same closed set at its transform boundary.
+    expect(nativeAgentOverlay.scout.permissions).toContainEqual({ action: "*", resource: "*", effect: "deny" });
+    expect(nativeAgentOverlay.scout.permissions).toContainEqual({
+      action: "subagent",
+      resource: "chat-research-worker",
+      effect: "allow",
+    });
+    expect(nativeAgentOverlay["chat-research-worker"].mode).toBe("subagent");
+    expect(nativeAgentOverlay["chat-research-worker"].permissions).not.toContainEqual(
+      expect.objectContaining({ action: "subagent", effect: "allow" }),
+    );
+    expect(reasoningContextPluginSource).toContain(
+      'const REASONING_SUBAGENT_TARGETS = ["chat-reasoning-critic", "chat-reasoning-verifier"];',
+    );
+    expect(reasoningContextPluginSource).toContain(
+      'const SCOUT_SUBAGENT_TARGETS = ["chat-research-worker", ...REASONING_SUBAGENT_TARGETS];',
+    );
+    expect(reasoningContextPluginSource).toContain('rule.effect !== "deny"');
+    expect(reasoningContextPluginSource).toContain(
+      'rule.action === "*" || rule.action === "task" || rule.action === "subagent"',
+    );
+    const scoutSubagentAllows = nativeAgentOverlay.scout.permissions
+      .filter(({ action, effect }) => action === "subagent" && effect === "allow")
+      .map(({ resource }) => resource);
+    expect(scoutSubagentAllows).toEqual([
+      "chat-research-worker",
+      CHAT_REASONING_CRITIC_AGENT_NAME,
+      CHAT_REASONING_VERIFIER_AGENT_NAME,
+    ]);
+    for (const target of [CHAT_REASONING_CRITIC_AGENT_NAME, CHAT_REASONING_VERIFIER_AGENT_NAME]) {
+      const reasoningAgent = nativeAgentOverlay[target];
+      expect(reasoningAgent).toMatchObject({ mode: "subagent", hidden: true, steps: 2 });
+      expect(reasoningAgent.permissions.every(({ effect }) => effect === "deny")).toBe(true);
+      expect(reasoningAgent.permissions).toContainEqual({ action: "execute", resource: "*", effect: "deny" });
+      expect(nativeAgentOverlay.build.permissions).not.toContainEqual(
+        expect.objectContaining({ action: "subagent", effect: "allow" }),
+      );
+    }
+    const allowedActions = (agent: (typeof nativeAgentOverlay)[string]) =>
+      agent.permissions.filter(({ effect }) => effect === "allow").map(({ action }) => action);
+    expect(allowedActions(nativeAgentOverlay.scout)).toEqual([
+      "read",
+      "glob",
+      "grep",
+      "list",
+      "webfetch",
+      "websearch",
+      "question",
+      "execute",
+      "firecrawl_*",
+      "context-mode_*",
+      "paper-search_*",
+      "ctx_*",
+      "subagent",
+      "subagent",
+      "subagent",
+    ]);
+    expect(allowedActions(nativeAgentOverlay["chat-research-worker"])).toEqual([
+      "read",
+      "glob",
+      "grep",
+      "list",
+      "webfetch",
+      "websearch",
+      "execute",
+      "firecrawl_*",
+      "context-mode_*",
+      "paper-search_*",
+      "ctx_*",
+    ]);
+    expect(allowedActions(nativeAgentOverlay.build)).toEqual([
+      "read",
+      "glob",
+      "grep",
+      "list",
+      "webfetch",
+      "websearch",
+      "edit",
+      "execute",
+    ]);
+    for (const role of [
+      nativeAgentOverlay.scout,
+      nativeAgentOverlay["chat-research-worker"],
+      nativeAgentOverlay.build,
+    ]) {
+      expect(role.permissions).toContainEqual({ action: "*", resource: "*", effect: "deny" });
+      expect(role.permissions).not.toContainEqual(expect.objectContaining({ action: "shell", effect: "allow" }));
+    }
+    expect(nativeAgentOverlay.scout.permissions).not.toContainEqual(
+      expect.objectContaining({ action: "edit", effect: "allow" }),
+    );
+    expect(nativeAgentOverlay["chat-research-worker"].permissions).not.toContainEqual(
+      expect.objectContaining({ action: "edit", effect: "allow" }),
+    );
+    const reviewer = nativeAgentOverlay[RESTRICTED_REVIEW_AGENT_NAME];
+    expect(reviewer.permissions.every(({ effect }) => effect === "deny")).toBe(true);
+    expect(reviewer.permissions).toContainEqual({ action: "execute", resource: "*", effect: "deny" });
+    expect(reviewer.permissions).not.toContainEqual(expect.objectContaining({ action: "execute", effect: "allow" }));
+    const agentSourceWithoutBriefRpc = agentSource
+      .replace(
+        /\b(?:createReasoningAssistTurnId|pendingReasoningAssistTurn|setReasoningAssistBrief|clearReasoningAssistBrief)\b/gu,
+        "",
+      )
+      .replace(/\bReasoningAssistBrief(?:Clear|Delivery)Result\b/gu, "");
+    expect(agentSourceWithoutBriefRpc).not.toMatch(
+      /runReasoningAssistStage|createReasoningAssistContext|adversarial-review/iu,
+    );
 
     // The worker MCP allow list is exactly the reviewed package prefixes; no AF
     // or assist MCP/tool prefix is added.
-    const workerBlock = agentSource.match(/"chat-research-worker":\s*\{[\s\S]*?\n {4}\},/u)?.[0] ?? "";
-    expect(workerBlock).not.toBe("");
-    expect([...workerBlock.matchAll(/"([\w-]+_\*)":\s*"allow"/gu)].map(([, prefix]) => prefix)).toEqual([
-      "firecrawl_*",
-      "ctx_*",
-      "context-mode_*",
-      "paper-search_*",
-    ]);
-    expect(workerBlock).not.toMatch(/\baf\b|reasoning|assist|architect|critic/iu);
+    expect(nativeWorkerMcpAllows).toEqual(["firecrawl_*", "context-mode_*", "paper-search_*", "ctx_*"]);
+    expect(nativeWorkerPermissions).not.toContainEqual(
+      expect.objectContaining({ action: "hindsight_*", effect: "allow" }),
+    );
   });
 
-  it("registers no architect or critic agent entry in any production source", () => {
+  it("registers only the exact hidden critic/verifier targets and no delegated architect", () => {
     for (const { name, source } of productionSources("../")) {
-      expect(source, name).not.toMatch(/["']?(?:architect|critic)["']?\s*:\s*\{/iu);
+      expect(source, name).not.toMatch(/["']?architect["']?\s*:\s*\{/iu);
     }
-    // The visible agent overlay registers exactly the Scout, worker, and Build
-    // agents; any assist stage stays inside the hidden restricted agent.
+    expect(Object.keys(nativeAgentOverlay).sort()).toEqual(
+      [
+        "build",
+        "chat-research-worker",
+        "scout",
+        CHAT_REASONING_CRITIC_AGENT_NAME,
+        CHAT_REASONING_VERIFIER_AGENT_NAME,
+        RESTRICTED_REVIEW_AGENT_NAME,
+      ].sort(),
+    );
+    expect(nativeAgentOverlay).not.toHaveProperty("architect");
+    // The two added reasoning profiles are hidden and deny-only; exact Scout
+    // target grants are appended by the verified Scribe server plugin.
     expect(agentSource).toMatch(/scout:\s*\{[\s\S]*?"chat-research-worker":\s*\{[\s\S]*?build:\s*\{/u);
+    expect(agentSource).toContain("...buildChatReasoningSubagentEntries()");
   });
 
   it("keeps completed prose away from the claim compiler and builds the assist graph only from parsed architect output", () => {
     // Every production importer of the completed-prose compiler is accounted
     // for: the private graph module itself and the retained dormant
-    // adversarial/projection machinery. No assist, dispatch, activation, or
-    // controller module may become a new importer.
+    // adversarial/projection machinery. Manual review now maps completed prose
+    // through the parsed architect result before graph validation, so the
+    // composed controller is intentionally not a compiler importer.
     const retainedClaimCompilerSources = [
       "vibefeld/adversarial-review-orchestrator.ts",
       "vibefeld/adversarial-review-reasoning-review-controller.ts",
@@ -821,51 +1049,42 @@ describe("Reasoning-assist security negatives", () => {
     }
   });
 
-  it("keeps the assist wiring to the bounded activation injection and lifecycle hook with no widening", () => {
-    // The extension's assist surface is the bounded activation injection: the
-    // typed adapter and recorder passed straight into the provider options,
-    // plus the provider lifecycle hook and its best-effort deactivation call.
-    // Nothing session-, config-, workspace-, or sandbox-shaped is reachable
-    // through it, and the restricted disposal is registered through the
-    // adapter itself.
+  it("keeps restricted assist wiring inside the reconnect-safe holder", () => {
     const assistWiringLines = extensionSource.split("\n").filter((line) => line.includes("reasoningAssist"));
     const assistWiring = assistWiringLines.join("\n");
-    expect(assistWiring).toContain("cancelAllReasoningAssistWork()");
-    expect(assistWiring).toContain("reasoningAssistAdapter");
     expect(assistWiring).toContain("reasoningAssistStructureRecorder");
-    expect(assistWiring).not.toMatch(
-      /getConfiguration|configuration\.update|workspace|nono|sandbox|profile|grant|permission|session/iu,
-    );
+    expect(extensionSource).toContain("chatViewProvider?.cancelAllReasoningAssistWork();");
+    expect(extensionSource).toContain("chatViewProvider?.cancelAllReasoningReviewWork();");
+    expect(extensionSource).toContain("getReasoningAssistAdapter: () => restrictedReviewHolder?.getSnapshot().adapter");
+    expect(extensionSource).toContain("await holder.dispose()");
 
-    // The only assist modules the extension reaches are the two host-private
-    // vibefeld factories: the recorder (type plus factory) and the adapter
-    // (type only; its factory stays behind the readiness-gated dynamic import
-    // shared with the adversarial seam). No architect, critic, orchestrator,
-    // or brief module is imported by activation.
+    // Adapter construction and adversarial fallback loading remain lazy behind
+    // the holder's provider and readiness gates.
     expect(extensionSource).toContain('from "./vibefeld/reasoning-assist-structure-recorder"');
-    expect(extensionSource).toContain('from "./vibefeld/restricted-review-adapter"');
     expect(extensionSource).toMatch(/import\("\.\/vibefeld\/restricted-review-adapter"\)/u);
+    expect(extensionSource).toMatch(
+      /if \(!reasoningReviewSelection\.claimAvailable \|\| !reasoningReviewSelection\.claimSeam\) \{[\s\S]{0,160}Required claim-projection capability unavailable/u,
+    );
+    expect(extensionSource).toContain("new ComposedReasoningReviewController(reasoningReviewSelection.claimSeam, seam");
+    expect(extensionSource).toContain("return { adapter, controller }");
     expect(extensionSource).not.toMatch(
       /from "\.\/vibefeld\/(?:reasoning-assist-(?:architect|critic|orchestrator|brief))"/u,
     );
-    expect(extensionSource).toMatch(/restrictedReviewDisposal = adapter\.dispose;/u);
-    expect(extensionSource).toContain("let reasoningAssistDisposal: (() => void) | undefined;");
-    expect(extensionSource).toContain(
-      "reasoningAssistDisposal = () => chatViewProvider?.cancelAllReasoningAssistWork();",
+    expect(extensionSource).not.toMatch(/reasoningAssistDisposal|restrictedReviewDisposal/u);
+    expect(restrictedHolderSource).not.toMatch(
+      /getConfiguration|configuration\.update|workspace|nono|sandbox|profile|grant|permission|session/iu,
     );
-    expect(extensionSource).toContain("const disposeAssist = reasoningAssistDisposal;");
-    expect(extensionSource).toContain("reasoningAssistDisposal = undefined;");
 
-    // The dispatch path reaches only the host-owned orchestrator and brief
-    // helpers, and appends the brief only to the host-owned system instruction.
+    // The dispatch path reaches the host-owned orchestrator and sends a brief
+    // only through the private plugin RPC, never through system instructions.
     const assistDispatchBlock =
       chatViewSource.match(/private async dispatchPrompt[\s\S]*?\n {2}\}\n\n {2}private postMcpPrefs/u)?.[0] ?? "";
     expect(assistDispatchBlock).not.toBe("");
     expect(assistDispatchBlock).toContain("runReasoningAssistPreflight");
-    expect(assistDispatchBlock).toContain("appendReasoningAssistBrief");
-    expect(assistDispatchBlock).toMatch(
-      /system: assist \? appendReasoningAssistBrief\(baseSystem, assist\.brief\) : baseSystem/u,
-    );
+    expect(assistDispatchBlock).toContain("storeReasoningAssistBrief");
+    expect(assistDispatchBlock).toMatch(/system: baseSystem/u);
+    expect(assistDispatchBlock).toMatch(/turnID/u);
+    expect(assistDispatchBlock).not.toContain("appendReasoningAssistBrief");
     expect(assistDispatchBlock).not.toMatch(
       /reasoningReviewController|\.review\(|requestReasoningReview|cancelReasoningReview|automatic-routing|qualification|blocked/iu,
     );

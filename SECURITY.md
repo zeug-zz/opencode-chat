@@ -34,11 +34,15 @@ This policy covers:
 
 The OpenCode Scribe extension launches an extension-owned OpenCode server with a read-only Scout agent
 (`packages/agents/opencode/src/opencode-agent.ts`). Scout's config overlay denies edit and bash, and
-denies task targets with a wildcard default-deny except for the exact extension-injected
-`chat-research-worker` target. That worker runs in `subagent` mode with an explicit wildcard
-tool denial and is read-only. It may use only the reviewed research MCP
+denies task targets with wildcard default-deny except for the exact `chat-research-worker`,
+`chat-reasoning-critic`, and `chat-reasoning-verifier` targets. The read-only worker runs in
+`subagent` mode with explicit wildcard tool denial. It may use only the reviewed research MCP
 permission prefixes `firecrawl_*`, `context-mode_*`, and `paper-search_*`, and only when the
-corresponding server is enabled through the existing Chat MCP preferences. However:
+corresponding server is enabled through the existing Chat MCP preferences. The two hidden reasoning
+subagents are tool-less, deny-only agents with an explicit `execute` denial and fixed JSON schemas
+that bound the requested item and field sizes; each is limited to one on-demand call per active Scout
+turn. Write receives neither target.
+However:
 
 - **MCP servers remain untrusted.** Local MCP processes launched by the sandboxed server
   inherit its process, filesystem, and network restrictions; remote MCPs follow the network
@@ -50,10 +54,85 @@ corresponding server is enabled through the existing Chat MCP preferences. Howev
   agent itself; downstream tool execution through MCP servers is the user's responsibility.
 
 Scout cannot delegate to arbitrary or user-defined agents, including agents merely named with the
-`chat-research-*` prefix. The injected worker cannot edit, use Bash or shell execution, invoke
-`task` recursively, perform coding or package operations, control a terminal, or use unknown or
-unapproved MCP tools. An enabled MCP remains a downstream untrusted trust boundary and does not
-make its tools safe or grant them generally to Chat agents.
+`chat-research-*` prefix. The exact reasoning targets are available only for warranted contested or
+high-stakes arguments; the critic identifies bounded objections, and the verifier checks specific
+critic objections. Each may run in the background, but Scout must wait for completion before relying
+on a result. The injected worker cannot edit, use Bash or shell execution, invoke `task` recursively,
+perform coding or package operations, control a terminal, or use unknown or unapproved MCP tools. An
+enabled MCP remains a downstream untrusted trust boundary and does not make its tools safe or grant
+them generally to Chat agents.
+
+The critic/verifier JSON schemas are included in their fixed system instructions with a two-step
+limit, explicit item/string bounds, and no-extra-fields requirement. OpenCode 2.1.4 exposes no
+per-agent response-schema field for the native `subagent` tool, so Scribe does not claim server-side
+validation of generated output: the schema is a model instruction, and returned text remains
+untrusted. Do not treat malformed output as verified evidence.
+
+### Scribe Server Plugin Trust Boundary
+
+The bundled `drmrStudio.scribe-reasoning-context` plugin is trusted companion-process code, not an
+isolated MCP child. The extension verifies its composite SHA-256 pin
+(`6237c9634565146a159811ce578994749a5137bc05a265e212338ac453d826ae`) before adding it by path to the
+in-memory overlay for Scribe's private server; it is never written to user/project configuration or
+loaded into the independent OpenCode TUI. It defines no tools or model route. Because the installed
+extension directory is outside nono profile grants, nono launches add one read-only `--read` grant
+for exactly that verified plugin directory, and only when the plugin is launched; no write grant,
+inherited-plugin grant, or broader extension-directory access is added. Its
+`permission.evaluate` hook fails closed for identified reasoning-target calls outside Scout's active
+turn or after that target has already been used. Because OpenCode 2.1.4 may reuse a previously
+confirmed allow without re-running that hook, `tool.execute.before` also checks each actual reasoning
+tool invocation and rejects repeats; unrelated permission evaluations are left unchanged. Any
+permission evaluation attributed to either reasoning agent is denied. The agent transform removes
+configured broad Scout delegation grants and reasserts only the exact three targets above; it fails
+closed if Scout or either hidden reasoning profile is unexpected.
+
+The plugin keeps only bounded, in-memory session/turn state (at most 16 active entries) and never
+persists reasoning context or call counts. Context injection is Scout-only and outgoing-call-only.
+The context hook removes model tool definitions only for the exact identities
+`vibefeld-restricted-review`, `chat-reasoning-critic`, and `chat-reasoning-verifier`; this strips
+native V2 tools appended by plugins after Scribe's profile transform. The separate
+`session.generate` hook filters definitions only for `vibefeld-restricted-review`. These filters
+remove definitions; they grant no authority and leave deny policies and the existing permission and
+execution-denial hooks in force. For an identified restricted role, `tools` must be a plain tool map;
+the plugin removes every own key and verifies that the map is empty. A missing or malformed
+container, filtering exception, unremovable definition, or any leftover key throws a fixed error from
+that restricted branch so the affected model request is not sent to the provider. These errors are
+not caught by Scout's separate brief-injection path. Native permission-denial and execution-denial
+hooks remain in force independently of filtering.
+
+The Scout brief-injection context path remains total and fail-open: it performs no I/O, may wait only
+for the plugin-capped in-memory grace promise of at most 2 seconds, and skips the brief on internal
+error or expiry so ordinary Scout generation continues. Plugin absence or failure disables reasoning
+assist only, preserving ordinary Chat. A pinned OpenCode 2.2.0 native integration observed that a
+throwing `session.generate` hook made no provider request and a subsequent Scout generation still
+succeeded; this is isolated fixture evidence, not an actual-host guarantee. The older 2.1.3 fixture
+establishes source availability only. Completed foreground reasoning-subagent results are capped at 2,048
+characters by `tool.execute.after`. Background completion is delivered through native
+`sessions.synthetic`, outside that hook; an isolated native fixture observed a 2,461-character
+background result, so Scribe does not claim a background completion cap. The same fixture observed
+foreground and background repeat-denial results in the parent Scout continuation; its fixed denial
+branch indicated parent-session attribution, not a reviewer-as-agent event. It cannot distinguish
+whether `permission.evaluate` or `execute.before` produced each repeat error.
+
+The effective hidden critic/verifier profiles retain four native non-deny defaults despite the
+plugin transform filtering configured non-deny rules: wildcard `allow`, `read *.env` and
+`read *.env.*` `ask`, and `read *.env.example` `allow`. These occupy positions 0–3. OpenCode 2.1.4
+had 26 later rules; 2.2.0 has 27. The strict fixtures verify the exact four-rule prefix followed
+by at least 26 rules, with every trailing rule a deny, including wildcard and `execute` denies.
+Under native last-matching-rule semantics, the defaults are shadowed by this later explicit deny
+baseline. Scribe still does not describe the serialized profiles as deny-only. All reasoning child
+provider requests had zero tool definitions, and plugin tests verify that permission evaluations
+for either reviewer are denied. See the Task 6.6 evidence for the bounded native manifests and
+exact checks.
+
+**Approved V2 migration target (not yet delivered):** native Code Mode `execute` composes Scout's,
+the exact worker's, and Build-backed Write's otherwise-permitted tools; restricted reviewers stay
+tool-free. It does not grant shell/process access, Scout/worker editing, arbitrary delegation,
+unrelated worktree/session mutation or administration tools, or unapproved tools. Native `fetch`
+is not permission-checked as `webfetch` or restricted to its ordinary tool allowlist. It accepts
+methods, headers, and bodies that may have side effects. Scribe adds no interpreter or execution
+budget/network restriction; existing backend/OS controls apply, and sandbox-off is not OS
+containment.
 
 ## Optional Memory Provider and Retention
 

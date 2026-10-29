@@ -1,12 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, parse, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { OpenCodePluginEntry } from "./launch-config";
 
 export const APPROVED_HINDSIGHT_PACKAGE = "@vectorize-io/hindsight-coding-agents";
 
-export type HindsightPluginEntry = string | readonly [string, ...(readonly unknown[])];
+export type HindsightPluginEntry = OpenCodePluginEntry;
 
 export type EffectiveOpenCodeConfiguration = {
-  readonly plugin?: readonly unknown[];
+  readonly plugins?: readonly OpenCodePluginEntry[];
   readonly model?: string;
 };
 
@@ -78,11 +80,39 @@ function parseJsonc(source: string): Record<string, unknown> | undefined {
   }
   if (blockComment) return undefined;
   try {
-    const value: unknown = JSON.parse(withoutComments.replace(/,\s*([}\]])/g, "$1"));
+    const value: unknown = JSON.parse(removeTrailingCommas(withoutComments));
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
   } catch {
     return undefined;
   }
+}
+
+function removeTrailingCommas(source: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (inString) {
+      result += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      result += character;
+      continue;
+    }
+    if (character === ",") {
+      let next = index + 1;
+      while (/\s/.test(source[next] ?? "")) next += 1;
+      if (source[next] === "}" || source[next] === "]") continue;
+    }
+    result += character;
+  }
+  return result;
 }
 
 function projectConfigDirectories(workspaceRoot: string): string[] {
@@ -103,13 +133,15 @@ export function readEffectiveOpenCodeConfiguration(
   globalConfigDir: string,
   workspaceRoot: string,
 ): EffectiveOpenCodeConfiguration {
-  const plugin: unknown[] = [];
+  const plugins: OpenCodePluginEntry[] = [];
   let model: string | undefined;
   const read = (directory: string): void => {
     for (const name of ["opencode.json", "opencode.jsonc"]) {
       try {
         const config = parseJsonc(readFileSync(join(directory, name), "utf8"));
-        if (Array.isArray(config?.plugin)) plugin.push(...config.plugin);
+        if (config) {
+          for (const entry of normalizePluginEntries(config.plugin, config.plugins, directory)) plugins.push(entry);
+        }
         const configuredModel = config?.model;
         if (
           typeof configuredModel === "string" &&
@@ -125,7 +157,72 @@ export function readEffectiveOpenCodeConfiguration(
   };
   read(globalConfigDir);
   for (const directory of projectConfigDirectories(workspaceRoot)) read(directory);
-  return { plugin, ...(model === undefined ? {} : { model }) };
+  return { plugins, ...(model === undefined ? {} : { model }) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneJsonValue(value: unknown): unknown | undefined {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    const cloned = value.map(cloneJsonValue);
+    return cloned.some((entry) => entry === undefined) ? undefined : cloned;
+  }
+  if (isRecord(value)) {
+    const cloned: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const copied = cloneJsonValue(item);
+      if (copied === undefined) return undefined;
+      Object.defineProperty(cloned, key, { value: copied, enumerable: true, configurable: true, writable: true });
+    }
+    return cloned;
+  }
+  return undefined;
+}
+
+function normalizePluginReference(reference: string, originDirectory: string): string {
+  if (reference.startsWith("file://")) {
+    try {
+      return fileURLToPath(reference);
+    } catch {
+      return reference;
+    }
+  }
+  return reference.startsWith("./") || reference.startsWith("../") ? resolve(originDirectory, reference) : reference;
+}
+
+function normalizePluginEntries(legacy: unknown, native: unknown, originDirectory: string): OpenCodePluginEntry[] {
+  const result: OpenCodePluginEntry[] = [];
+  const normalizeEntry = (entry: unknown, allowLegacyTuple: boolean): OpenCodePluginEntry | undefined => {
+    if (typeof entry === "string") return normalizePluginReference(entry, originDirectory);
+    if (allowLegacyTuple && Array.isArray(entry)) {
+      if (typeof entry[0] !== "string" || entry.length !== 2) return undefined;
+      if (!isRecord(entry[1])) return undefined;
+      const options = cloneJsonValue(entry[1]);
+      return options && isRecord(options)
+        ? { package: normalizePluginReference(entry[0], originDirectory), options }
+        : undefined;
+    }
+    if (allowLegacyTuple || !isRecord(entry) || typeof entry.package !== "string") return undefined;
+    if (entry.options === undefined) return { package: normalizePluginReference(entry.package, originDirectory) };
+    if (!isRecord(entry.options)) return undefined;
+    const options = cloneJsonValue(entry.options);
+    return options && isRecord(options)
+      ? { package: normalizePluginReference(entry.package, originDirectory), options }
+      : undefined;
+  };
+  const append = (entries: unknown, allowLegacyTuple: boolean): void => {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const normalized = normalizeEntry(entry, allowLegacyTuple);
+      if (normalized !== undefined) result.push(normalized);
+    }
+  };
+  append(legacy, true);
+  append(native, false);
+  return result;
 }
 
 /** Safe default reader for local entries. Only package identity and paths escape. */
@@ -151,7 +248,7 @@ export function readHindsightPackageMetadata(pluginReference: string): Hindsight
 
 function pluginReference(entry: unknown): string | undefined {
   if (typeof entry === "string") return entry;
-  if (Array.isArray(entry) && typeof entry[0] === "string") return entry[0];
+  if (isRecord(entry) && typeof entry.package === "string") return entry.package;
   return undefined;
 }
 
@@ -193,9 +290,9 @@ export async function resolveHindsightPlugin(
   configuration: EffectiveOpenCodeConfiguration,
   readPackageMetadata: HindsightPackageMetadataReader,
 ): Promise<HindsightPluginResolution | undefined> {
-  if (!Array.isArray(configuration.plugin)) return undefined;
+  if (!Array.isArray(configuration.plugins)) return undefined;
 
-  for (const entry of configuration.plugin) {
+  for (const entry of configuration.plugins) {
     const reference = pluginReference(entry);
     if (!reference) continue;
 

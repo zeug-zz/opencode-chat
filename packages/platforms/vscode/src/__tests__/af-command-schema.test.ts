@@ -149,7 +149,8 @@ describe("AF command schema", () => {
     { operation: "refine", parentId: "1", statements: ["safe"], rawArgv: ["af", "refine"] },
     { operation: "refine", parentId: "1; rm -rf /", statements: ["safe"] },
   ] as const)("rejects unapproved input %#", (operation) => {
-    expect(() => schema.build(operation)).toThrow(AfCommandError);
+    // These fixtures intentionally exercise invalid, non-contract inputs at the runtime boundary.
+    expect(() => schema.build(operation as AfCommandOperation)).toThrow(AfCommandError);
   });
 
   it("rejects out-of-bounds identifiers and statements without truncating", () => {

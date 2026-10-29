@@ -228,7 +228,7 @@ const defaultUriFactory = (path: string): LocalInstallerUri => ({
 export function prepareLocalInstallerUri(
   globalStorageUri: ExtensionStorageUri,
   assetName: string,
-  id = randomUUID(),
+  id: string = randomUUID(),
   uriFactory = defaultUriFactory,
 ): LocalInstallerUri {
   if (!/^[A-Za-z0-9._-]+\.vsix$/.test(assetName)) throw new Error("Invalid VSIX asset name");
@@ -260,7 +260,10 @@ export async function downloadAndValidatePrivateRelease(
     const expectedLength = declaredLength === null ? undefined : Number(declaredLength);
     if (
       declaredLength !== null &&
-      (!Number.isSafeInteger(expectedLength) || expectedLength < 1 || expectedLength > maxBytes)
+      (expectedLength === undefined ||
+        !Number.isSafeInteger(expectedLength) ||
+        expectedLength < 1 ||
+        expectedLength > maxBytes)
     ) {
       return undefined;
     }

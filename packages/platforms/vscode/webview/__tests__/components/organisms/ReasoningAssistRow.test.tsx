@@ -12,10 +12,6 @@ const summary: ReasoningAssistSummary = {
   candidateConclusion: "Structure supports one bounded conclusion.",
   assumptions: ["Assumption one", "Assumption two"],
   evidenceBoundary: "Only same-thread evidence was considered.",
-  criticObjections: [
-    { target: "candidate_conclusion", objection: "Scope may exceed the evidence." },
-    { target: "assumption", objection: "The second assumption may not hold." },
-  ],
   afFact: "recorded_structure",
 };
 
@@ -88,10 +84,7 @@ describe("ReasoningAssistRow", () => {
     }
     expect(screen.getByText("Evidence boundary")).toBeInTheDocument();
     expect(screen.getByText(summary.evidenceBoundary)).toBeInTheDocument();
-    expect(screen.getByText("Critic objections to address")).toBeInTheDocument();
-    for (const objection of summary.criticObjections) {
-      expect(screen.getByText(objection.objection)).toBeInTheDocument();
-    }
+    expect(screen.queryByText("Critic objections to address")).not.toBeInTheDocument();
     expect(screen.getByText("AF recorded structure")).toBeInTheDocument();
   });
 
@@ -100,7 +93,6 @@ describe("ReasoningAssistRow", () => {
       candidateConclusion: "Only one bounded conclusion.",
       assumptions: [],
       evidenceBoundary: "",
-      criticObjections: [],
       afFact: "absent",
     };
     render(<ReasoningAssistRow row={createRow({ stage: "applied", applied: true, summary: sparse })} />);
@@ -110,7 +102,6 @@ describe("ReasoningAssistRow", () => {
     expect(screen.getByText(sparse.candidateConclusion)).toBeInTheDocument();
     expect(screen.queryByText("Assumptions")).not.toBeInTheDocument();
     expect(screen.queryByText("Evidence boundary")).not.toBeInTheDocument();
-    expect(screen.queryByText("Critic objections to address")).not.toBeInTheDocument();
     expect(screen.getByText("AF structure not available")).toBeInTheDocument();
   });
 

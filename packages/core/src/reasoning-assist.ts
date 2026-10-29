@@ -11,17 +11,15 @@ export type ReasoningAssistProgress = {
   stage: ReasoningAssistStage;
 };
 
-export type ReasoningAssistObjectionTarget = "candidate_conclusion" | "assumption";
+export type ReasoningAssistBriefDeliveryResult = Readonly<{
+  accepted: boolean;
+  internalGraceWaitMs: number;
+}>;
 
-export type ReasoningAssistCriticObjection = {
-  target: ReasoningAssistObjectionTarget;
-  objection: string;
-};
-
-export type ReasoningAssistCriticObjections =
-  | []
-  | [ReasoningAssistCriticObjection]
-  | [ReasoningAssistCriticObjection, ReasoningAssistCriticObjection];
+export type ReasoningAssistBriefClearResult = Readonly<{
+  cleared: boolean;
+  internalGraceWaitMs: number;
+}>;
 
 export type ReasoningAssistAfFact = "recorded_structure" | "absent";
 
@@ -29,6 +27,5 @@ export type ReasoningAssistSummary = {
   candidateConclusion: string;
   assumptions: string[];
   evidenceBoundary: string;
-  criticObjections: ReasoningAssistCriticObjections;
   afFact: ReasoningAssistAfFact;
 };

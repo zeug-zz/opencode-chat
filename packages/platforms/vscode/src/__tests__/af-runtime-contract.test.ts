@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   AF_APPROVED_OPERATIONS,
   AF_EXECUTION_REQUIREMENTS,
@@ -9,6 +9,8 @@ import {
   AF_FIXTURE_WORKSPACE,
   AF_PROCESS_BOUNDARY_REQUIREMENTS,
   AF_REVIEW_ROOT_REQUIREMENTS,
+  type AfResultClassification,
+  type AfRuntimeResultKind,
   classifyAfRuntimeResult,
   normalizeAfFixture,
   parseAfFixtureJson,
@@ -129,6 +131,21 @@ describe("AF runtime contract defaults", () => {
       outcome: "observed-success",
       structuralStatus: null,
     });
+  });
+
+  it("preserves success, failure, and union-call classification types", () => {
+    const nonZero = classifyAfRuntimeResult("non-zero");
+    const timeout = classifyAfRuntimeResult("timeout");
+    const success = classifyAfRuntimeResult("success");
+    const classifyUnion = (kind: AfRuntimeResultKind) => classifyAfRuntimeResult(kind);
+    const union = classifyUnion("success");
+
+    expectTypeOf(nonZero).not.toBeNever();
+    expectTypeOf(nonZero).toMatchTypeOf<Extract<AfResultClassification, { outcome: "unavailable" | "audit-failed" }>>();
+    expectTypeOf(timeout).not.toBeNever();
+    expectTypeOf(timeout).toMatchTypeOf<Extract<AfResultClassification, { outcome: "unavailable" | "audit-failed" }>>();
+    expectTypeOf(success).toEqualTypeOf<Extract<AfResultClassification, { outcome: "observed-success" }>>();
+    expectTypeOf(union).toEqualTypeOf<AfResultClassification>();
   });
 });
 

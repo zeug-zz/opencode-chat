@@ -1,4 +1,4 @@
-import type { AgentEvent, ChatSession } from "@opencode-chat/core";
+import type { AgentEvent, ChatMessage, ChatSession, ReasoningPart, TextPart } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
 import { createRef, type RefObject } from "react";
 import { describe, expect, it } from "vitest";
@@ -80,6 +80,43 @@ describe("useMessages", () => {
       } as unknown as AgentEvent;
       act(() => result.current.handleMessageEvent(event));
       expect((result.current.messages[0].info as any).metadata.summary).toBe("updated");
+    });
+
+    it("同一IDの履歴スナップショットで admission 時刻を収束させても吹き出しを複製しないこと", () => {
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      const admittedInfo: ChatMessage = {
+        id: "m1",
+        role: "user",
+        sessionID: "s1",
+        time: { created: 10 },
+      };
+      const part: TextPart = {
+        id: "p1",
+        sessionID: "s1",
+        messageID: "m1",
+        type: "text",
+        text: "admitted prompt",
+      };
+      const historyInfo: ChatMessage = {
+        ...admittedInfo,
+        time: { created: 11 },
+      };
+      act(() => {
+        result.current.handleMessageEvent({
+          type: "message.updated",
+          properties: { sessionID: "s1", info: admittedInfo },
+        });
+        result.current.handleMessageEvent({
+          type: "message.part.updated",
+          properties: { sessionID: "s1", part },
+        });
+        result.current.setMessages([{ info: historyInfo, parts: [part] }]);
+      });
+
+      expect(result.current.messages).toHaveLength(1);
+      expect(result.current.messages[0]?.info.time.created).toBe(11);
+      expect(result.current.messages[0]?.parts).toEqual([part]);
     });
   });
 
@@ -277,6 +314,110 @@ describe("useMessages", () => {
       // Server text is the only option (priority 3: fallback)
       expect((result.current.messages[0].parts[0] as any).text).toBe("server text");
     });
+
+    it("text/reasoning以外の型にはテキストを追加しないこと", () => {
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      const toolPart = {
+        id: "tool1",
+        sessionID: "s1",
+        messageID: "m1",
+        type: "tool",
+        callID: "call1",
+        tool: "read",
+        state: { status: "pending" },
+      } as const;
+      act(() =>
+        result.current.setMessages([
+          { info: { id: "m1", role: "assistant", sessionID: "s1", time: { created: 0 } }, parts: [] },
+        ]),
+      );
+
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "message.part.updated",
+          properties: { sessionID: "s1", part: toolPart },
+        }),
+      );
+
+      expect(result.current.messages[0].parts).toEqual([toolPart]);
+      expect("text" in result.current.messages[0].parts[0]).toBe(false);
+    });
+
+    it("malformed text part is retained without fabricating an empty text value", () => {
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() =>
+        result.current.setMessages([
+          { info: { id: "m1", role: "assistant", sessionID: "s1", time: { created: 0 } }, parts: [] },
+        ]),
+      );
+      const malformedPart = { id: "bad", sessionID: "s1", messageID: "m1", type: "text", text: null };
+      const malformedEvent = {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          part: malformedPart,
+        },
+      } as unknown as AgentEvent;
+
+      act(() => result.current.handleMessageEvent(malformedEvent));
+
+      expect(result.current.messages[0].parts).toEqual([malformedPart]);
+      expect(result.current.messages[0].parts[0]).not.toHaveProperty("text", "");
+    });
+
+    it("unknown part variant is retained unchanged", () => {
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() =>
+        result.current.setMessages([
+          { info: { id: "m1", role: "assistant", sessionID: "s1", time: { created: 0 } }, parts: [] },
+        ]),
+      );
+      const unknownPart = { id: "future", sessionID: "s1", messageID: "m1", type: "future-part", payload: 4 };
+      const event = {
+        type: "message.part.updated",
+        properties: { sessionID: "s1", part: unknownPart },
+      } as unknown as AgentEvent;
+
+      act(() => result.current.handleMessageEvent(event));
+
+      expect(result.current.messages[0].parts).toEqual([unknownPart]);
+    });
+
+    it("snapshot deltaのpartIDが非テキスト部品でも型と内容を維持すること", () => {
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      const toolPart = {
+        id: "part1",
+        sessionID: "s1",
+        messageID: "m1",
+        type: "tool",
+        callID: "call1",
+        tool: "read",
+        state: { status: "pending" },
+      } as const;
+      act(() =>
+        result.current.setMessages([
+          { info: { id: "m1", role: "assistant", sessionID: "s1", time: { created: 0 } }, parts: [toolPart] },
+        ]),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "message.part.delta",
+          properties: { sessionID: "s1", messageID: "m1", partID: "part1", field: "text", delta: "not text" },
+        }),
+      );
+      act(() =>
+        result.current.setMessages([
+          { info: { id: "m1", role: "assistant", sessionID: "s1", time: { created: 0 } }, parts: [toolPart] },
+        ]),
+      );
+
+      expect(result.current.messages[0].parts).toEqual([toolPart]);
+      expect("text" in result.current.messages[0].parts[0]).toBe(false);
+    });
   });
 
   // handleMessageEvent for message.removed
@@ -296,6 +437,54 @@ describe("useMessages", () => {
       } as unknown as AgentEvent;
       act(() => result.current.handleMessageEvent(event));
       expect(result.current.messages).toHaveLength(1);
+    });
+
+    it("message removal clears a segment buffer before the same native IDs are reused", () => {
+      vi.useFakeTimers();
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.delta",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1", delta: "removed" },
+        } as unknown as AgentEvent),
+      );
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "message.removed",
+          properties: { sessionID: "s1", messageID: "m1" },
+        } as unknown as AgentEvent),
+      );
+
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.delta",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1", delta: "fresh" },
+        } as unknown as AgentEvent),
+      );
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(result.current.messages[0]?.parts).toMatchObject([{ id: "ordinal-1", text: "fresh" }]);
+      vi.useRealTimers();
     });
   });
 
@@ -540,6 +729,93 @@ describe("useMessages", () => {
       expect((parts[0] as any).text).toBe("Final text");
       expect((parts[0] as any).time?.end).toBeDefined();
     });
+
+    it("uses the terminal text when a nonempty segment ends without deltas", () => {
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", text: "terminal text" },
+        } as unknown as AgentEvent),
+      );
+
+      expect(result.current.messages[0]?.parts).toHaveLength(1);
+      expect(result.current.messages[0]?.parts[0]).toMatchObject({
+        id: "r1",
+        type: "reasoning",
+        text: "terminal text",
+        time: { end: expect.any(Number) },
+      });
+    });
+
+    it("preserves an empty terminal text as an ended segment", () => {
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", text: "" },
+        } as unknown as AgentEvent),
+      );
+
+      expect(result.current.messages[0]?.parts).toHaveLength(1);
+      expect(result.current.messages[0]?.parts[0]).toMatchObject({
+        id: "r1",
+        type: "reasoning",
+        text: "",
+        time: { end: expect.any(Number) },
+      });
+    });
+
+    it("keeps split deltas in the matching segment through terminal completion", () => {
+      vi.useFakeTimers();
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
+        } as unknown as AgentEvent),
+      );
+      for (const delta of ["first ", "segment"]) {
+        act(() =>
+          result.current.handleMessageEvent({
+            type: "session.next.reasoning.delta",
+            properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", delta },
+          } as unknown as AgentEvent),
+        );
+      }
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(result.current.messages[0]?.parts[0]).toMatchObject({ id: "r1", text: "first segment" });
+
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", text: "final segment" },
+        } as unknown as AgentEvent),
+      );
+      expect(result.current.messages[0]?.parts[0]).toMatchObject({ id: "r1", text: "final segment" });
+      expect(result.current.messages[0]?.parts[0]).toMatchObject({ time: { end: expect.any(Number) } });
+      vi.useRealTimers();
+    });
   });
 
   context("子セッションの reasoning イベントを受信した場合", () => {
@@ -688,7 +964,7 @@ describe("useMessages", () => {
 
   // 10.5 Regression: managed reasoning skips server snapshot, avoids duplicate
   context("managed reasoning message with message.part.updated snapshot", () => {
-    it("skips server snapshot and avoids duplicate part when reasoning events own the stream", () => {
+    it("merges a stale same-ID snapshot without duplicating the native segment", () => {
       vi.useFakeTimers();
       const ref = createSessionRef(fakeSession("s1"));
       const { result } = renderHook(() => useMessages(ref));
@@ -711,21 +987,65 @@ describe("useMessages", () => {
       act(() => {
         vi.advanceTimersByTime(16);
       });
-      // message.part.updated arrives with a DIFFERENT server-assigned part.id
+      // The authoritative part snapshot uses the same stable native reasoning ID.
       act(() =>
         result.current.handleMessageEvent({
           type: "message.part.updated",
           properties: {
             sessionID: "s1",
-            part: { id: "server-r1", type: "reasoning", text: "", sessionID: "s1", messageID: "m1" },
+            part: { id: "r1", type: "reasoning", text: "", sessionID: "s1", messageID: "m1" },
           },
         } as unknown as AgentEvent),
       );
       const parts = result.current.messages[0].parts;
       expect(parts).toHaveLength(1);
       expect(parts[0]).toMatchObject({ id: "r1", text: "Hello" });
-      // No duplicate part with server ID
-      expect(parts.find((p: any) => p.id === "server-r1")).toBeUndefined();
+      // The snapshot uses the same stable native segment identity.
+      expect(parts.find((p: any) => p.id === "r1")).toBe(parts[0]);
+      vi.useRealTimers();
+    });
+
+    it("keeps the ended text when a stale same-ID snapshot follows", () => {
+      vi.useFakeTimers();
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", text: "terminal reasoning" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.setMessages([
+          {
+            info: { id: "m1", sessionID: "s1" } as any,
+            parts: [
+              {
+                id: "r1",
+                type: "reasoning",
+                text: "",
+                sessionID: "s1",
+                messageID: "m1",
+                time: { start: 1, end: 2 },
+              } as ReasoningPart,
+            ],
+          },
+        ]),
+      );
+
+      expect(result.current.messages[0]?.parts).toHaveLength(1);
+      expect(result.current.messages[0]?.parts[0]).toMatchObject({
+        id: "r1",
+        text: "terminal reasoning",
+        time: { start: 1, end: 2 },
+      });
       vi.useRealTimers();
     });
 
@@ -782,8 +1102,9 @@ describe("useMessages", () => {
       vi.useRealTimers();
     });
 
-    it("empty reasoning.ended preserves streamed text", () => {
+    it("empty reasoning.ended text is authoritative without logging streamed reasoning", () => {
       vi.useFakeTimers();
+      const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const ref = createSessionRef(fakeSession("s1"));
       const { result } = renderHook(() => useMessages(ref));
       act(() => result.current.setMessages([{ info: { id: "m1" } as any, parts: [] }]));
@@ -809,12 +1130,14 @@ describe("useMessages", () => {
         } as unknown as AgentEvent),
       );
       const parts = result.current.messages[0].parts;
-      expect((parts[0] as any).text).toBe("Hello world");
+      expect((parts[0] as any).text).toBe("");
       expect((parts[0] as any).time?.end).toBeDefined();
+      expect(JSON.stringify(warningSpy.mock.calls)).not.toContain("Hello world");
+      warningSpy.mockRestore();
       vi.useRealTimers();
     });
 
-    it("short reasoning.ended preserves longer streamed text", () => {
+    it("short reasoning.ended text replaces longer streamed text", () => {
       vi.useFakeTimers();
       const ref = createSessionRef(fakeSession("s1"));
       const { result } = renderHook(() => useMessages(ref));
@@ -841,7 +1164,7 @@ describe("useMessages", () => {
         } as unknown as AgentEvent),
       );
       const parts = result.current.messages[0].parts;
-      expect((parts[0] as any).text).toBe("Hello world");
+      expect((parts[0] as any).text).toBe("Hello");
       vi.useRealTimers();
     });
 
@@ -920,181 +1243,330 @@ describe("useMessages", () => {
     });
   });
 
-  // 10.7 Regression: canonical reasoning part per assistant message
-  context("canonical reasoning display per message", () => {
-    it("second reasoningID for same message does not create second part or blank", () => {
+  // 10.7 Regression: native reasoning segment identity per assistant message
+  context("native reasoning segment identity and ordering", () => {
+    it("keeps adjacent Markdown segments separate while deltas split inside delimiters and words", () => {
       vi.useFakeTimers();
       const ref = createSessionRef(fakeSession("s1"));
       const { result } = renderHook(() => useMessages(ref));
       act(() => result.current.setMessages([{ info: { id: "m1" } as any, parts: [] }]));
-      // first reasoning stream
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
-        } as unknown as AgentEvent),
-      );
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.delta",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", delta: "Hello" },
-        } as unknown as AgentEvent),
-      );
+      for (const reasoningID of ["ordinal-1", "ordinal-2"]) {
+        act(() =>
+          result.current.handleMessageEvent({
+            type: "session.next.reasoning.started",
+            properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID },
+          } as unknown as AgentEvent),
+        );
+      }
+      const deltas: Array<[string, string]> = [
+        ["ordinal-1", "*"],
+        ["ordinal-2", "*"],
+        ["ordinal-1", "*Fir"],
+        ["ordinal-2", "*Sec"],
+        ["ordinal-1", "st"],
+        ["ordinal-2", "ond"],
+        ["ordinal-1", " "],
+        ["ordinal-2", " "],
+        ["ordinal-1", "sec"],
+        ["ordinal-2", "sec"],
+        ["ordinal-1", "tion"],
+        ["ordinal-2", "tion"],
+        ["ordinal-1", "*"],
+        ["ordinal-2", "*"],
+        ["ordinal-1", "*"],
+        ["ordinal-2", "*"],
+      ];
+      for (const [reasoningID, delta] of deltas) {
+        act(() =>
+          result.current.handleMessageEvent({
+            type: "session.next.reasoning.delta",
+            properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID, delta },
+          } as unknown as AgentEvent),
+        );
+      }
       act(() => {
         vi.advanceTimersByTime(16);
       });
-      // second reasoning stream for the same message, different reasoningID
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r2" },
-        } as unknown as AgentEvent),
-      );
+
       const parts = result.current.messages[0].parts;
-      expect(parts).toHaveLength(1);
-      expect(parts[0]).toMatchObject({ id: "r1", type: "reasoning" });
-      expect((parts[0] as any).text).toBe("Hello");
+      expect(parts.map((part) => part.id)).toEqual(["ordinal-1", "ordinal-2"]);
+      expect(parts.map((part) => (part.type === "reasoning" ? part.text : ""))).toEqual([
+        "**First section**",
+        "**Second section**",
+      ]);
       vi.useRealTimers();
     });
 
-    it("delta for second reasoningID appends to canonical part", () => {
+    it("uses each ended text as authoritative without cancelling a sibling's pending flush", () => {
       vi.useFakeTimers();
+      const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const ref = createSessionRef(fakeSession("s1"));
       const { result } = renderHook(() => useMessages(ref));
       act(() => result.current.setMessages([{ info: { id: "m1" } as any, parts: [] }]));
-      // first reasoning stream r1
+      for (const reasoningID of ["ordinal-1", "ordinal-2"]) {
+        act(() =>
+          result.current.handleMessageEvent({
+            type: "session.next.reasoning.started",
+            properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID },
+          } as unknown as AgentEvent),
+        );
+      }
       act(() =>
         result.current.handleMessageEvent({
-          type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
+          type: "session.next.reasoning.delta",
+          properties: {
+            sessionID: "s1",
+            assistantMessageID: "m1",
+            reasoningID: "ordinal-1",
+            delta: "**First section**",
+          },
         } as unknown as AgentEvent),
       );
       act(() =>
         result.current.handleMessageEvent({
           type: "session.next.reasoning.delta",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", delta: "Hello" },
+          properties: {
+            sessionID: "s1",
+            assistantMessageID: "m1",
+            reasoningID: "ordinal-2",
+            delta: "**Second section** with stale suffix",
+          },
         } as unknown as AgentEvent),
       );
-      act(() => {
-        vi.advanceTimersByTime(16);
-      });
-      // start second reasoning stream r2
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r2" },
-        } as unknown as AgentEvent),
-      );
-      // delta for r2
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.delta",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r2", delta: " world" },
-        } as unknown as AgentEvent),
-      );
-      act(() => {
-        vi.advanceTimersByTime(16);
-      });
-      const parts = result.current.messages[0].parts;
-      expect(parts).toHaveLength(1);
-      expect(parts[0]).toMatchObject({ id: "r1" });
-      expect((parts[0] as any).text).toBe("Hello world");
-      vi.useRealTimers();
-    });
-
-    it("ended for second reasoningID updates canonical part, no duplicate", () => {
-      vi.useFakeTimers();
-      const ref = createSessionRef(fakeSession("s1"));
-      const { result } = renderHook(() => useMessages(ref));
-      act(() => result.current.setMessages([{ info: { id: "m1" } as any, parts: [] }]));
-      // first reasoning stream r1
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
-        } as unknown as AgentEvent),
-      );
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.delta",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", delta: "Hello" },
-        } as unknown as AgentEvent),
-      );
-      act(() => {
-        vi.advanceTimersByTime(16);
-      });
-      // second reasoning stream r2
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r2" },
-        } as unknown as AgentEvent),
-      );
-      act(() =>
-        result.current.handleMessageEvent({
-          type: "session.next.reasoning.delta",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r2", delta: " world" },
-        } as unknown as AgentEvent),
-      );
-      act(() => {
-        vi.advanceTimersByTime(16);
-      });
-      // ended for r2
       act(() =>
         result.current.handleMessageEvent({
           type: "session.next.reasoning.ended",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r2", text: "Hello world" },
+          properties: {
+            sessionID: "s1",
+            assistantMessageID: "m1",
+            reasoningID: "ordinal-2",
+            text: "**Second section**",
+          },
         } as unknown as AgentEvent),
       );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: {
+            sessionID: "s1",
+            assistantMessageID: "m1",
+            reasoningID: "ordinal-1",
+            text: "**First section**",
+          },
+        } as unknown as AgentEvent),
+      );
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+
       const parts = result.current.messages[0].parts;
-      expect(parts).toHaveLength(1);
-      expect(parts[0]).toMatchObject({ id: "r1" });
-      expect((parts[0] as any).text).toBe("Hello world");
-      expect((parts[0] as any).time?.end).toBeDefined();
+      expect(parts.map((part) => part.id)).toEqual(["ordinal-1", "ordinal-2"]);
+      expect(parts.map((part) => (part.type === "reasoning" ? part.text : ""))).toEqual([
+        "**First section**",
+        "**Second section**",
+      ]);
+      expect(parts.every((part) => part.type === "reasoning" && part.time?.end != null)).toBe(true);
+      expect(JSON.stringify(warningSpy.mock.calls)).not.toContain("stale suffix");
+      warningSpy.mockRestore();
       vi.useRealTimers();
     });
 
-    it("message.part.delta using transient reasoningID cannot compete", () => {
+    it("authoritative reloads with the same IDs update each segment without duplication", () => {
       vi.useFakeTimers();
       const ref = createSessionRef(fakeSession("s1"));
       const { result } = renderHook(() => useMessages(ref));
       act(() => result.current.setMessages([{ info: { id: "m1" } as any, parts: [] }]));
-      // first reasoning stream r1
+      for (const reasoningID of ["ordinal-1", "ordinal-2"]) {
+        act(() =>
+          result.current.handleMessageEvent({
+            type: "session.next.reasoning.started",
+            properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID },
+          } as unknown as AgentEvent),
+        );
+        act(() =>
+          result.current.handleMessageEvent({
+            type: "session.next.reasoning.ended",
+            properties: {
+              sessionID: "s1",
+              assistantMessageID: "m1",
+              reasoningID,
+              text: reasoningID === "ordinal-1" ? "**First section**" : "**Second section**",
+            },
+          } as unknown as AgentEvent),
+        );
+      }
+
+      const reloadedParts: ReasoningPart[] = [
+        {
+          id: "ordinal-1",
+          sessionID: "s1",
+          messageID: "m1",
+          type: "reasoning",
+          text: "**First section**",
+          time: { start: 1, end: 2 },
+        },
+        {
+          id: "ordinal-2",
+          sessionID: "s1",
+          messageID: "m1",
+          type: "reasoning",
+          text: "**Second section**",
+          time: { start: 3, end: 4 },
+        },
+      ];
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: reloadedParts }]));
+      expect(result.current.messages[0].parts).toEqual(reloadedParts);
+      vi.useRealTimers();
+    });
+
+    it("preserves finished segments across sibling streaming and completed snapshot grace", () => {
+      vi.useFakeTimers();
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+
       act(() =>
         result.current.handleMessageEvent({
           type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1" },
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1" },
         } as unknown as AgentEvent),
       );
       act(() =>
         result.current.handleMessageEvent({
           type: "session.next.reasoning.delta",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r1", delta: "Hello" },
+          properties: {
+            sessionID: "s1",
+            assistantMessageID: "m1",
+            reasoningID: "ordinal-1",
+            delta: "stale partial suffix",
+          },
         } as unknown as AgentEvent),
       );
-      act(() => {
-        vi.advanceTimersByTime(16);
-      });
-      // second reasoning stream r2 started (no delta)
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1", text: "**First**" },
+        } as unknown as AgentEvent),
+      );
       act(() =>
         result.current.handleMessageEvent({
           type: "session.next.reasoning.started",
-          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "r2" },
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-2" },
         } as unknown as AgentEvent),
       );
-      // message.part.delta using transient ID r2
       act(() =>
         result.current.handleMessageEvent({
-          type: "message.part.delta",
-          properties: { sessionID: "s1", messageID: "m1", partID: "r2", field: "text", delta: "BAD" },
+          type: "session.next.reasoning.delta",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-2", delta: "**Second**" },
         } as unknown as AgentEvent),
       );
       act(() => {
         vi.advanceTimersByTime(16);
       });
-      const parts = result.current.messages[0].parts;
-      expect(parts).toHaveLength(1);
-      expect((parts[0] as any).text).toBe("Hello");
+      act(() => {
+        vi.advanceTimersByTime(5001);
+      });
+
+      act(() =>
+        result.current.setMessages([
+          {
+            info: { id: "m1", sessionID: "s1" } as any,
+            parts: [
+              { id: "ordinal-1", type: "reasoning", text: "", sessionID: "s1", messageID: "m1" } as ReasoningPart,
+              { id: "ordinal-2", type: "reasoning", text: "", sessionID: "s1", messageID: "m1" } as ReasoningPart,
+            ],
+          },
+        ]),
+      );
+
+      expect(result.current.messages[0]?.parts).toMatchObject([
+        { id: "ordinal-1", text: "**First**" },
+        { id: "ordinal-2", text: "**Second**" },
+      ]);
+
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-2", text: "**Second**" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.setMessages([
+          {
+            info: { id: "m1", sessionID: "s1" } as any,
+            parts: [
+              { id: "ordinal-1", type: "reasoning", text: "", sessionID: "s1", messageID: "m1" } as ReasoningPart,
+              { id: "ordinal-2", type: "reasoning", text: "", sessionID: "s1", messageID: "m1" } as ReasoningPart,
+            ],
+          },
+        ]),
+      );
+      expect(result.current.messages[0]?.parts).toMatchObject([
+        { id: "ordinal-1", text: "**First**" },
+        { id: "ordinal-2", text: "**Second**" },
+      ]);
+      vi.useRealTimers();
+    });
+
+    it("ignores foreign events and clears pending segment buffers before a session switch", () => {
+      vi.useFakeTimers();
+      const ref = createSessionRef(fakeSession("s1"));
+      const { result } = renderHook(() => useMessages(ref));
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s1" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.delta",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1", delta: "stale" },
+        } as unknown as AgentEvent),
+      );
+
+      ref.current = fakeSession("s2");
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.delta",
+          properties: { sessionID: "s1", assistantMessageID: "m1", reasoningID: "ordinal-1", delta: " foreign" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.ended",
+          properties: {
+            sessionID: "s1",
+            assistantMessageID: "m1",
+            reasoningID: "ordinal-1",
+            text: "foreign final text",
+          },
+        } as unknown as AgentEvent),
+      );
+      act(() => result.current.clearSessionState());
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(result.current.messages).toEqual([]);
+
+      act(() => result.current.setMessages([{ info: { id: "m1", sessionID: "s2" } as any, parts: [] }]));
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.started",
+          properties: { sessionID: "s2", assistantMessageID: "m1", reasoningID: "ordinal-1" },
+        } as unknown as AgentEvent),
+      );
+      act(() =>
+        result.current.handleMessageEvent({
+          type: "session.next.reasoning.delta",
+          properties: { sessionID: "s2", assistantMessageID: "m1", reasoningID: "ordinal-1", delta: "fresh" },
+        } as unknown as AgentEvent),
+      );
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(result.current.messages[0]?.parts).toMatchObject([{ id: "ordinal-1", text: "fresh" }]);
       vi.useRealTimers();
     });
   });
@@ -1127,7 +1599,7 @@ describe("useMessages", () => {
             info: { id: "m1", sessionID: "s1" } as any,
             parts: [
               {
-                id: "server-r1",
+                id: "r1",
                 type: "reasoning",
                 text: "",
                 sessionID: "s1",

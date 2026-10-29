@@ -60,10 +60,11 @@ export function ChatHeader({
         )}
         {/* 共有ボタン: セッションがあり、子セッション閲覧中でない場合に表示。
             未共有時は onShareSession が渡されている場合のみ表示する
-            （メッセージのない空セッションでは SDK がエラーを返すため）。 */}
+            （メッセージのない空セッションでは SDK がエラーを返すため）。
+            共有解除は onUnshareSession が渡されている場合のみ表示する（sessionShare 非対応時は App が渡さない）。 */}
         {activeSession &&
           !onNavigateToParent &&
-          (isShared ? (
+          (isShared && onUnshareSession ? (
             <IconButton onClick={onUnshareSession} title={t["share.unshare"]}>
               <UnshareIcon />
             </IconButton>

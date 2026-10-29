@@ -10,6 +10,7 @@ import {
   createCurrentVibefeldClaimProjectionSeam,
 } from "../vibefeld/current-vibefeld-claim-projection";
 import { normalizeEvidenceReferences } from "../vibefeld/evidence-metadata";
+import { createReasoningDiagnosticReporter } from "../vibefeld/reasoning-diagnostics";
 import type { AfBridgeFailureReason, AfBridgeOperation, AfBridgeState } from "../vibefeld/vibefeld-runtime";
 
 const CLAIM_CAPABILITY = Object.freeze({ supported: true, operation: "claim_projection" } as const);
@@ -458,8 +459,184 @@ describe("current Vibefeld runtime claim boundary", () => {
     expect(fake.run).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      label: "an over-length statement",
+      graph: requireGraph(
+        compileClaimGraph(
+          `CONCLUSION: claim-1\nCLAIM: claim-1|deductive|${"x".repeat(AF_FIXTURE_LIMITS.stringLength + 1)}`,
+        ),
+      ),
+      expected: "projection-statement-too-long",
+      reason: "oversized",
+    },
+    {
+      label: "a shell-token statement",
+      graph: requireGraph(
+        compileClaimGraph("CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A statement; with a shell token."),
+      ),
+      expected: "projection-statement-shell-token",
+      reason: "oversized",
+    },
+    {
+      label: "an empty statement",
+      graph: {
+        ...singleClaimGraph,
+        nodes: singleClaimGraph.nodes.map((node) => ({ ...node, statement: "" })),
+      },
+      expected: "projection-statement-empty",
+      reason: "malformed",
+    },
+    {
+      label: "an otherwise malformed graph",
+      graph: { ...singleClaimGraph, conclusionId: "missing-claim" },
+      expected: "projection-graph-invalid",
+      reason: "malformed",
+    },
+  ] as const)("reports a fixed detail for $label without changing the projection outcome", async (scenario) => {
+    const details: string[] = [];
+    const fake = bridgeFake();
+    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+      observer: (outcome) => details.push(outcome),
+    });
+
+    expect(await seam.project(scenario.graph)).toEqual({ status: "unavailable", reason: scenario.reason });
+    expect(details).toEqual([scenario.expected]);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("serializes only fixed projection labels and never statement text", async () => {
+    const sentinel = "UNIQUE_PROJECTION_STATEMENT_SENTINEL";
+    const graph = requireGraph(
+      compileClaimGraph(`CONCLUSION: claim-1\nCLAIM: claim-1|deductive|${sentinel}; rejected before AF.`),
+    );
+    const sink = vi.fn();
+    const diagnostics = createReasoningDiagnosticReporter(sink);
+    const fake = bridgeFake();
+    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+      observer: (outcome) => diagnostics({ stage: "af-projection", outcome }),
+    });
+
+    expect(await seam.project(graph)).toEqual({ status: "unavailable", reason: "oversized" });
+    const serialized = JSON.stringify(sink.mock.calls);
+    expect(serialized).toContain("projection-statement-shell-token");
+    expect(serialized).not.toContain(sentinel);
+    expect(serialized).not.toContain("claim-1");
+  });
+
+  it("reports begin-review failures by fixed reason class without changing normalized mapping", async () => {
+    const reasons: readonly AfBridgeFailureReason[] = [
+      "unsupported-platform",
+      "missing-executable",
+      "policy-unavailable",
+      "preflight-failed",
+      "runtime-mismatch",
+      "operation-not-ready",
+      "cancelled",
+      "timeout",
+      "malformed",
+      "oversized",
+      "non-zero",
+      "signaled",
+      "cleanup-failure",
+      "audit-failure",
+    ];
+
+    for (const reason of reasons) {
+      const details: string[] = [];
+      const fake = bridgeFake({
+        failAt: "beginReview",
+        failure: { state: "unavailable", structuralStatus: null, reason },
+      });
+      const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+        observer: (outcome) => details.push(outcome),
+      });
+
+      await seam.project(cleanGraph);
+      expect(details).toEqual([
+        reason === "cancelled"
+          ? "projection-cancelled"
+          : reason === "operation-not-ready"
+            ? "projection-begin-not-ready"
+            : `projection-begin-${reason}`,
+      ]);
+    }
+
+    const details: string[] = [];
+    const fake = bridgeFake({
+      failAt: "beginReview",
+      failure: { state: "unavailable", structuralStatus: null, reason: "unrecognized-runtime-reason" },
+    });
+    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+      observer: (outcome) => details.push(outcome),
+    });
+    await seam.project(cleanGraph);
+    expect(details).toEqual(["projection-begin-other"]);
+  });
+
+  it.each(["init", "claim", "refine", "status"] as const)(
+    "reports a fixed %s operation failure detail",
+    async (operation) => {
+      const details: string[] = [];
+      const fake = bridgeFake({ failAt: operation, failure: failure("non-zero") });
+      const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+        observer: (outcome) => details.push(outcome),
+      });
+
+      expect(await seam.project(cleanGraph)).toEqual({ status: "unavailable", reason: "malformed" });
+      expect(details).toEqual([`projection-${operation}-failed-non-zero`]);
+    },
+  );
+
+  it("maps an unknown operation failure reason to the fixed other class", async () => {
+    const details: string[] = [];
+    const fake = bridgeFake({
+      failAt: "init",
+      failure: { state: "unavailable", structuralStatus: null, reason: "unrecognized-operation-reason" },
+    });
+    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+      observer: (outcome) => details.push(outcome),
+    });
+
+    expect(await seam.project(cleanGraph)).toEqual({ status: "unavailable", reason: "malformed" });
+    expect(details).toEqual(["projection-init-failed-other"]);
+  });
+
+  it.each([
+    { operation: "init", expected: "projection-init-facts-mismatch" },
+    { operation: "claim", expected: "projection-claim-facts-mismatch" },
+    { operation: "refine", expected: "projection-refine-facts-mismatch" },
+    { operation: "status", expected: "projection-status-facts-mismatch" },
+  ] as const)("reports a fixed $operation facts-mismatch detail", async ({ operation, expected }) => {
+    const details: string[] = [];
+    const fake = bridgeFake({
+      handlers: {
+        [operation]: () => ready({}),
+      },
+    });
+    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+      observer: (outcome) => details.push(outcome),
+    });
+
+    expect(await seam.project(cleanGraph)).toEqual({ status: "unresolved" });
+    expect(details).toEqual([expected]);
+  });
+
+  it("ignores observer exceptions without changing a successful projection", async () => {
+    const fake = bridgeFake();
+    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+      observer: () => {
+        throw new Error("private observer failure");
+      },
+    });
+
+    expect(await seam.project(cleanGraph)).toEqual({ status: "structurally_checked" });
+    expect(fake.calls.map((call) => call.kind)).toEqual(["beginReview", "init", "claim", "refine", "status"]);
+  });
+
   it("stops at an aborted signal after init and publishes cancelled", async () => {
     const controller = new AbortController();
+    const details: string[] = [];
     const fake = bridgeFake({
       handlers: {
         init: () => {
@@ -468,12 +645,15 @@ describe("current Vibefeld runtime claim boundary", () => {
         },
       },
     });
-    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime);
+    const seam = createCurrentVibefeldClaimProjectionSeam(fake.runtime, {
+      observer: (outcome) => details.push(outcome),
+    });
 
     expect(await seam.project(cleanGraph, controller.signal)).toEqual({
       status: "unavailable",
       reason: "cancelled",
     });
+    expect(details).toEqual(["projection-cancelled"]);
     expect(fake.calls.map((call) => call.kind)).toEqual(["beginReview", "init"]);
   });
 

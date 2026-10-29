@@ -1,6 +1,7 @@
 import type { ToolPart } from "@opencode-chat/core";
 import { useMemo, useState } from "react";
 import { useLocale } from "../../../locales";
+import { asRecord, formatToolOutput } from "../../../utils/format-tool-output";
 import { ChevronRightIcon, SpinnerIcon, TerminalIcon } from "../../atoms/icons";
 import styles from "./ShellResultView.module.css";
 
@@ -21,12 +22,13 @@ export function ShellResultView({ parts }: Props) {
       .filter((p) => p.type === "tool")
       .map((p) => {
         const { state } = p;
-        const input = (state.status !== "pending" ? state.input : null) as Record<string, unknown> | null;
-        const command = (input?.command as string) ?? "";
+        const input = asRecord(state.status !== "pending" ? state.input : null);
+        const command = typeof input?.command === "string" ? input.command : "";
         const isRunning = state.status === "running" || state.status === "pending";
         const isError = state.status === "error";
-        const output = state.status === "completed" ? state.output : null;
-        const error = state.status === "error" ? state.error : null;
+        const output =
+          state.status === "completed" ? formatToolOutput(state.output, t["tool.outputUnavailable"]) : null;
+        const error = state.status === "error" ? formatToolOutput(state.error, t["tool.outputUnavailable"]) : null;
         return { command, output, error, isRunning, isError };
       });
   }, [parts]);
@@ -55,8 +57,8 @@ export function ShellResultView({ parts }: Props) {
                   <SpinnerIcon className={styles.spinner} width={14} height={14} />
                 </div>
               )}
-              {entry.output && <pre className={styles.output}>{entry.output}</pre>}
-              {entry.isError && entry.error && (
+              {entry.output !== null && <pre className={styles.output}>{entry.output}</pre>}
+              {entry.isError && entry.error !== null && (
                 <pre className={`${styles.output} ${styles.outputError}`}>{entry.error}</pre>
               )}
             </div>

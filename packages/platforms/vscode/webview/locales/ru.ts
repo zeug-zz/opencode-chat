@@ -23,6 +23,9 @@ export const ru: LocaleSchema = {
   "input.shellMode": "Режим Shell",
   "input.placeholder.shell": "Введите команду оболочки...",
   "input.settings": "Настройки",
+  "input.reasoningReviewOn": "Проверка рассуждений: включена",
+  "input.reasoningReviewOff": "Проверка рассуждений: выключена",
+  "input.reasoningReviewBlocked": "Проверка рассуждений заблокирована настройками рабочей области",
   "input.stop": "Остановить",
   "input.send": "Отправить",
   "input.queued": (count: number) => `В очереди: ${count}`,
@@ -37,6 +40,7 @@ export const ru: LocaleSchema = {
   "message.thinking": "Думаю…",
   "message.toggleThought": "Переключить детали мысли",
   "message.copyMarkdown": "Копировать Markdown",
+  "message.moreActions": "More actions",
 
   // MessagesArea
   "checkpoint.revertTitle": "Вернуться к этой точке",
@@ -79,6 +83,7 @@ export const ru: LocaleSchema = {
   "tool.search": "Поиск",
   "tool.tool": "Инструмент",
   "tool.toggleDetails": "Переключить детали",
+  "tool.outputUnavailable": "[Не удалось отобразить вывод инструмента]",
   "tool.completed": (done: number, total: number) => `${done}/${total} завершено`,
   "tool.moreLines": (n: number) => `… ещё ${n} строк`,
   "tool.addLines": (n: number) => `+${n} строк`,
@@ -115,6 +120,7 @@ export const ru: LocaleSchema = {
   "config.mcpEmpty": "Серверы MCP не настроены. Настройте через конфигурацию проекта или глобальную конфигурацию.",
   "config.mcpTrust":
     "Установленные пользователем инструменты MCP не изолированы запретами на редактирование/shell от Scout.",
+  "config.mcpLocked": "Заблокировано системной или управляемой политикой.",
 
   // ToolConfigPanel
   "config.title": "Настройки",
@@ -145,6 +151,38 @@ export const ru: LocaleSchema = {
     "Проверяет ответы на этом хосте, когда среда проверки рассуждений доступна. Отказ рабочего пространства переопределяет глобальную настройку для этого рабочего пространства.",
   "config.reasoningReviewEffective": (enabled: boolean) =>
     enabled ? "Включена в этом рабочем пространстве" : "Отключена в этом рабочем пространстве",
+  "reasoningReview.action": "Проверить аргумент",
+  "reasoningReview.cancel": "Отменить проверку",
+  "reasoningReview.cancelling": "Отмена проверки…",
+  "reasoningReview.inProgress": "Проверка выполняется",
+  "reasoningReview.cancelled": "Проверка отменена.",
+  "reasoningReview.resultLabel": "Проверка аргумента",
+  "reasoningReview.boundaryLabel": "Ограничения проверки",
+  "reasoningReview.statusLabel": "Статус",
+  "reasoningReview.evidenceLabel": "Доказательства",
+  "reasoningReview.assumptionsLabel": "Предположения",
+  "reasoningReview.challengesLabel": "Открытые возражения",
+  "reasoningReview.status.notReviewed": "Не проверено",
+  "reasoningReview.status.reviewing": "Проверяется",
+  "reasoningReview.status.structurallyChecked": "Структура проверена",
+  "reasoningReview.status.conditional": "Условный",
+  "reasoningReview.status.unresolved": "Не разрешено",
+  "reasoningReview.status.refuted": "Опровергнуто",
+  "reasoningReview.status.blocked": "Заблокировано",
+  "reasoningReview.status.auditFailed": "Проверка не удалась",
+  "reasoningReview.status.unavailable": "Недоступно",
+  "reasoningReview.evidence.notAssessed": "Не оценено",
+  "reasoningReview.evidence.notRequired": "Не требуется",
+  "reasoningReview.evidence.sourceRecorded": "Источник записан",
+  "reasoningReview.evidence.unverified": "Не проверено",
+  "reasoningReview.evidence.humanVerified": "Проверено человеком",
+  "reasoningReview.evidence.conflicted": "Конфликт",
+  "reasoningReview.severity.critical": "Критическое",
+  "reasoningReview.severity.major": "Высокое",
+  "reasoningReview.severity.minor": "Низкое",
+  "reasoningReview.severity.note": "Примечание",
+  "reasoningReview.stage.claimProjection": "Проекция утверждений AF",
+  "reasoningReview.stage.adversarialReview": "Проверка проверяющим/верификатором",
 
   // Reasoning assist lifecycle
   "reasoningAssist.title": "Помощник рассуждений",
@@ -158,7 +196,6 @@ export const ru: LocaleSchema = {
   "reasoningAssist.candidateConclusion": "Предварительный вывод",
   "reasoningAssist.assumptions": "Предположения",
   "reasoningAssist.evidenceBoundary": "Граница доказательств",
-  "reasoningAssist.criticObjections": "Возражения, требующие ответа",
   "reasoningAssist.afRecordedStructure": "Структура записана в AF",
   "reasoningAssist.afNotAvailable": "Структура AF недоступна",
 
@@ -190,6 +227,8 @@ export const ru: LocaleSchema = {
   "fileChanges.noChanges": "Нет изменений файлов",
   "fileChanges.openDiff": "Открыть в редакторе различий",
   "fileChanges.toggle": "Изменения файлов",
+  "fileChanges.binaryUnavailable": "Двоичный файл: содержимое нельзя показать.",
+  "fileChanges.contentUnavailable": "Содержимое этого изменения недоступно.",
 
   // Share
   "share.share": "Поделиться сессией",

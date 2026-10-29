@@ -7,10 +7,6 @@ const summary: ReasoningAssistSummary = {
   candidateConclusion: "Structure supports one bounded conclusion.",
   assumptions: ["Assumption one", "Assumption two"],
   evidenceBoundary: "Only same-thread evidence was considered.",
-  criticObjections: [
-    { target: "candidate_conclusion", objection: "Scope may exceed the evidence." },
-    { target: "assumption", objection: "The second assumption may not hold." },
-  ],
   afFact: "recorded_structure",
 };
 

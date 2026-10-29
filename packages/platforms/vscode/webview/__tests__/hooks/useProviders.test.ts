@@ -1,4 +1,4 @@
-import type { AllProvidersData, ModelInfo, ProviderInfo } from "@opencode-chat/core";
+import type { AllProvidersData, ModelInfo, ProviderInfo, UIPersistedState } from "@opencode-chat/core";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { useProviders } from "../../hooks/useProviders";
@@ -635,7 +635,7 @@ describe("useProviders", () => {
         inputHistory: ["hello"],
         soundSettings: { responseComplete: { enabled: true } },
         modelEffortByModel: { "openai/gpt": "low" },
-      };
+      } satisfies UIPersistedState;
       vi.mocked(getPersistedState).mockReturnValue(baseState);
       const { result } = renderHook(() => useProviders());
       const model = { providerID: "openai", modelID: "gpt-4" };

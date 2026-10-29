@@ -67,6 +67,117 @@ describe("ToolPartView", () => {
       const { container } = render(<ToolPartView part={part} />, { wrapper });
       expect(container.querySelector(".spinner")).toBeInTheDocument();
     });
+
+    it("native execute progress updates remain one running card and show code when expanded", () => {
+      const part = createToolPart("execute", {
+        state: {
+          status: "running",
+          title: "Executing code",
+          input: { code: 'return await search({ namespace: "firecrawl_fixture", limit: 20 })' },
+          metadata: {
+            toolCalls: [{ tool: "search", status: "running", input: { query: "fixture" } }],
+          },
+        },
+      });
+      const { container, rerender } = render(<ToolPartView part={part} />, { wrapper });
+
+      rerender(
+        <ToolPartView
+          part={{
+            ...part,
+            state: {
+              ...part.state,
+              status: "running",
+              input: { code: 'return await search({ namespace: "firecrawl_fixture", limit: 20 })' },
+              title: "Executing code",
+              metadata: {
+                toolCalls: [{ tool: "search", status: "completed", input: { query: "fixture" } }],
+              },
+            },
+          }}
+        />,
+      );
+      expect(container.querySelectorAll(".root")).toHaveLength(1);
+      expect(container.querySelector(".spinner")).toBeInTheDocument();
+
+      fireEvent.click(container.querySelector(".header")!);
+      expect(container.querySelector(".body")).toHaveTextContent("firecrawl_fixture");
+      expect(container.querySelector(".body")).toHaveTextContent("search(");
+      expect(container.querySelector(".body pre")?.textContent).toBe(
+        JSON.stringify({ code: 'return await search({ namespace: "firecrawl_fixture", limit: 20 })' }, null, 2),
+      );
+    });
+  });
+
+  it("shows native execute output as plain text and replaces it with the terminal error", () => {
+    const output = JSON.stringify({
+      sources: [
+        { url: "https://fixture.invalid/source/shared", title: "Shared synthetic source" },
+        { url: "https://fixture.invalid/source/firecrawl", title: "<script>fixture</script>" },
+        { url: "https://fixture.invalid/source/context-mode", title: "context-mode source" },
+      ],
+      failures: ["Fixture source unavailable"],
+      fetched: { fixture: "native-fetch-ok" },
+      denials: [],
+    });
+    const completed = createToolPart("execute", {
+      state: { status: "completed", title: "Code Mode", input: { code: "return results" }, output },
+    });
+    const { container, rerender } = render(<ToolPartView part={completed} />, { wrapper });
+    fireEvent.click(container.querySelector(".header")!);
+    expect(container.querySelector(".output")).toHaveTextContent("https://fixture.invalid/source/shared");
+    expect(container.querySelector(".output")).toHaveTextContent("https://fixture.invalid/source/firecrawl");
+    expect(container.querySelector(".output")).toHaveTextContent("https://fixture.invalid/source/context-mode");
+    expect(container.querySelector(".output")).toHaveTextContent("Fixture source unavailable");
+    expect(container.querySelector(".output")).toHaveTextContent("<script>fixture</script>");
+    expect(container.querySelector("script")).not.toBeInTheDocument();
+
+    rerender(
+      <ToolPartView
+        part={{
+          ...completed,
+          state: {
+            status: "error",
+            title: "Code Mode",
+            input: { code: "return results" },
+            error: "Tool execution failed.",
+          },
+        }}
+      />,
+    );
+    expect(container.querySelector(".outputError")).toHaveTextContent("Tool execution failed.");
+    expect(container.querySelector(".output")).not.toHaveTextContent("https://fixture.invalid/source/shared");
+    expect(container.querySelector(".output")).not.toHaveTextContent("<script>fixture</script>");
+    expect(container.querySelector(".spinner")).not.toBeInTheDocument();
+  });
+
+  it("formats unknown structured output as compact escaped text and preserves falsy results", () => {
+    const outputs = [{ nested: ["<script>untrusted</script>", { ok: true }] }, 0, false, null];
+    const { container, rerender } = render(
+      <ToolPartView
+        part={createToolPart("execute", {
+          state: { status: "completed", title: "Code Mode", input: {}, output: outputs[0] },
+        } as any)}
+      />,
+      { wrapper },
+    );
+    fireEvent.click(container.querySelector(".header")!);
+    expect(container.querySelector(".output")).toHaveTextContent(
+      '{"nested":["<script>untrusted</script>",{"ok":true}]}',
+    );
+    expect(container.querySelector("script")).not.toBeInTheDocument();
+
+    for (const output of outputs.slice(1)) {
+      rerender(
+        <ToolPartView
+          part={createToolPart("execute", {
+            state: { status: "completed", title: "Code Mode", input: {}, output },
+          } as any)}
+        />,
+      );
+      if (output === null) expect(container.querySelector(".output")).not.toBeInTheDocument();
+      else expect(container.querySelector(".output")).toHaveTextContent(String(output));
+    }
   });
 
   // when tool is in error state

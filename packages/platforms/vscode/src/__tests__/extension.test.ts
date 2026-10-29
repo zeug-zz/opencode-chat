@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ReasoningReviewRuntime } from "@opencode-chat/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenCodePaths, resolveRuntimeCachePaths } from "../chat-sandbox-policy";
 import { classifyConnectError } from "../connect-error";
@@ -13,6 +14,7 @@ import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-proj
 import { createClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
 import { HIDDEN_SESSION_MARKER_PREFIX, hiddenSessionRegistry } from "../vibefeld/hidden-session-registry";
 import type { ReasoningAssistStructureRecorder } from "../vibefeld/reasoning-assist-structure-recorder";
+import type { IReasoningReviewController } from "../vibefeld/reasoning-review-controller";
 import type { ReasoningAssistRestrictedReviewAdapter } from "../vibefeld/restricted-review-adapter";
 import {
   DORMANT_REASONING_REVIEW_RUNTIME,
@@ -21,6 +23,7 @@ import {
   RuntimeReportingReasoningReviewController,
 } from "../vibefeld/runtime-reporting-reasoning-review-controller";
 import { UnavailableReasoningReviewController } from "../vibefeld/unavailable-reasoning-review-controller";
+import * as vscodeMock from "./mocks/vscode";
 
 // --- モックの準備 ---
 
@@ -33,6 +36,9 @@ const mockResolveNonoBackend = vi.hoisted(() => vi.fn());
 const mockDiscoverNonoProfiles = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockNonoProfileUpdate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockAgentLaunchConfigurations: unknown[] = [];
+type MockAgentDiagnosticSink = (level: "info" | "warn" | "error", message: string) => void;
+const mockAgentDiagnosticSinks: Array<MockAgentDiagnosticSink | undefined> = [];
+const mockAgentScribeContextPluginPaths: Array<string | undefined> = [];
 let mockEffectiveConfig: Record<string, unknown> = {};
 const mockHindsightResolution = {
   packageName: "@vectorize-io/hindsight-coding-agents",
@@ -43,28 +49,58 @@ const mockHindsightResolution = {
 };
 const blockedProviderPackageRoot = path.join(os.homedir(), "keychains", "provider");
 const mockResolveHindsightPlugin = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockResolveScribeContextPlugin = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ available: true, sourcePath: "/ext/dist/scribe-context-plugin" }),
+);
 const mockGetToolIds = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockListSessions = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockDeleteSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockCreateRestrictedReviewProvider = vi.hoisted(() => vi.fn());
+const mockCreateRestrictedReviewProviderForNativeDefault = vi.hoisted(() => vi.fn());
 const mockPublishedSandboxStatuses: unknown[] = [];
+const mockPublishedReasoningRuntimes: unknown[] = [];
+const mockAgentAvailabilityUpdates: boolean[] = [];
 const mockChatViewProviderOptions: unknown[] = [];
 let mockChatViewProviderInstance:
   | {
       publishMemoryProviderStatus: ReturnType<typeof vi.fn>;
+      publishMcpPrefs: ReturnType<typeof vi.fn>;
+      publishReasoningRuntime: ReturnType<typeof vi.fn>;
       refresh: ReturnType<typeof vi.fn>;
       cancelAllReasoningAssistWork: ReturnType<typeof vi.fn>;
     }
   | undefined;
 const mockResolveMcpInventory = vi.fn(() => ({
   servers: {
-    selected: { explicitlyDisabled: false },
-    unselected: { explicitlyDisabled: false },
-    locked: { explicitlyDisabled: true },
+    selected: {
+      definition: { type: "local", command: ["fixture"] },
+      explicitlyDisabled: false,
+      transport: "stdio",
+      source: "fixture",
+    },
+    unselected: {
+      definition: { type: "local", command: ["fixture"] },
+      explicitlyDisabled: false,
+      transport: "stdio",
+      source: "fixture",
+    },
+    locked: {
+      definition: { type: "local", command: ["fixture"], disabled: true },
+      explicitlyDisabled: true,
+      transport: "stdio",
+      source: "fixture",
+    },
   },
+  locked: ["locked"],
+  qualificationGaps: [],
 }));
 const mockMcpOverlay = {
-  mcp: { selected: { enabled: true }, unselected: { enabled: false }, locked: { enabled: true } },
+  mcp: {
+    servers: {
+      selected: { type: "local", command: ["fixture"], disabled: false },
+      unselected: { type: "local", command: ["fixture"], disabled: true },
+      locked: { type: "local", command: ["fixture"], disabled: true },
+    },
+  },
 };
 const mockLoadBundledResearchResources = vi.fn().mockResolvedValue({ resources: [], diagnostics: [] });
 const mockDetectMemoryProvider = vi.hoisted(() =>
@@ -136,12 +172,23 @@ function injectedReviewController(): RuntimeReportingReasoningReviewController {
 }
 
 type InjectedChatViewOptions = {
+  agentAvailable?: boolean;
+  initialAppPaths?: { config: string; state: string; directory: string };
+  onAgentConnected?: () => void;
+  onAgentUnavailable?: () => void;
+  setChatSandboxSettings?: (settings: { mode: "inherit" | "on" | "off"; allowNetwork: boolean }) => Promise<unknown>;
   reasoningReviewController?: RuntimeReportingReasoningReviewController;
+  getReasoningReviewController?: () => IReasoningReviewController | undefined;
+  getReasoningRuntime?: () => ReasoningReviewRuntime | undefined;
+  getReasoningAssistAdapter?: () => ReasoningAssistRestrictedReviewAdapter | undefined;
   reasoningReviewPreference?: unknown;
   automaticRouting?: unknown;
   qualificationRecorder?: unknown;
   reasoningAssistAdapter?: ReasoningAssistRestrictedReviewAdapter;
   reasoningAssistStructureRecorder?: ReasoningAssistStructureRecorder;
+  reasoningAssistPluginAvailable?: boolean;
+  reasoningDiagnostics?: (event: unknown) => void;
+  reasoningDiagnosticNow?: () => number;
 };
 
 function injectedChatViewOptions(): InjectedChatViewOptions {
@@ -156,6 +203,16 @@ function reviewDelegate(controller: RuntimeReportingReasoningReviewController): 
 }
 
 const readSource = (relativePath: string): string => readFileSync(new URL(relativePath, import.meta.url), "utf8");
+
+function outputChannelText(): string {
+  return vscodeMock.outputChannels
+    .flatMap((channel) =>
+      [channel.info, channel.warn, channel.error].flatMap((logger) =>
+        logger.mock.calls.map(([message]) => String(message)),
+      ),
+    )
+    .join("\n");
+}
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -211,8 +268,10 @@ function normalizeLaunchConfiguration(configuration: unknown): unknown {
 // コンストラクタとして機能するクラスを返す必要がある。
 function createMockAgentClass() {
   return class MockOpenCodeAgent {
-    constructor(configuration: unknown) {
+    constructor(configuration: unknown, diagnosticSink?: MockAgentDiagnosticSink, scribeContextPluginPath?: string) {
       mockAgentLaunchConfigurations.push(configuration);
+      mockAgentDiagnosticSinks.push(diagnosticSink);
+      mockAgentScribeContextPluginPaths.push(scribeContextPluginPath);
     }
 
     connect = mockConnect;
@@ -220,7 +279,7 @@ function createMockAgentClass() {
     getToolIds = mockGetToolIds;
     listSessions = mockListSessions;
     deleteSession = mockDeleteSession;
-    createRestrictedReviewProvider = mockCreateRestrictedReviewProvider;
+    createRestrictedReviewProviderForNativeDefault = mockCreateRestrictedReviewProviderForNativeDefault;
     disconnect = mockDisconnect;
     stopForReconnect = mockStopForReconnect;
     updateLaunchConfiguration = mockUpdateLaunchConfiguration;
@@ -236,10 +295,13 @@ function createMockChatViewProviderClass() {
         mockChatViewProviderOptions.push(options);
         mockChatViewProviderInstance = this;
       }
+      setAgentAvailable = vi.fn((available: boolean) => mockAgentAvailabilityUpdates.push(available));
       refresh = vi.fn().mockResolvedValue(undefined);
       resolveWebviewView = vi.fn();
       publishChatSandboxStatus = vi.fn((status: unknown) => mockPublishedSandboxStatuses.push(status));
       publishMemoryProviderStatus = vi.fn();
+      publishMcpPrefs = vi.fn();
+      publishReasoningRuntime = vi.fn((runtime: unknown) => mockPublishedReasoningRuntimes.push(runtime));
       cancelAllReasoningAssistWork = vi.fn();
     },
     { viewType: "opencode-chat.chatView" },
@@ -265,13 +327,25 @@ describe("extension", () => {
     mockDiscoverNonoProfiles.mockResolvedValue([]);
     mockNonoProfileUpdate.mockClear();
     mockAgentLaunchConfigurations.length = 0;
+    mockAgentDiagnosticSinks.length = 0;
+    mockAgentScribeContextPluginPaths.length = 0;
+    vscodeMock.outputChannels.length = 0;
     mockEffectiveConfig = {};
     mockResolveHindsightPlugin.mockResolvedValue(undefined);
+    mockResolveScribeContextPlugin.mockResolvedValue({
+      available: true,
+      sourcePath: "/ext/dist/scribe-context-plugin",
+    });
     mockGetToolIds.mockResolvedValue([]);
     mockListSessions.mockResolvedValue([]);
     mockDeleteSession.mockResolvedValue(undefined);
-    mockCreateRestrictedReviewProvider.mockReset();
+    mockCreateRestrictedReviewProviderForNativeDefault.mockReset().mockResolvedValue({
+      ok: false,
+      reason: "provider-unavailable",
+    });
     mockPublishedSandboxStatuses.length = 0;
+    mockPublishedReasoningRuntimes.length = 0;
+    mockAgentAvailabilityUpdates.length = 0;
     mockChatViewProviderOptions.length = 0;
     mockChatViewProviderInstance = undefined;
     adversarialControllerImported = false;
@@ -296,7 +370,7 @@ describe("extension", () => {
       return { dispose: configurationListenerDispose } as never;
     });
     vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-      (section: string) =>
+      (section?: string) =>
         ({
           get: vi.fn((key: string) => {
             if (section === "opencode-chat" && key === "chatSandbox.mode") return "inherit";
@@ -419,19 +493,23 @@ describe("extension", () => {
       const actual = await vi.importActual<typeof import("../vibefeld/current-vibefeld-claim-projection")>(
         "../vibefeld/current-vibefeld-claim-projection",
       );
-      const createSupportedSeam = () =>
-        createClaimProjectionSeam({
-          capability: { supported: true, operation: "claim_projection" },
-          project: () => ({ status: "structurally_checked" as const }),
-        });
+      const createSupportedSeam = (options?: Parameters<typeof actual.createCurrentVibefeldClaimProjectionSeam>[1]) =>
+        createClaimProjectionSeam(
+          {
+            capability: { supported: true, operation: "claim_projection" },
+            project: () => ({ status: "structurally_checked" as const }),
+          },
+          options,
+        );
       return {
         ...actual,
         createCurrentVibefeldClaimProjectionSeam: (
           runtime: Parameters<typeof actual.createCurrentVibefeldClaimProjectionSeam>[0],
+          options?: Parameters<typeof actual.createCurrentVibefeldClaimProjectionSeam>[1],
         ) =>
           mockSupportedClaimCapability
-            ? createSupportedSeam()
-            : actual.createCurrentVibefeldClaimProjectionSeam(runtime),
+            ? createSupportedSeam(options)
+            : actual.createCurrentVibefeldClaimProjectionSeam(runtime, options),
       };
     });
     // Production runtime resolution reads real host state; the default suite
@@ -441,6 +519,9 @@ describe("extension", () => {
     }));
     vi.doMock("../bundled-research-resources", () => ({
       loadBundledResearchResources: mockLoadBundledResearchResources,
+    }));
+    vi.doMock("../scribe-context-plugin", () => ({
+      resolveBundledScribeContextPlugin: mockResolveScribeContextPlugin,
     }));
     if (mockUpdaterUx) {
       vi.doMock("../private-release-updater", async () => ({
@@ -518,6 +599,36 @@ describe("extension", () => {
       });
     });
 
+    it("adds the verified bundled plugin only to Scribe's private launch overlay", async () => {
+      mockEffectiveConfig = { plugins: ["inherited-plugin"] };
+      const ext = await importExtension();
+      await ext.activate({ extensionPath: "/ext", extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(mockResolveScribeContextPlugin).toHaveBeenCalledWith("/ext");
+      expect(latestLaunchConfiguration()).toMatchObject({
+        pluginSources: ["inherited-plugin", { package: "/ext/dist/scribe-context-plugin" }],
+      });
+      expect(injectedChatViewOptions()).toMatchObject({ reasoningAssistPluginAvailable: true });
+      expect(mockAgentScribeContextPluginPaths.at(-1)).toBe("/ext/dist/scribe-context-plugin");
+      expect(mockConnect).toHaveBeenCalledOnce();
+      expect(mockNonoProfileUpdate).not.toHaveBeenCalled();
+    });
+
+    it("keeps Chat available and omits the plugin overlay when verification fails", async () => {
+      mockEffectiveConfig = { plugins: ["inherited-plugin"] };
+      mockResolveScribeContextPlugin.mockResolvedValue({
+        available: false,
+        reason: "bundled-plugin-unavailable",
+      });
+      const ext = await importExtension();
+      await ext.activate({ extensionPath: "/ext", extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(latestLaunchConfiguration()).toMatchObject({ pluginSources: ["inherited-plugin"] });
+      expect(injectedChatViewOptions()).toMatchObject({ reasoningAssistPluginAvailable: false });
+      expect(mockAgentScribeContextPluginPaths.at(-1)).toBeUndefined();
+      expect(mockConnect).toHaveBeenCalledOnce();
+    });
+
     it("offers the native default and custom profiles without blocking activation", async () => {
       mockDiscoverNonoProfiles.mockResolvedValue(["opencode-local"]);
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
@@ -525,7 +636,7 @@ describe("extension", () => {
         value: "opencode-local",
       } as never);
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -611,6 +722,118 @@ describe("extension", () => {
       expect(Object.keys(wiring).sort()).not.toContain("automaticRouting");
     });
 
+    it("logs bounded backend/profile selection for initial and settings launches", async () => {
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      let allowNetwork = true;
+      let selectedProfile = "opencode-local";
+      const hostileProfile = "secret-profile/../apiKey=do-not-log";
+      mockResolveNonoBackend
+        .mockResolvedValueOnce({
+          backend: "nono",
+          executablePath: "/private/path/to/nono",
+          profile: "opencode-local",
+          diagnostic: "resolved-and-preflighted",
+        })
+        .mockResolvedValueOnce({ backend: "vscode", diagnostic: "preflight-failed" });
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section?: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return allowNetwork;
+              if (section === "opencode-chat" && key === "nono.profile") return selectedProfile;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+          }) as never,
+      );
+
+      try {
+        const ext = await importExtension();
+        await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+        selectedProfile = hostileProfile;
+        allowNetwork = false;
+        configurationListener!({
+          affectsConfiguration: (section: string) => section === "opencode-chat.chatSandbox.allowNetwork",
+        });
+        await vi.waitFor(() => expect(outputChannelText()).toContain("transition=settings stage=ready"));
+
+        const logs = outputChannelText();
+        expect(vscodeMock.createOutputChannel).toHaveBeenCalledWith("OpenCode Scribe", { log: true });
+        expect(logs).toContain(
+          "transition=initial stage=ready backend=nono preflight=resolved-and-preflighted profile=opencode-local",
+        );
+        expect(logs).toContain(
+          "transition=settings stage=ready backend=vscode preflight=preflight-failed profile=redacted",
+        );
+        expect(logs).toContain("binary=");
+        expect(logs).toContain("workspace=location-bound containment-requested=nono-selected");
+        expect(logs).toContain("containment-requested=vscode-selected");
+        expect(logs).not.toContain(hostileProfile);
+        expect(logs).not.toContain("do-not-log");
+        expect(logs).not.toContain("/workspace/project");
+      } finally {
+        info.mockRestore();
+        error.mockRestore();
+      }
+    });
+
+    it("logs a fixed startup failure without copying a hostile connect error", async () => {
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      mockConnect.mockRejectedValueOnce(new Error("authorization=host-extension-secret"));
+
+      try {
+        const ext = await importExtension();
+        await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+        const logs = outputChannelText();
+        expect(logs).toContain("stage=started backend=sdk preflight=disabled");
+        expect(logs).toContain("stage=failed backend=sdk preflight=disabled");
+        expect(logs).toContain("failure=connect-failed");
+        expect(logs).not.toContain("authorization=host-extension-secret");
+        expect(vscodeMock.outputChannels.at(-1)?.error).toHaveBeenCalled();
+      } finally {
+        info.mockRestore();
+        error.mockRestore();
+      }
+    });
+
+    it("routes adapter diagnostics to the host log channel and ignores late or throwing writes", async () => {
+      const subscriptions: Array<{ dispose?: () => void }> = [];
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions } as never);
+
+      const channel = vscodeMock.outputChannels.at(-1);
+      const sink = mockAgentDiagnosticSinks.at(-1);
+      if (!channel || !sink) throw new Error("host diagnostics were not wired");
+      expect(channel.name).toBe("OpenCode Scribe");
+      sink("info", "[opencode-chat] prompt diagnostic attempt=1 stage=preflight outcome=started");
+      sink("warn", "[opencode-chat] plugin activation state=retry attempt=1/3 delay-ms=250");
+      sink("error", "[opencode-chat] plugin activation state=exhausted attempts=3 bound-ms=18000");
+      expect(channel.info).toHaveBeenCalledWith(
+        "[opencode-chat] prompt diagnostic attempt=1 stage=preflight outcome=started",
+      );
+      expect(channel.warn).toHaveBeenCalledWith(
+        "[opencode-chat] plugin activation state=retry attempt=1/3 delay-ms=250",
+      );
+      expect(channel.error).toHaveBeenCalledWith(
+        "[opencode-chat] plugin activation state=exhausted attempts=3 bound-ms=18000",
+      );
+
+      channel.info.mockImplementationOnce(() => {
+        throw new Error("logging sink failure");
+      });
+      expect(() => sink("info", "fixed follow-up")).not.toThrow();
+      await ext.deactivate();
+      sink("error", "late disposed write");
+      expect(channel.error).not.toHaveBeenLastCalledWith("late disposed write");
+      expect(channel.dispose).toHaveBeenCalledTimes(1);
+    });
+
     it("preserves a resolved nono backend through activation and reconnect", async () => {
       mockResolveNonoBackend.mockResolvedValue({
         backend: "nono",
@@ -620,7 +843,7 @@ describe("extension", () => {
       });
       let allowNetwork = true;
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -636,11 +859,17 @@ describe("extension", () => {
       const ext = await importExtension();
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
 
+      const expectedHostPaths = (() => {
+        const paths = resolveOpenCodePaths();
+        return { config: paths.config, state: paths.state };
+      })();
       expect(latestLaunchConfiguration()).toMatchObject({
         backend: "nono",
         nono: { executablePath: "/usr/local/bin/nono", profile: "opencode-local" },
         sandbox: { enabled: true, mode: "on" },
+        hostPaths: expectedHostPaths,
       });
+      expect(latestLaunchConfiguration()).not.toHaveProperty("sandbox.filesystemPolicy.hostPaths");
 
       allowNetwork = false;
       configurationListener!({
@@ -661,6 +890,10 @@ describe("extension", () => {
               (configuration as { nono?: unknown }).nono !== undefined),
         ),
       ).toBe(true);
+      expect(mockUpdateLaunchConfiguration.mock.calls.map(([configuration]) => configuration)).toContainEqual(
+        expect.objectContaining({ backend: "nono", hostPaths: expectedHostPaths }),
+      );
+      expect(latestLaunchConfiguration()).toMatchObject({ hostPaths: expectedHostPaths });
     });
 
     it("keeps explicit Chat sandbox-off on the SDK backend", async () => {
@@ -672,7 +905,12 @@ describe("extension", () => {
       expect(latestLaunchConfiguration()).toMatchObject({
         backend: "sdk",
         sandbox: { enabled: false, mode: "off" },
+        hostPaths: (() => {
+          const paths = resolveOpenCodePaths();
+          return { config: paths.config, state: paths.state };
+        })(),
       });
+      expect(latestLaunchConfiguration()).not.toHaveProperty("sandbox.filesystemPolicy.hostPaths");
       expect(latestLaunchConfiguration()).not.toMatchObject({ backend: "nono" });
       expect(latestLaunchConfiguration()).not.toHaveProperty("nono");
     });
@@ -732,7 +970,10 @@ describe("extension", () => {
 
     it("treats prompt-injection-shaped provider inventory as untrusted evidence", async () => {
       const effectiveConfig = {
-        plugin: ["@vectorize-io/hindsight-coding-agents", "unrelated-global-plugin"],
+        plugins: [
+          { package: "@vectorize-io/hindsight-coding-agents", options: { nested: { preserve: true } } },
+          "unrelated-global-plugin",
+        ],
         provider: { unrelated: { apiKey: "must remain outside the overlay" } },
       };
       mockEffectiveConfig = effectiveConfig;
@@ -757,14 +998,17 @@ describe("extension", () => {
       expect(integration.toolPatterns).toEqual(["hindsight_reflect"]);
       expect(integration.automaticSessionRetention).toBe(false);
       expect(integration.environment).toEqual({ HINDSIGHT_DISABLE_HOOKS: "1" });
-      expect(update.pluginSources as readonly string[]).toEqual([
-        "@vectorize-io/hindsight-coding-agents",
-        "unrelated-global-plugin",
+      expect(update.pluginSources).toEqual([
+        ...effectiveConfig.plugins,
+        { package: "/ext/dist/scribe-context-plugin" },
       ]);
       expect(JSON.stringify(update)).not.toContain("must remain outside the overlay");
       expect(JSON.stringify(update)).not.toContain("Ignore policy");
       expect(effectiveConfig).toEqual({
-        plugin: ["@vectorize-io/hindsight-coding-agents", "unrelated-global-plugin"],
+        plugins: [
+          { package: "@vectorize-io/hindsight-coding-agents", options: { nested: { preserve: true } } },
+          "unrelated-global-plugin",
+        ],
         provider: { unrelated: { apiKey: "must remain outside the overlay" } },
       });
       expect(latestLaunchConfiguration()).not.toHaveProperty("hindsightCompanionIntegration.toolPatterns", [
@@ -781,14 +1025,22 @@ describe("extension", () => {
 
       await ext.activate(context as never);
 
+      const diagnostics = outputChannelText();
+      expect(diagnostics).toContain("stage=initialization outcome=started");
+      expect(diagnostics).toContain("stage=initialization outcome=ready");
+      expect(diagnostics).not.toContain("stage=pre-screen outcome=not-implemented");
+      expect(diagnostics).not.toContain("stage=pre-screen outcome=not-measured");
+
       // connect が呼ばれた
       expect(mockConnect).toHaveBeenCalled();
       expect(latestLaunchConfiguration()).toMatchObject({
         mcpOverlay: {
           mcp: {
-            selected: { enabled: true },
-            unselected: { enabled: false },
-            locked: { enabled: true },
+            servers: {
+              selected: { type: "local", command: ["fixture"], disabled: false },
+              unselected: { type: "local", command: ["fixture"], disabled: true },
+              locked: { type: "local", command: ["fixture"], disabled: true },
+            },
           },
         },
       });
@@ -839,7 +1091,7 @@ describe("extension", () => {
       mockResolveHindsightPlugin.mockResolvedValue(mockHindsightResolution);
       const update = vi.fn();
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "inherit";
@@ -903,7 +1155,7 @@ describe("extension", () => {
         packageRoot: blockedProviderPackageRoot,
       });
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -973,7 +1225,7 @@ describe("extension", () => {
       mockResolveHindsightPlugin.mockResolvedValue(mockHindsightResolution);
       mockGetToolIds.mockRejectedValueOnce(new Error("provider startup failed"));
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -1055,7 +1307,7 @@ describe("extension", () => {
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
 
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -1074,6 +1326,281 @@ describe("extension", () => {
         expect(mockChatViewProviderInstance?.publishMemoryProviderStatus).toHaveBeenCalledWith(refreshedStatus),
       );
       expect(mockChatViewProviderInstance?.refresh).toHaveBeenCalled();
+      expect(mockChatViewProviderInstance?.publishMcpPrefs).toHaveBeenCalled();
+    });
+
+    it("bounds a stalled Hindsight inventory probe and keeps the requested backend and workspace", async () => {
+      mockEffectiveConfig = { plugin: ["@vectorize-io/hindsight-coding-agents"] };
+      mockResolveHindsightPlugin.mockResolvedValue(mockHindsightResolution);
+      const toolIds = [
+        { id: "hindsight_search_knowledge_pages" },
+        { id: "hindsight_list_knowledge_pages" },
+        { id: "hindsight_read_knowledge_page" },
+      ];
+      mockGetToolIds.mockResolvedValue(toolIds);
+      mockDetectMemoryProvider.mockResolvedValue({
+        id: "hindsight",
+        displayName: "Hindsight",
+        state: "available",
+        capabilities: { retain: false, recall: true, reflect: false },
+      });
+      mockResolveNonoBackend.mockImplementation((enabled: boolean) =>
+        Promise.resolve(
+          enabled
+            ? {
+                backend: "nono",
+                executablePath: "/fixture/nono",
+                profile: "opencode",
+                diagnostic: "resolved-and-preflighted",
+              }
+            : { backend: "sdk", diagnostic: "disabled" },
+        ),
+      );
+      let mode: "off" | "on" = "off";
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section?: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+            update: mockNonoProfileUpdate,
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      const inventory = deferred<Array<{ id: string }>>();
+      mockGetToolIds.mockReturnValueOnce(inventory.promise);
+      mode = "on";
+      const setSettings = (
+        mockChatViewProviderOptions.at(-1) as {
+          setChatSandboxSettings: (settings: { mode: "on"; allowNetwork: boolean }) => Promise<unknown>;
+        }
+      ).setChatSandboxSettings;
+      const update = setSettings({ mode: "on", allowNetwork: true });
+      let settled = false;
+      void update.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      vi.useFakeTimers();
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mockGetToolIds).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(settled).toBe(true);
+        await expect(update).resolves.toMatchObject({ enabled: true, applying: false, mode: "on" });
+      } finally {
+        vi.useRealTimers();
+        inventory.resolve([]);
+        await update.catch(() => undefined);
+      }
+
+      expect(mockConnect).toHaveBeenCalledTimes(4);
+      const transitionConfigurations = mockUpdateLaunchConfiguration.mock.calls.map(
+        ([configuration]) => configuration as Record<string, unknown>,
+      );
+      expect(transitionConfigurations).toHaveLength(3);
+      const reconnectConfigurations = transitionConfigurations.slice(-2);
+      expect(reconnectConfigurations.every((configuration) => configuration.backend === "nono")).toBe(true);
+      expect(
+        reconnectConfigurations.every((configuration) => configuration.workspacePath === "/workspace/project"),
+      ).toBe(true);
+      expect(reconnectConfigurations.at(-1)).not.toHaveProperty("hindsightCompanionIntegration");
+      expect(mockChatViewProviderInstance?.publishMemoryProviderStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "hindsight",
+          state: "error",
+          capabilities: { retain: false, recall: false, reflect: false },
+        }),
+      );
+      expect(mockPublishedSandboxStatuses.at(-1)).toMatchObject({ enabled: true, applying: false, mode: "on" });
+    });
+
+    it("keeps a Hindsight inventory probe alive until the adapter activation bound", async () => {
+      mockEffectiveConfig = { plugin: ["@vectorize-io/hindsight-coding-agents"] };
+      mockResolveHindsightPlugin.mockResolvedValue(mockHindsightResolution);
+      const toolIds = [
+        { id: "hindsight_search_knowledge_pages" },
+        { id: "hindsight_list_knowledge_pages" },
+        { id: "hindsight_read_knowledge_page" },
+        { id: "hindsight_reflect" },
+        { id: "hindsight_ingest_document" },
+      ];
+      mockGetToolIds.mockResolvedValue(toolIds);
+      mockDetectMemoryProvider.mockResolvedValue({
+        id: "hindsight",
+        displayName: "Hindsight",
+        state: "available",
+        capabilities: { retain: false, recall: true, reflect: true },
+      });
+      mockResolveNonoBackend.mockImplementation((enabled: boolean) =>
+        Promise.resolve(
+          enabled
+            ? {
+                backend: "nono",
+                executablePath: "/fixture/nono",
+                profile: "opencode",
+                diagnostic: "resolved-and-preflighted",
+              }
+            : { backend: "sdk", diagnostic: "disabled" },
+        ),
+      );
+      let mode: "off" | "on" = "off";
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section?: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+            update: mockNonoProfileUpdate,
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      const inventory = deferred<Array<{ id: string }>>();
+      mockGetToolIds.mockReturnValueOnce(inventory.promise);
+      mode = "on";
+      const setSettings = (
+        mockChatViewProviderOptions.at(-1) as {
+          setChatSandboxSettings: (settings: { mode: "on"; allowNetwork: boolean }) => Promise<unknown>;
+        }
+      ).setChatSandboxSettings;
+      const update = setSettings({ mode: "on", allowNetwork: true });
+      let settled = false;
+      void update.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      vi.useFakeTimers();
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mockGetToolIds).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(settled).toBe(false);
+        expect(mockStopForReconnect).toHaveBeenCalledTimes(2);
+        expect(mockConnect).toHaveBeenCalledTimes(3);
+        expect(mockUpdateLaunchConfiguration).toHaveBeenCalledTimes(2);
+        inventory.resolve(toolIds);
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(update).resolves.toMatchObject({ enabled: true, applying: false, mode: "on" });
+      } finally {
+        vi.useRealTimers();
+        inventory.resolve([]);
+        await update.catch(() => undefined);
+      }
+
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      expect(mockStopForReconnect).toHaveBeenCalledTimes(2);
+      expect(mockUpdateLaunchConfiguration).toHaveBeenCalledTimes(2);
+      const successfulConfiguration = mockUpdateLaunchConfiguration.mock.calls.at(-1)?.[0] as {
+        backend?: string;
+        workspacePath?: string;
+        hindsightCompanionIntegration?: { toolPatterns?: readonly string[] };
+      };
+      expect(successfulConfiguration).toMatchObject({
+        backend: "nono",
+        workspacePath: "/workspace/project",
+        hindsightCompanionIntegration: {
+          toolPatterns: [
+            "hindsight_search_knowledge_pages",
+            "hindsight_list_knowledge_pages",
+            "hindsight_read_knowledge_page",
+            "hindsight_reflect",
+          ],
+        },
+      });
+      expect(successfulConfiguration.hindsightCompanionIntegration?.toolPatterns).not.toContain(
+        "hindsight_ingest_document",
+      );
+      expect(mockChatViewProviderInstance?.publishMemoryProviderStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: "hindsight",
+          state: "available",
+          capabilities: { retain: false, recall: true, reflect: true },
+        }),
+      );
+    });
+
+    it("does not wait for a stalled post-reconnect view refresh to finish a successful launch", async () => {
+      let mode: "off" | "on" = "off";
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section?: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+            update: mockNonoProfileUpdate,
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      const refresh = deferred<void>();
+      mockChatViewProviderInstance?.refresh.mockReturnValueOnce(refresh.promise);
+      mode = "on";
+      const setSettings = (
+        mockChatViewProviderOptions.at(-1) as {
+          setChatSandboxSettings: (settings: { mode: "on"; allowNetwork: boolean }) => Promise<unknown>;
+        }
+      ).setChatSandboxSettings;
+      const update = setSettings({ mode: "on", allowNetwork: true });
+      let settled = false;
+      void update.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      try {
+        await vi.waitFor(() => expect(mockChatViewProviderInstance?.refresh).toHaveBeenCalledTimes(1));
+        await Promise.resolve();
+        const settledBeforeRefresh = settled;
+        refresh.resolve();
+        await update;
+
+        expect(settledBeforeRefresh).toBe(true);
+        expect(mockPublishedSandboxStatuses.at(-1)).toMatchObject({ enabled: true, applying: false, mode: "on" });
+      } finally {
+        refresh.resolve();
+        await update.catch(() => undefined);
+      }
+    });
+
+    it("exposes the inventory locked list to the provider", async () => {
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+      const options = mockChatViewProviderOptions.at(-1) as { chatMcpLocked: () => readonly string[] };
+      expect(options.chatMcpLocked()).toEqual(["locked"]);
     });
 
     it("retains the verified integration across a blocked sandbox transition", async () => {
@@ -1094,7 +1621,7 @@ describe("extension", () => {
       });
       let mode: "on" | "off" = "off";
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
@@ -1188,7 +1715,7 @@ describe("extension", () => {
       await ext.activate({
         extensionPath: "/installed-extension",
         extensionUri: { fsPath: "/wrong-workspace" },
-        subscriptions: [],
+        subscriptions: [] as import("vscode").Disposable[],
       } as never);
 
       expect(mockLoadBundledResearchResources).toHaveBeenCalledWith("/installed-extension/dist/skills-commands");
@@ -1218,16 +1745,21 @@ describe("extension", () => {
     });
 
     it("passes configured plugin sources without copying unrelated OpenCode configuration", async () => {
+      const configuredPluginSources = [
+        "npm-plugin",
+        "/workspace/plugins/local-plugin.ts",
+        "file:///workspace/plugins/file-plugin.js",
+        { package: "tuple-plugin", options: { secret: "opaque-option" } },
+      ];
       mockEffectiveConfig = {
-        plugin: [
-          "npm-plugin",
-          "/workspace/plugins/local-plugin.ts",
-          "file:///workspace/plugins/file-plugin.js",
-          ["tuple-plugin", { secret: "opaque-option" }],
-        ],
+        plugins: configuredPluginSources,
         provider: { secret: "must-not-copy" },
         model: "must-not-copy",
       };
+      mockResolveScribeContextPlugin.mockResolvedValueOnce({
+        available: true,
+        sourcePath: "/installed-extension/dist/scribe-context-plugin",
+      });
       const ext = await importExtension();
       await ext.activate({
         extensionPath: "/installed-extension",
@@ -1236,7 +1768,7 @@ describe("extension", () => {
       } as never);
 
       expect(latestLaunchConfiguration()).toMatchObject({
-        pluginSources: mockEffectiveConfig.plugin,
+        pluginSources: [...configuredPluginSources, { package: "/installed-extension/dist/scribe-context-plugin" }],
       });
       expect(latestLaunchConfiguration()).not.toHaveProperty("provider");
       expect(latestLaunchConfiguration()).not.toHaveProperty("model");
@@ -1271,7 +1803,7 @@ describe("extension", () => {
     it("keeps requested sandboxing unsupported and unsandboxed without an enforcement claim", async () => {
       mockSandboxSupported.mockReturnValue(false);
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -1296,7 +1828,8 @@ describe("extension", () => {
 
     it("should change cwd to workspace folder and restore it", async () => {
       const ext = await importExtension();
-      const context = { extensionUri: { fsPath: "/ext" }, subscriptions: [] };
+      const subscriptions: import("vscode").Disposable[] = [];
+      const context = { extensionUri: { fsPath: "/ext" }, subscriptions };
 
       await ext.activate(context as never);
 
@@ -1309,7 +1842,7 @@ describe("extension", () => {
 
     it("should not change cwd for sandboxed activation and pass the workspace to the launch configuration", async () => {
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -1352,7 +1885,7 @@ describe("extension", () => {
 
     it("should resolve inherited native sandbox state before connecting", async () => {
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "inherit";
@@ -1379,7 +1912,7 @@ describe("extension", () => {
 
     it("should let an explicit Chat off mode override native sandbox state", async () => {
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "off";
@@ -1407,7 +1940,7 @@ describe("extension", () => {
     it("should register a workspace-scoped listener and apply one Chat transition for duplicate events", async () => {
       let mode: "inherit" | "on" | "off" = "inherit";
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
@@ -1419,7 +1952,8 @@ describe("extension", () => {
           }) as never,
       );
       const ext = await importExtension();
-      const context = { extensionUri: { fsPath: "/ext" }, subscriptions: [] };
+      const subscriptions: import("vscode").Disposable[] = [];
+      const context = { extensionUri: { fsPath: "/ext" }, subscriptions };
       await ext.activate(context as never);
 
       expect(configurationListener).toBeDefined();
@@ -1439,9 +1973,11 @@ describe("extension", () => {
         expect.objectContaining({
           mcpOverlay: {
             mcp: {
-              selected: { enabled: true },
-              unselected: { enabled: false },
-              locked: { enabled: true },
+              servers: {
+                selected: { type: "local", command: ["fixture"], disabled: false },
+                unselected: { type: "local", command: ["fixture"], disabled: true },
+                locked: { type: "local", command: ["fixture"], disabled: true },
+              },
             },
           },
         }),
@@ -1466,7 +2002,7 @@ describe("extension", () => {
       let stopNumber = 0;
 
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
@@ -1574,7 +2110,7 @@ describe("extension", () => {
       let mode: "inherit" | "on" | "off" = "inherit";
       let nativeEnabled: "on" | "off" = "off";
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return mode;
@@ -1611,7 +2147,7 @@ describe("extension", () => {
         affectsConfiguration: vi.fn((section: string) => section === "opencode-chat.chatSandbox.mode"),
       };
       vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
-        (section: string) =>
+        (section?: string) =>
           ({
             get: vi.fn((key: string) => {
               if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
@@ -1626,9 +2162,56 @@ describe("extension", () => {
       configurationListener!(event);
       await vi.waitFor(() =>
         expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-          expect.stringContaining("sandbox runtime unavailable"),
+          expect.stringContaining("could not connect to its private OpenCode server"),
         ),
       );
+    });
+
+    it("keeps failed reconnects unavailable and clears the failure after the same-backend reconnect succeeds", async () => {
+      const rootFailure =
+        "Private OpenCode V2 startup failed (version-mismatch); child output and credentials were discarded. Scribe requires stable OpenCode V2 >=2.1.3 and <3.0.0; update OpenCode or Scribe.";
+      mockConnect
+        .mockRejectedValueOnce(new Error(rootFailure))
+        .mockRejectedValueOnce(new Error("authorization=reconnect-secret"))
+        .mockResolvedValueOnce(undefined);
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section?: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return "on";
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+            update: mockNonoProfileUpdate,
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+      const options = injectedChatViewOptions();
+      const reconnect = options.setChatSandboxSettings;
+      if (!reconnect) throw new Error("sandbox reconnect operation was not injected");
+      expect(options.agentAvailable).toBe(false);
+      expect(mockPublishedSandboxStatuses.at(-1)).toMatchObject({ enabled: true, mode: "on", error: rootFailure });
+
+      await expect(reconnect({ mode: "on", allowNetwork: true })).rejects.toThrow();
+      expect(mockAgentAvailabilityUpdates.at(-1)).toBe(false);
+      const failedStatus = mockPublishedSandboxStatuses.at(-1) as { enabled?: boolean; error?: string } | undefined;
+      expect(failedStatus?.enabled).toBe(true);
+      expect(failedStatus?.error).toContain("could not connect to its private OpenCode server");
+      expect(failedStatus?.error).not.toContain("reconnect-secret");
+
+      await reconnect({ mode: "on", allowNetwork: true });
+      expect(mockAgentAvailabilityUpdates.at(-1)).toBe(true);
+      expect((mockPublishedSandboxStatuses.at(-1) as { error?: string } | undefined)?.error).toBeUndefined();
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      const launchConfigurations = [
+        ...mockAgentLaunchConfigurations,
+        ...mockUpdateLaunchConfiguration.mock.calls.map(([configuration]) => configuration),
+      ] as Array<{ backend?: string }>;
+      expect(launchConfigurations.every(({ backend }) => backend === "vscode")).toBe(true);
     });
   });
 
@@ -1949,6 +2532,11 @@ describe("extension", () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
           expect.stringContaining("raw preflight detail"),
         );
+        const diagnostics = outputChannelText();
+        expect(diagnostics).toContain("stage=runtime outcome=readiness-rejected elapsedMs=");
+        expect(diagnostics).toContain("stage=adapter outcome=readiness-rejected");
+        expect(diagnostics).not.toContain("raw preflight detail");
+        expect(diagnostics).not.toContain("/private/review-root");
       });
 
       it("preflights at most once per activation across repeated view resolves", async () => {
@@ -2144,12 +2732,7 @@ describe("extension", () => {
         expect(extensionSource).not.toMatch(/AfOutputParsers|af-parser-mode|af-live-output/u);
       });
 
-      describe("reasoning-assist dependency selection", () => {
-        afterEach(() => {
-          vi.doUnmock("../vibefeld/adversarial-review-reasoning-review-controller");
-        });
-
-        /** Minimal restricted provider whose readiness gate the test controls. */
+      describe("reconnect-safe restricted-review holder", () => {
         const readyProvider = () => ({
           createSession: vi.fn(async () => ({ ok: true as const, sessionId: "child" })),
           promptStage: vi.fn(),
@@ -2165,128 +2748,255 @@ describe("extension", () => {
           invalidate: vi.fn(),
         });
 
-        const injectedAssistOptions = () => injectedChatViewOptions();
+        const currentRuntime = () => injectedChatViewOptions().getReasoningRuntime?.();
+        const currentAdapter = () => injectedChatViewOptions().getReasoningAssistAdapter?.();
+        const currentReviewController = () => injectedChatViewOptions().getReasoningReviewController?.();
 
-        it("injects both assist dependencies beside the claim controller for a ready claim runtime", async () => {
-          // The selection attempt imports the assist modules even when the
-          // claim path selects the controller; keep the real module importable.
-          vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => ({
-            AdversarialReviewReasoningReviewController,
+        it("resolves native default after connect and binds only when AF and provider readiness pass", async () => {
+          mockSupportedClaimCapability = true;
+          mockEffectiveConfig = {};
+          const provider = readyProvider();
+          mockCreateRestrictedReviewProviderForNativeDefault.mockResolvedValue({ ok: true, provider });
+          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+          mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
+
+          await activateWithComposition();
+          await vi.waitFor(() => expect(currentAdapter()).toMatchObject({ supportedStages: ["architect", "critic"] }));
+
+          expect(mockCreateRestrictedReviewProviderForNativeDefault).toHaveBeenCalledTimes(1);
+          expect(mockCreateRestrictedReviewProviderForNativeDefault).toHaveBeenCalledWith(
+            expect.objectContaining({ observe: expect.any(Function), now: expect.any(Function) }),
+          );
+          expect(mockEffectiveConfig).not.toHaveProperty("model");
+          expect(mockAgentLaunchConfigurations.at(-1)).toMatchObject({
+            restrictedReview: { modelResolution: "native-default" },
+          });
+          expect(
+            (mockAgentLaunchConfigurations.at(-1) as { restrictedReview?: Record<string, unknown> }).restrictedReview,
+          ).not.toHaveProperty("model");
+          expect(currentRuntime()).toEqual({ state: "available" });
+          expect(currentReviewController()?.constructor.name).toBe("ComposedReasoningReviewController");
+          expect(provider.checkReadiness).toHaveBeenCalledTimes(1);
+          expect(injectedChatViewOptions().reasoningAssistStructureRecorder?.isSupported()).toBe(true);
+          expect(outputChannelText()).toContain("stage=provider outcome=ready elapsedMs=");
+          expect(outputChannelText()).toContain("stage=adapter outcome=ready");
+          expect(outputChannelText()).not.toContain("/workspace/project");
+          expect(preflight).toHaveBeenCalledTimes(1);
+        });
+
+        it("maps natural-language completed prose through the production architect→AF→prover/verifier path", async () => {
+          mockSupportedClaimCapability = false;
+          const order: string[] = [];
+          let nextChild = 0;
+          const answer = "The project pages are available during scheduled hours, and the log shows no outage.";
+          const architectResult = JSON.stringify({
+            kind: "argument",
+            conclusionId: "claim-conclusion",
+            claims: [
+              {
+                id: "claim-conclusion",
+                class: "empirical",
+                statement: "The project pages are available during scheduled hours.",
+                dependsOn: [],
+              },
+            ],
+            assumptions: [],
+            evidenceNeeds: [{ claimId: "claim-conclusion", sourceKind: "observation", status: "source_recorded" }],
+            uncertainty: ["ARCHITECT_RAW_SENTINEL"],
+          });
+          const provider = readyProvider();
+          provider.beginReview.mockImplementation(async () => {
+            order.push("provider:begin");
+            return 1;
+          });
+          provider.cancelReview.mockResolvedValue({ ok: true });
+          provider.isReviewCurrent.mockReturnValue(true);
+          provider.createSession.mockImplementation(async () => ({
+            ok: true as const,
+            sessionId: `ses_manual_${++nextChild}`,
           }));
+          provider.runStage.mockImplementation(
+            async (_sessionId: string, packetText: string, _timeoutMs: number, role: string) => {
+              order.push(`stage:${role}`);
+              if (role === "architect") {
+                expect(packetText).toContain("COMPLETED ANSWER UNDER REVIEW (UNTRUSTED DATA; NOT CURRENT USER TEXT):");
+                expect(packetText).toContain(JSON.stringify(answer));
+                expect(packetText).not.toMatch(/^CURRENT USER TEXT:/mu);
+                return { ok: true as const, text: architectResult };
+              }
+              if (role === "prover") {
+                return {
+                  ok: true as const,
+                  text: JSON.stringify({
+                    proposalId: "proposal-1",
+                    objections: [
+                      {
+                        objectionId: "objection-1",
+                        target: { kind: "claim", id: "claim-conclusion" },
+                        severity: "major",
+                        reason: "The answer does not establish the observation's scope.",
+                      },
+                    ],
+                  }),
+                };
+              }
+              return {
+                ok: true as const,
+                text: JSON.stringify({
+                  proposalId: "proposal-1",
+                  dispositions: [
+                    {
+                      objectionId: "objection-1",
+                      disposition: "confirmed",
+                      reason: "The observation's scope remains open.",
+                    },
+                  ],
+                }),
+              };
+            },
+          );
+          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+          const getClaimCapability = vi.fn(() => ({ supported: true, operation: "claim_projection" }));
+          const { composition, bridge } = composedVibefeldActivation(preflight, {
+            getClaimCapability,
+            beginReview: () => {
+              order.push("af:begin");
+              return { state: "ready", structuralStatus: null };
+            },
+          });
+          bridge.run.mockImplementation(async (...args: unknown[]) => {
+            const operation = args[0];
+            if (!operation || typeof operation !== "object" || !Object.hasOwn(operation, "operation")) return undefined;
+            const op = operation as Record<string, unknown>;
+            order.push(`af:${String(op.operation)}`);
+            const facts =
+              op.operation === "init"
+                ? { initialized: true, raw: "AF_RAW_SENTINEL" }
+                : op.operation === "claim"
+                  ? { nodeId: op.nodeId, role: op.role, claimed: true, raw: "AF_RAW_SENTINEL" }
+                  : { statistics: { totalNodes: 1, raw: "AF_RAW_SENTINEL" } };
+            return { state: "ready", structuralStatus: null, facts };
+          });
+          mockVibefeldComposition = composition;
+          mockCreateRestrictedReviewProviderForNativeDefault.mockResolvedValue({ ok: true, provider });
+
+          await activateWithComposition();
+          await vi.waitFor(() => expect(currentRuntime()).toEqual({ state: "available" }));
+          const controller = currentReviewController();
+          if (!controller) throw new Error("production manual-review controller was not bound");
+          const result = await controller.review({
+            sessionId: "session-1",
+            messageId: "message-1",
+            sourceText: answer,
+            invocation: "manual",
+          });
+
+          expect(order).toEqual([
+            "provider:begin",
+            "stage:architect",
+            "af:begin",
+            "af:init",
+            "af:claim",
+            "af:status",
+            "stage:prover",
+            "stage:verifier",
+          ]);
+          expect(result).toMatchObject({
+            reviewedMessageId: "message-1",
+            status: "conditional",
+            evidenceStatus: "source_recorded",
+            openChallenges: [
+              {
+                severity: "major",
+                target: "claim:claim-conclusion",
+                reason: "The observation's scope remains open.",
+              },
+            ],
+          });
+          expect(JSON.stringify(result)).not.toContain("ARCHITECT_RAW_SENTINEL");
+          expect(JSON.stringify(result)).not.toContain("AF_RAW_SENTINEL");
+          expect(JSON.stringify(result)).not.toContain(answer);
+          expect(provider.cancelReview).toHaveBeenCalledWith(1);
+        });
+
+        it("does not use the effective config model and reports a null native default visibly", async () => {
           mockSupportedClaimCapability = true;
           mockEffectiveConfig = { model: "provider/model" };
-          const provider = readyProvider();
-          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+          mockCreateRestrictedReviewProviderForNativeDefault.mockResolvedValue({
+            ok: false,
+            reason: "model-unavailable",
+          });
           const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
           mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
 
           await activateWithComposition();
+          await vi.waitFor(() =>
+            expect(currentRuntime()).toEqual({ state: "unavailable", reason: "model-unavailable" }),
+          );
 
-          expect(mockCreateRestrictedReviewProvider).toHaveBeenCalledWith({
-            providerID: "provider",
-            modelID: "model",
-          });
-          const options = injectedAssistOptions();
-          expect(options.reasoningAssistAdapter).toMatchObject({ supportedStages: ["architect", "critic"] });
-          expect(options.reasoningAssistStructureRecorder?.isSupported()).toBe(true);
-          const controller = injectedReviewController();
-          expect(reviewDelegate(controller)).toBeInstanceOf(ClaimProjectionReasoningReviewController);
-          await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
-          // Still the single activation preflight.
+          expect(mockCreateRestrictedReviewProviderForNativeDefault).toHaveBeenCalledTimes(1);
+          expect(currentAdapter()).toBeUndefined();
+          expect(outputChannelText()).toContain("stage=provider outcome=missing-model");
+          expect(outputChannelText()).toContain("stage=adapter outcome=missing-model");
+          expect(outputChannelText()).not.toContain("provider/model");
+          expect(mockNonoProfileUpdate).not.toHaveBeenCalled();
           expect(preflight).toHaveBeenCalledTimes(1);
         });
 
-        it("injects the adapter without the recorder when the claim capability is unsupported", async () => {
-          vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => ({
-            AdversarialReviewReasoningReviewController,
-          }));
-          mockEffectiveConfig = { model: "provider/model" };
-          const provider = readyProvider();
-          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+        it("republishes readiness and rebuilds the holder after event recovery without rerunning AF preflight", async () => {
+          mockSupportedClaimCapability = true;
+          const firstProvider = readyProvider();
+          const nextProvider = readyProvider();
+          mockCreateRestrictedReviewProviderForNativeDefault
+            .mockResolvedValueOnce({ ok: true, provider: firstProvider })
+            .mockResolvedValueOnce({ ok: true, provider: nextProvider });
           const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
           mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
 
           await activateWithComposition();
+          await vi.waitFor(() => expect(currentRuntime()).toEqual({ state: "available" }));
+          const options = injectedChatViewOptions();
+          options.onAgentUnavailable?.();
+          expect(currentRuntime()).toEqual({ state: "unavailable", reason: "server-unavailable" });
+          options.onAgentConnected?.();
+          await vi.waitFor(() => expect(mockCreateRestrictedReviewProviderForNativeDefault).toHaveBeenCalledTimes(2));
+          await vi.waitFor(() => expect(currentRuntime()).toEqual({ state: "available" }));
 
-          const options = injectedAssistOptions();
-          expect(options.reasoningAssistAdapter).toMatchObject({ supportedStages: ["architect", "critic"] });
-          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
-          // Unchanged adversarial fallback controller selection.
-          const controller = injectedReviewController();
-          expect(reviewDelegate(controller)).toBeInstanceOf(AdversarialReviewReasoningReviewController);
-          await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
+          expect(firstProvider.invalidate).toHaveBeenCalled();
+          expect(nextProvider.checkReadiness).toHaveBeenCalledTimes(1);
+          expect(mockResolveAfRuntime).toHaveBeenCalledTimes(1);
           expect(preflight).toHaveBeenCalledTimes(1);
+          expect(mockPublishedReasoningRuntimes).toContainEqual({ state: "checking", reason: "readiness-checking" });
         });
 
-        it("keeps both assist dependencies dormant when activation is dormant", async () => {
-          vi.doMock("../vibefeld/adversarial-review-reasoning-review-controller", () => ({
-            AdversarialReviewReasoningReviewController,
-          }));
-          mockEffectiveConfig = { model: "provider/model" };
-          const provider = readyProvider();
-          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
-          // No composition: the activation mock returns the dormant fallback.
+        it("keeps an explicit false preference and workspace opt-out unchanged during activation", async () => {
+          let writes = 0;
+          vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+            (section?: string) =>
+              ({
+                get: vi.fn((key: string) => {
+                  if (section === "opencode-chat" && key === "chatSandbox.mode") return "inherit";
+                  if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+                  if (section === "opencode-chat" && key === "vibefeld.enabled") return false;
+                  if (section === "opencode-chat" && key === "vibefeld.workspaceOptOut") return true;
+                  if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+                  return undefined;
+                }),
+                inspect: vi.fn(() => undefined),
+                update: vi.fn(async () => {
+                  writes += 1;
+                }),
+              }) as never,
+          );
+          const ext = await importExtension();
+          await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
 
-          await activateWithComposition();
-
-          const options = injectedAssistOptions();
-          expect(options).not.toHaveProperty("reasoningAssistAdapter");
-          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
-          // Controller fallback unchanged: a ready provider still selects the
-          // adversarial controller even though the assist stays dormant.
-          const controller = injectedReviewController();
-          expect(reviewDelegate(controller)).toBeInstanceOf(AdversarialReviewReasoningReviewController);
-          await expect(controller.getRuntime()).resolves.toEqual({ state: "available" });
-          expect(mockCreateRestrictedReviewProvider).toHaveBeenCalledTimes(1);
-        });
-
-        it("injects neither dependency when the restricted provider fails readiness", async () => {
-          mockEffectiveConfig = { model: "provider/model" };
-          const provider = readyProvider();
-          provider.checkReadiness.mockResolvedValue(false);
-          mockCreateRestrictedReviewProvider.mockReturnValue(provider);
-          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
-          mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
-
-          await activateWithComposition();
-
-          const options = injectedAssistOptions();
-          expect(options).not.toHaveProperty("reasoningAssistAdapter");
-          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
-          // Controller and runtime status are unchanged by the failed readiness.
-          const controller = injectedReviewController();
-          expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
-          await expect(controller.getRuntime()).resolves.toEqual({
-            state: "unavailable",
-            reason: "claim-capability-unavailable",
-          });
-          expect(provider.checkReadiness).toHaveBeenCalledTimes(1);
-          expect(mockCreateRestrictedReviewProvider).toHaveBeenCalledTimes(1);
-          expect(preflight).toHaveBeenCalledTimes(1);
-        });
-
-        it("keeps the recorder absent and activation nonfatal when the capability read fails", async () => {
-          const getClaimCapability = vi.fn(() => {
-            throw new Error("capability read failed");
-          });
-          const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
-          const { composition, bridge } = composedVibefeldActivation(preflight, { getClaimCapability });
-          mockVibefeldComposition = composition;
-
-          await expect(activateWithComposition()).resolves.toBeUndefined();
-
-          const options = injectedAssistOptions();
-          expect(options).not.toHaveProperty("reasoningAssistAdapter");
-          expect(options).not.toHaveProperty("reasoningAssistStructureRecorder");
-          const controller = injectedReviewController();
-          expect(reviewDelegate(controller)).toBeInstanceOf(UnavailableReasoningReviewController);
-          await expect(controller.getRuntime()).resolves.toEqual({
-            state: "unavailable",
-            reason: "claim-capability-unavailable",
-          });
-          expect(getClaimCapability).toHaveBeenCalledTimes(1);
-          expect(preflight).toHaveBeenCalledTimes(1);
-          expect(bridge.run).not.toHaveBeenCalled();
+          expect(writes).toBe(0);
+          expect(mockNonoProfileUpdate).not.toHaveBeenCalled();
+          const preference = injectedChatViewOptions().reasoningReviewPreference as {
+            read: () => { userEnabled: boolean; workspaceOptOut: boolean };
+          };
+          expect(preference.read()).toEqual({ userEnabled: false, workspaceOptOut: true });
         });
       });
     });
@@ -2435,6 +3145,25 @@ describe("extension", () => {
         assetName: "opencode-scribe-0.16.0.vsix",
         downloadUrl: "https://github.com/zeug-zz/opencode-chat/releases/download/v0.16.0/opencode-scribe-0.16.0.vsix",
       };
+      const updatePromptMessage = `OpenCode Scribe update available: ${availableRelease.version}`;
+      const reloadPromptMessage = "OpenCode Scribe was updated. Restart VS Code to finish.";
+
+      function respondToUpdaterPrompts(
+        updateAction: "Update" | "View Release" | undefined,
+        reloadAction: "Restart VS Code" | undefined = undefined,
+      ) {
+        vscodeMock.showInformationMessage.mockImplementation(async (message, ...actions) => {
+          if (message === updatePromptMessage && updateAction && actions.includes(updateAction)) return updateAction;
+          if (message === reloadPromptMessage && reloadAction && actions.includes(reloadAction)) return reloadAction;
+          return undefined;
+        });
+      }
+
+      async function waitForUpdaterPrompt(message: string, ...actions: string[]) {
+        await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(message, ...actions), {
+          timeout: 10_000,
+        });
+      }
 
       beforeEach(() => {
         mockUpdaterUx = true;
@@ -2456,12 +3185,10 @@ describe("extension", () => {
       });
 
       it("does not download, install, or reload when Update is dismissed", async () => {
-        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+        respondToUpdaterPrompts(undefined);
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
-        await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalled(), {
-          timeout: 10_000,
-        });
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
 
         expect(mockDownloadAndValidate).not.toHaveBeenCalled();
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
@@ -2472,9 +3199,10 @@ describe("extension", () => {
       });
 
       it("opens the release page without installing when that action is chosen", async () => {
-        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("View Release");
+        respondToUpdaterPrompts("View Release");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(() => expect(vscode.env.openExternal).toHaveBeenCalled(), {
           timeout: 10_000,
         });
@@ -2482,18 +3210,17 @@ describe("extension", () => {
         expect(vscode.env.openExternal).toHaveBeenCalledWith(
           expect.objectContaining({ scheme: "https", toString: expect.any(Function) }),
         );
-        expect(vscode.env.openExternal.mock.calls[0]?.[0].toString()).toBe(
+        expect(vi.mocked(vscode.env.openExternal).mock.calls[0]?.[0].toString()).toBe(
           "https://github.com/zeug-zz/opencode-chat/releases",
         );
         expect(mockDownloadAndValidate).not.toHaveBeenCalled();
       });
 
       it("installs the consented local VSIX, cleans it up, and asks separately before reload", async () => {
-        vi.mocked(vscode.window.showInformationMessage)
-          .mockResolvedValueOnce("Update")
-          .mockResolvedValueOnce(undefined);
+        respondToUpdaterPrompts("Update");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(() => expect(mockDownloadAndValidate).toHaveBeenCalled(), {
           timeout: 10_000,
         });
@@ -2511,15 +3238,15 @@ describe("extension", () => {
           () => expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" })),
           { timeout: 10_000 },
         );
+        await waitForUpdaterPrompt(reloadPromptMessage, "Restart VS Code");
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
       }, 15_000);
 
       it("reloads only after the separate restart confirmation", async () => {
-        vi.mocked(vscode.window.showInformationMessage)
-          .mockResolvedValueOnce("Update")
-          .mockResolvedValueOnce("Restart VS Code");
+        respondToUpdaterPrompts("Update", "Restart VS Code");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(
           () => expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.reloadWindow"),
           { timeout: 10_000 },
@@ -2532,10 +3259,11 @@ describe("extension", () => {
 
       it("reports a bounded download failure and keeps the manual retry command available", async () => {
         mockDownloadAndValidate.mockResolvedValueOnce(undefined);
-        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Update");
+        respondToUpdaterPrompts("Update");
         const ext = await importExtension();
         const context = updaterContext(new Map());
         await ext.activate(context as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(
           () =>
             expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
@@ -2551,10 +3279,11 @@ describe("extension", () => {
       });
 
       it("bounds installer rejection, cleans up the local artifact, and does not ask to reload", async () => {
-        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Update");
+        respondToUpdaterPrompts("Update");
         vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("installer rejected"));
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
 
         await vi.waitFor(
           () =>
@@ -2572,14 +3301,13 @@ describe("extension", () => {
       });
 
       it("bounds reload rejection after cleanup and preserves the manual retry path", async () => {
-        vi.mocked(vscode.window.showInformationMessage)
-          .mockResolvedValueOnce("Update")
-          .mockResolvedValueOnce("Restart VS Code");
+        respondToUpdaterPrompts("Update", "Restart VS Code");
         vi.mocked(vscode.commands.executeCommand)
           .mockResolvedValueOnce(undefined)
           .mockRejectedValueOnce(new Error("reload rejected"));
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
 
         await vi.waitFor(
           () =>
@@ -2677,7 +3405,7 @@ describe("extension", () => {
       );
       expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining("secret"));
       expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalled();
-      expect(latestLaunchConfiguration()).toMatchObject({ mcpOverlay: { mcp: {} } });
+      expect(latestLaunchConfiguration()).toMatchObject({ mcpOverlay: { mcp: { servers: {} } } });
     });
   });
 
@@ -2692,13 +3420,15 @@ describe("extension", () => {
 
       await ext.activate(context as never);
 
-      // エラーメッセージが表示される
-      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Connection refused"));
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("could not connect to its private OpenCode server"),
+      );
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining("Connection refused"));
       // webview provider が登録される
       expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalled();
     });
 
-    it("should truncate very long error messages", async () => {
+    it("does not expose a long raw startup error in the status or error message", async () => {
       const longMessage = "x".repeat(1000);
       const error = new Error(longMessage);
       mockConnect.mockRejectedValueOnce(error);
@@ -2709,8 +3439,41 @@ describe("extension", () => {
 
       await ext.activate(context as never);
 
-      // 500 文字以上で ... がつく
-      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("..."));
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("could not connect to its private OpenCode server"),
+      );
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining(longMessage));
+      expect((mockPublishedSandboxStatuses.at(-1) as { error?: string } | undefined)?.error).not.toContain(longMessage);
+    });
+
+    it("publishes the bounded safe V2 startup failure even when Chat sandboxing is off", async () => {
+      const rootFailure =
+        "Private OpenCode V2 startup failed (version-mismatch); child output and credentials were discarded. Scribe requires stable OpenCode V2 >=2.1.3 and <3.0.0; update OpenCode or Scribe.";
+      mockConnect.mockRejectedValueOnce(new Error(rootFailure));
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        (section?: string) =>
+          ({
+            get: vi.fn((key: string) => {
+              if (section === "opencode-chat" && key === "chatSandbox.mode") return "off";
+              if (section === "opencode-chat" && key === "chatSandbox.allowNetwork") return true;
+              if (section === "chat.agent.sandbox" && key === "enabled") return "off";
+              return undefined;
+            }),
+            inspect: vi.fn(() => undefined),
+          }) as never,
+      );
+
+      const ext = await importExtension();
+      await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
+
+      expect(injectedChatViewOptions().agentAvailable).toBe(false);
+      expect(mockPublishedSandboxStatuses.at(-1)).toMatchObject({
+        mode: "off",
+        enabled: false,
+        applying: false,
+        error: rootFailure,
+      });
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining(rootFailure));
     });
   });
 
@@ -2785,23 +3548,23 @@ describe("extension", () => {
 
     it("awaits restricted child disposal before disconnecting the agent", async () => {
       hiddenSessionRegistry.reset();
-      mockEffectiveConfig = { model: "provider/model" };
+      mockVibefeldActivation = true;
+      mockSupportedClaimCapability = true;
       const order: string[] = [];
       let createCount = 0;
-      const stage = new Promise<never>(() => undefined);
       const provider = {
         createSession: vi.fn(async () => ({ ok: true as const, sessionId: `child-${++createCount}` })),
         promptStage: vi.fn(),
         retrieveStageText: vi.fn(),
-        runStage: vi.fn(async () => stage),
+        runStage: vi.fn(async () => ({ ok: true as const, text: "" })),
         beginReview: vi.fn(),
         cancelReview: vi.fn(),
         isReviewCurrent: vi.fn(),
-        cancel: vi.fn(async () => {
+        cancel: vi.fn(async (_sessionId: string) => {
           order.push("cancel");
           return { ok: true as const };
         }),
-        delete: vi.fn(async () => {
+        delete: vi.fn(async (_sessionId: string) => {
           order.push("delete");
           return { ok: true as const };
         }),
@@ -2809,29 +3572,42 @@ describe("extension", () => {
         isReady: vi.fn(() => true),
         invalidate: vi.fn(),
       };
-      mockCreateRestrictedReviewProvider.mockReturnValue(provider);
+      const automaticProvider = {
+        ...provider,
+        beginReview: vi.fn(async () => 1),
+        cancelReview: vi.fn(async () => {
+          for (let index = 1; index <= createCount; index += 1) {
+            await provider.cancel(`child-${index}`);
+            await provider.delete(`child-${index}`);
+          }
+          return { ok: true as const };
+        }),
+        isReviewCurrent: vi.fn(() => true),
+      };
+      mockCreateRestrictedReviewProviderForNativeDefault
+        .mockResolvedValueOnce({ ok: true, provider })
+        .mockResolvedValueOnce({ ok: true, provider: automaticProvider });
+      const preflight = vi.fn().mockResolvedValue({ state: "ready", structuralStatus: null });
+      mockVibefeldComposition = composedVibefeldActivation(preflight).composition;
       mockDisconnect.mockImplementation(() => order.push("disconnect"));
       vi.doUnmock("../vibefeld/adversarial-review-reasoning-review-controller");
 
       const ext = await importExtension();
       await ext.activate({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as never);
-      expect(mockCreateRestrictedReviewProvider).toHaveBeenCalled();
+      await vi.waitFor(() => expect(mockCreateRestrictedReviewProviderForNativeDefault).toHaveBeenCalled());
       const chatProvider = mockChatViewProviderInstance;
       expect(chatProvider).toBeDefined();
       chatProvider!.cancelAllReasoningAssistWork.mockImplementation(() => order.push("cancelAssistWork"));
-      const controller = injectedReviewController();
+      const options = injectedChatViewOptions();
+      await vi.waitFor(() => expect(options.getReasoningAssistAdapter?.()).toBeDefined());
       expect(provider.checkReadiness).toHaveBeenCalled();
-      void controller.review({
-        sessionId: "session",
-        messageId: "message",
-        sourceText: "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.",
-      });
-      await vi.waitFor(() => expect(provider.createSession).toHaveBeenCalled());
+      await options.getReasoningAssistAdapter?.()?.createReasoningAssistContext("architect");
+      expect(provider.createSession).toHaveBeenCalledTimes(1);
 
       await ext.deactivate();
 
-      // Assist work is cancelled first, the restricted child disposal is
-      // awaited next, and only then does the agent disconnect.
+      // Assist work is cancelled first, the holder disposes its active hidden
+      // child, and only then does the agent disconnect.
       expect(order).toEqual(["cancelAssistWork", "cancel", "delete", "disconnect"]);
     });
   });

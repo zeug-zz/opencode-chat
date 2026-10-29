@@ -56,21 +56,23 @@ export type OpenCodePaths = {
   temp: string;
 };
 
-export type RuntimeCacheEnvironment = Pick<
-  NodeJS.ProcessEnv,
-  | "TMPDIR"
-  | "TMP"
-  | "TEMP"
-  | "APPDATA"
-  | "LOCALAPPDATA"
-  | "XDG_CONFIG_HOME"
-  | "XDG_DATA_HOME"
-  | "XDG_CACHE_HOME"
-  | "XDG_STATE_HOME"
-  | "CONTEXT_MODE_DIR"
-  | "npm_config_cache"
-  | "NPM_CONFIG_CACHE"
-  | "UV_CACHE_DIR"
+export type RuntimeCacheEnvironment = Partial<
+  Pick<
+    NodeJS.ProcessEnv,
+    | "TMPDIR"
+    | "TMP"
+    | "TEMP"
+    | "APPDATA"
+    | "LOCALAPPDATA"
+    | "XDG_CONFIG_HOME"
+    | "XDG_DATA_HOME"
+    | "XDG_CACHE_HOME"
+    | "XDG_STATE_HOME"
+    | "CONTEXT_MODE_DIR"
+    | "npm_config_cache"
+    | "NPM_CONFIG_CACHE"
+    | "UV_CACHE_DIR"
+  >
 >;
 
 const CREDENTIAL_STORE_SEGMENTS = new Set([".ssh", ".aws", ".gnupg", "keychains"]);

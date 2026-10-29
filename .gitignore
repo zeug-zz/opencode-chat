@@ -11,6 +11,7 @@ Thumbs.db
 *.swo
 .vscode/settings.json
 .opencode/opencode.json
+tmp/
 
 # VS Code extension package
 *.vsix

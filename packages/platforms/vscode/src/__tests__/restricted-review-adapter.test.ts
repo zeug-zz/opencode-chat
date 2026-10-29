@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RESTRICTED_REVIEW_PERMISSION_ATTESTATION } from "../vibefeld/adversarial-review-contract";
 import { createAdversarialReviewOrchestrator } from "../vibefeld/adversarial-review-orchestrator";
 import { createAdversarialReviewSeam } from "../vibefeld/adversarial-review-seam";
+import { validateReviewContextMetadata } from "../vibefeld/adversarial-review-validation";
 import { HIDDEN_SESSION_MARKER_PREFIX, hiddenSessionRegistry } from "../vibefeld/hidden-session-registry";
 import {
   createRestrictedReviewAdapter,
@@ -59,6 +60,37 @@ function provider(overrides: Partial<RestrictedReviewProvider> = {}): Restricted
   };
 }
 
+function automaticProviderFor(reviewProvider: RestrictedReviewProvider): RestrictedReviewProvider {
+  const sessions = new Set<string>();
+  return {
+    ...reviewProvider,
+    createSession: vi.fn(async (title: string) => {
+      const result = await reviewProvider.createSession(title);
+      if (result.ok) sessions.add(result.sessionId);
+      return result;
+    }),
+    beginReview: vi.fn(async () => 1),
+    cancelReview: vi.fn(async () => {
+      for (const sessionId of sessions) {
+        await reviewProvider.cancel(sessionId);
+        await reviewProvider.delete(sessionId);
+      }
+      return { ok: true as const };
+    }),
+    isReviewCurrent: vi.fn(() => true),
+    checkReadiness: vi.fn(async () => true),
+    isReady: vi.fn(() => true),
+  };
+}
+
+function automaticAdapter(reviewProvider: RestrictedReviewProvider, stageTimeoutMs?: number) {
+  return createRestrictedReviewAdapter({
+    provider: reviewProvider,
+    createAutomaticProvider: async () => automaticProviderFor(reviewProvider),
+    ...(stageTimeoutMs === undefined ? {} : { stageTimeoutMs }),
+  });
+}
+
 describe("restricted review adapter", () => {
   afterEach(() => {
     hiddenSessionRegistry.reset();
@@ -75,10 +107,12 @@ describe("restricted review adapter", () => {
       }),
     });
     const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
-    const context = await adapter.createContext("prover");
-    expect(context).toBeDefined();
+    const context = await adapter.createContext("prover", new AbortController().signal);
+    if (!context) throw new Error("context setup failed");
     expect(hiddenSessionRegistry.isHiddenSessionId("registered-session")).toBe(true);
-    await adapter.cancelContext(context!);
+    const checkedContext = validateReviewContextMetadata(context, "prover");
+    if (!checkedContext.ok) throw new Error("adapter returned invalid context metadata");
+    await adapter.cancelContext(checkedContext.value);
     expect(hiddenSessionRegistry.isHiddenSessionId("registered-session")).toBe(false);
   });
 
@@ -89,8 +123,35 @@ describe("restricted review adapter", () => {
         createSession: vi.fn(async () => ({ ok: false as const, code: "sdk-error" as const, message: "no" })),
       }),
     });
-    expect(await adapter.createContext("prover")).toBeUndefined();
+    expect(await adapter.createContext("prover", new AbortController().signal)).toBeUndefined();
     expect(hiddenSessionRegistry.liveCount()).toBe(0);
+  });
+
+  it("disposes a late manual architect child when its review is cancelled during creation", async () => {
+    let resolveCreate!: (result: { ok: true; sessionId: string }) => void;
+    const reviewProvider = provider({
+      createSession: vi.fn(
+        () =>
+          new Promise<{ ok: true; sessionId: string }>((resolve) => {
+            resolveCreate = resolve;
+          }),
+      ),
+      beginReview: vi.fn(async () => 1),
+    });
+    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    await reviewProvider.beginReview();
+    const controller = new AbortController();
+    const context = adapter.createManualReviewArchitectContext(controller.signal);
+
+    await vi.waitFor(() => expect(reviewProvider.createSession).toHaveBeenCalledTimes(1));
+    controller.abort();
+    resolveCreate({ ok: true, sessionId: "late-manual-child" });
+
+    await expect(context).resolves.toBeUndefined();
+    expect(reviewProvider.cancel).toHaveBeenCalledWith("late-manual-child");
+    expect(reviewProvider.delete).toHaveBeenCalledWith("late-manual-child");
+    expect(hiddenSessionRegistry.liveCount()).toBe(0);
+    await adapter.dispose();
   });
 
   it("deletes a child when registration expires before confirmation", async () => {
@@ -114,7 +175,7 @@ describe("restricted review adapter", () => {
     });
     try {
       const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
-      expect(await adapter.createContext("prover")).toBeUndefined();
+      expect(await adapter.createContext("prover", new AbortController().signal)).toBeUndefined();
       expect(order).toEqual(["cancel", "delete"]);
       expect(hiddenSessionRegistry.liveCount()).toBe(0);
     } finally {
@@ -145,7 +206,104 @@ describe("restricted review adapter", () => {
       ok: true,
       value: { proposalId: "proposal-1", verifier: verifier.value.provenance },
     });
-    expect(reviewProvider.runStage).toHaveBeenNthCalledWith(1, "sdk-session", JSON.stringify(packet), 35_000, "prover");
+    expect(reviewProvider.runStage).toHaveBeenNthCalledWith(
+      1,
+      "sdk-session",
+      JSON.stringify(packet),
+      35_000,
+      "prover",
+      expect.any(AbortSignal),
+    );
+    expect(reviewProvider.runStage).toHaveBeenNthCalledWith(
+      2,
+      "sdk-session",
+      `${JSON.stringify(packet)}\n${JSON.stringify({ proposalId: "proposal-1", objections: [] })}`,
+      35_000,
+      "verifier",
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("reports a bounded context-ownership failure without invoking the provider", async () => {
+    const reviewProvider = provider();
+    const diagnostics = vi.fn();
+    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider, diagnostics });
+    const prover = await adapter.createContext("prover", new AbortController().signal);
+    const verifier = await adapter.createContext("verifier", new AbortController().signal);
+    if (!prover || !verifier) throw new Error("context setup failed");
+    const checkedProver = validateReviewContextMetadata(prover, "prover");
+    const checkedVerifier = validateReviewContextMetadata(verifier, "verifier");
+    if (!checkedProver.ok || !checkedVerifier.ok) throw new Error("context validation failed");
+
+    await expect(
+      adapter.runProver(checkedVerifier.value, packet, new AbortController().signal),
+    ).resolves.toBeUndefined();
+
+    expect(diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "manual-prover", outcome: "context-ownership-failed" }),
+    );
+    expect(reviewProvider.runStage).not.toHaveBeenCalled();
+    await adapter.cancelContext(checkedProver.value);
+    await adapter.cancelContext(checkedVerifier.value);
+  });
+
+  it("classifies a thrown provider exception without forwarding its text", async () => {
+    const diagnostics = vi.fn();
+    const reviewProvider = provider({
+      runStage: vi.fn(async () => {
+        throw new Error("PRIVATE_PROVIDER_THROW_SENTINEL");
+      }),
+    });
+    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider, diagnostics });
+    const context = await adapter.createContext("prover", new AbortController().signal);
+    if (!context) throw new Error("context setup failed");
+    const checkedContext = validateReviewContextMetadata(context, "prover");
+    if (!checkedContext.ok) throw new Error("context validation failed");
+
+    await expect(
+      adapter.runProver(checkedContext.value, packet, new AbortController().signal),
+    ).resolves.toBeUndefined();
+
+    expect(diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "manual-prover", outcome: "thrown-exception" }),
+    );
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain("PRIVATE_PROVIDER_THROW_SENTINEL");
+    await adapter.cancelContext(checkedContext.value);
+  });
+
+  it("forwards the manual reviewer abort signal and reports cancellation without raw details", async () => {
+    const diagnostics = vi.fn();
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const reviewProvider = provider({
+      runStage: vi.fn(
+        (_session, _text, _timeout, _role, signal) =>
+          new Promise<Awaited<ReturnType<RestrictedReviewProvider["runStage"]>>>((resolve) => {
+            receivedSignal = signal;
+            signal?.addEventListener(
+              "abort",
+              () => resolve({ ok: false as const, code: "invalid-response" as const, message: "PRIVATE_SENTINEL" }),
+              { once: true },
+            );
+          }),
+      ),
+    });
+    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider, diagnostics });
+    const context = await adapter.createContext("prover", new AbortController().signal);
+    if (!context) throw new Error("context setup failed");
+    const checkedContext = validateReviewContextMetadata(context, "prover");
+    if (!checkedContext.ok) throw new Error("context validation failed");
+
+    const pending = adapter.runProver(checkedContext.value, packet, controller.signal);
+    await vi.waitFor(() => expect(receivedSignal).toBe(controller.signal));
+    controller.abort();
+    await expect(pending).resolves.toBeUndefined();
+
+    expect(diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "manual-prover", outcome: "stage-cancelled" }),
+    );
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain("PRIVATE_SENTINEL");
+    await adapter.cancelContext(checkedContext.value);
   });
 
   it("deletes both real child sessions after a clean review", async () => {
@@ -184,6 +342,39 @@ describe("restricted review adapter", () => {
     });
   });
 
+  it("rejects child-stage records that have the right envelope but invalid fields", async () => {
+    const reviewProvider = provider({
+      runStage: vi.fn(async (_session, _text, _timeout, role) =>
+        role === "prover"
+          ? {
+              ok: true as const,
+              text: JSON.stringify({ proposalId: "proposal-1", objections: [{ unexpected: true }] }),
+            }
+          : {
+              ok: true as const,
+              text: JSON.stringify({ proposalId: "proposal-1", dispositions: [{ objectionId: "unknown" }] }),
+            },
+      ),
+    });
+    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    const seam = createAdversarialReviewSeam(adapter);
+    const prover = await seam.createContext("prover");
+    const verifier = await seam.createContext("verifier");
+    if (!prover.ok || !verifier.ok) throw new Error("context setup failed");
+
+    await expect(seam.runProver(prover.value, packet)).resolves.toMatchObject({ ok: false });
+    await expect(
+      seam.runVerifier(verifier.value, packet, {
+        proposalId: "proposal-1",
+        prover: prover.value.provenance,
+        objections: [],
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(reviewProvider.runStage).toHaveBeenCalledTimes(2);
+    await seam.cancelContext(prover.value);
+    await seam.cancelContext(verifier.value);
+  });
+
   it("awaits cancellation and deletion and maps provider failures to cleanup", async () => {
     const order: string[] = [];
     const reviewProvider = provider({
@@ -197,9 +388,11 @@ describe("restricted review adapter", () => {
       }),
     });
     const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
-    const context = await adapter.createContext("prover");
-    if (!context || typeof context !== "object") throw new Error("context setup failed");
-    await expect(adapter.cancelContext(context as never)).rejects.toThrow("cleanup failed");
+    const context = await adapter.createContext("prover", new AbortController().signal);
+    if (!context) throw new Error("context setup failed");
+    const checkedContext = validateReviewContextMetadata(context, "prover");
+    if (!checkedContext.ok) throw new Error("adapter returned invalid context metadata");
+    await expect(adapter.cancelContext(checkedContext.value)).rejects.toThrow("cleanup failed");
     expect(order).toEqual(["cancel", "delete"]);
   });
 });
@@ -259,7 +452,7 @@ describe("reasoning assist stage adapter", () => {
           return { ok: true as const, sessionId: `stage-session-${++nextSession}` };
         }),
       });
-      const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+      const adapter = automaticAdapter(reviewProvider);
       const context = await adapter.createReasoningAssistContext(stage);
       if (!context) throw new Error("context setup failed");
       expect(context.provenance).toEqual({
@@ -277,23 +470,23 @@ describe("reasoning assist stage adapter", () => {
   );
 
   it.each(["architect", "critic"] as const)("releases a pending %s registration when creation fails", async (stage) => {
-    const adapter = createRestrictedReviewAdapter({
-      provider: provider({
+    const adapter = automaticAdapter(
+      provider({
         createSession: vi.fn(async () => ({ ok: false as const, code: "sdk-error" as const, message: "no" })),
       }),
-    });
+    );
     await expect(adapter.createReasoningAssistContext(stage)).resolves.toBeUndefined();
     expect(hiddenSessionRegistry.liveCount()).toBe(0);
   });
 
   it("releases a pending registration when creation rejects", async () => {
-    const adapter = createRestrictedReviewAdapter({
-      provider: provider({
+    const adapter = automaticAdapter(
+      provider({
         createSession: vi.fn(async () => {
           throw new Error("private transport failure");
         }),
       }),
-    });
+    );
     await expect(adapter.createReasoningAssistContext("architect")).resolves.toBeUndefined();
     expect(hiddenSessionRegistry.liveCount()).toBe(0);
   });
@@ -301,7 +494,7 @@ describe("reasoning assist stage adapter", () => {
   it("returns bounded stage text only to the caller and never through other adapter values", async () => {
     const raw = JSON.stringify({ kind: "ordinary" });
     const reviewProvider = provider({ runStage: vi.fn(async () => ({ ok: true as const, text: raw })) });
-    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    const adapter = automaticAdapter(reviewProvider);
     const context = await adapter.createReasoningAssistContext("architect");
     if (!context) throw new Error("context setup failed");
     const result = await adapter.runReasoningAssistStage(context, "bounded packet", "architect");
@@ -319,7 +512,7 @@ describe("reasoning assist stage adapter", () => {
     const reviewProvider = provider({
       runStage: vi.fn(async () => ({ ok: true as const, text: "x".repeat(MAX_RESTRICTED_REVIEW_TEXT_LENGTH + 1) })),
     });
-    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    const adapter = automaticAdapter(reviewProvider);
     const context = await adapter.createReasoningAssistContext("critic");
     if (!context) throw new Error("context setup failed");
     await expect(adapter.runReasoningAssistStage(context, "packet", "critic")).resolves.toEqual({
@@ -332,7 +525,7 @@ describe("reasoning assist stage adapter", () => {
 
   it("fails closed for mismatched, missing, unknown, and aborted stage runs", async () => {
     const reviewProvider = provider();
-    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    const adapter = automaticAdapter(reviewProvider);
     const context = await adapter.createReasoningAssistContext("architect");
     if (!context) throw new Error("context setup failed");
 
@@ -370,7 +563,7 @@ describe("reasoning assist stage adapter", () => {
     const reviewProvider = provider({
       runStage: vi.fn(async () => ({ ok: false as const, code, message: "private SDK detail" })),
     });
-    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    const adapter = automaticAdapter(reviewProvider);
     const context = await adapter.createReasoningAssistContext("critic");
     if (!context) throw new Error("context setup failed");
     const result = await adapter.runReasoningAssistStage(context, "packet", "critic");
@@ -385,7 +578,7 @@ describe("reasoning assist stage adapter", () => {
         throw new Error("private SDK stack");
       }),
     });
-    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    const adapter = automaticAdapter(reviewProvider);
     const context = await adapter.createReasoningAssistContext("architect");
     if (!context) throw new Error("context setup failed");
     const result = await adapter.runReasoningAssistStage(context, "packet", "architect");
@@ -399,7 +592,7 @@ describe("reasoning assist stage adapter", () => {
     const reviewProvider = provider({
       createSession: vi.fn(async () => ({ ok: true as const, sessionId: `stage-session-${++nextSession}` })),
     });
-    const adapter = createRestrictedReviewAdapter({ provider: reviewProvider });
+    const adapter = automaticAdapter(reviewProvider);
     const architect = await adapter.createReasoningAssistContext("architect");
     const critic = await adapter.createReasoningAssistContext("critic");
     if (!architect || !critic) throw new Error("context setup failed");

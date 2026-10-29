@@ -1,4 +1,4 @@
-import type { AgentEvent, ChatMessage, ChatSession, MessagePart, ReasoningPart } from "@opencode-chat/core";
+import type { AgentEvent, ChatMessage, ChatSession, MessagePart, ReasoningPart, TextPart } from "@opencode-chat/core";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 
 export type MessageWithParts = { info: ChatMessage; parts: MessagePart[] };
@@ -40,11 +40,18 @@ function getMessageKey(sessionID: string, messageID: string) {
   return `${sessionID}:${messageID}`;
 }
 
-function getLongestText(...values: Array<string | null | undefined>) {
-  return values.reduce((best, value) => {
-    if (typeof value !== "string") return best;
-    return value.length > best.length ? value : best;
+function getReasoningPartKey(sessionID: string, messageID: string, partID: string) {
+  return JSON.stringify([sessionID, messageID, partID]);
+}
+
+function getLongestText(...values: Array<string | null | undefined>): string {
+  return values.reduce<string>((best, value) => {
+    return typeof value === "string" && value.length > best.length ? value : best;
   }, "");
+}
+
+function isTextualPart(part: MessagePart): part is TextPart | ReasoningPart {
+  return part.type === "text" || part.type === "reasoning";
 }
 
 type CotTracePayload = {
@@ -56,8 +63,6 @@ type CotTracePayload = {
   partID?: string;
   previousLength?: number;
   nextLength?: number;
-  previousTextPreview?: string;
-  nextTextPreview?: string;
   incomingMessagePresent?: boolean;
   retained?: boolean;
   reason?: string;
@@ -65,11 +70,6 @@ type CotTracePayload = {
 };
 
 const COT_TRACE_PREFIX = "[opencode-chat cot-glitch]";
-
-function getTextPreview(text: string | undefined) {
-  if (!text) return "";
-  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
-}
 
 function getPartTextLength(part: MessagePart) {
   return "text" in part && typeof part.text === "string" ? part.text.length : null;
@@ -88,10 +88,7 @@ function warnCotGlitch(payload: CotTracePayload) {
 }
 
 function getMessageSessionID(message: MessageWithParts) {
-  return (
-    (message.info as { sessionID?: string }).sessionID ??
-    (message.parts.find((part) => "sessionID" in part) as { sessionID?: string } | undefined)?.sessionID
-  );
+  return message.info.sessionID ?? message.parts[0]?.sessionID;
 }
 
 const REASONING_SNAPSHOT_GRACE_MS = 5000;
@@ -121,9 +118,7 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
   const reasoningPending = useRef<number | null>(null);
   const reasoningMessageKeys = useRef<Set<string>>(new Set());
   const reasoningIdsByMessageKey = useRef<Map<string, Set<string>>>(new Map());
-  const reasoningPartIdByMessageKey = useRef<Map<string, string>>(new Map());
-  const reasoningIdToPartId = useRef<Map<string, string>>(new Map());
-  const activeReasoningMessageKeys = useRef<Set<string>>(new Set());
+  const activeReasoningIdsByMessageKey = useRef<Map<string, Set<string>>>(new Map());
   const reasoningSnapshotProtectUntil = useRef<Map<string, number>>(new Map());
   const cotTextLengthByPartId = useRef<Map<string, number>>(new Map());
   const missingSnapshotLoggedKeys = useRef<Set<string>>(new Set());
@@ -136,8 +131,8 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         let partsChanged = false;
         const newParts = msg.parts.map((part) => {
           const buffered = deltaBuffers.current.get(part.id);
-          if (buffered != null && "text" in part) {
-            const currentText = (part as { text: string }).text;
+          if (buffered != null && isTextualPart(part) && typeof part.text === "string") {
+            const currentText = part.text;
             const text = getLongestText(buffered, currentText);
             if (text !== currentText) {
               partsChanged = true;
@@ -182,7 +177,6 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
           partID: payload.partID,
           previousLength,
           nextLength,
-          nextTextPreview: getTextPreview(payload.nextText),
           reason: nextLength === 0 ? "reasoning text became empty" : "reasoning text shrank",
         });
       }
@@ -201,8 +195,9 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         let partsChanged = false;
         const newParts = msg.parts.map((part) => {
           if (part.type !== "reasoning") return part;
-          const buffered = reasoningBuffers.current.get(part.id);
-          if (buffered != null && "text" in part && (part as { text: string }).text !== buffered) {
+          const bufferKey = getReasoningPartKey(part.sessionID, part.messageID, part.id);
+          const buffered = reasoningBuffers.current.get(bufferKey);
+          if (buffered != null && part.type === "reasoning" && part.text !== buffered) {
             partsChanged = true;
             traceTextChange({
               source: "flushReasoningBuffers",
@@ -228,25 +223,29 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
   const trackReasoningMessage = useCallback((sessionID: string, messageID: string, reasoningID: string) => {
     const key = getMessageKey(sessionID, messageID);
     reasoningMessageKeys.current.add(key);
-    activeReasoningMessageKeys.current.add(key);
-    reasoningSnapshotProtectUntil.current.delete(key);
 
     const ids = reasoningIdsByMessageKey.current.get(key) ?? new Set<string>();
     ids.add(reasoningID);
     reasoningIdsByMessageKey.current.set(key, ids);
 
-    let partID = reasoningPartIdByMessageKey.current.get(key);
-    if (!partID) {
-      partID = reasoningID;
-      reasoningPartIdByMessageKey.current.set(key, partID);
-    }
-
-    reasoningIdToPartId.current.set(reasoningID, partID);
-    return partID;
+    return { key, bufferKey: getReasoningPartKey(sessionID, messageID, reasoningID) };
   }, []);
 
-  const getReasoningPartID = useCallback((reasoningID: string) => {
-    return reasoningIdToPartId.current.get(reasoningID) ?? reasoningID;
+  const markReasoningActive = useCallback((key: string, reasoningID: string) => {
+    const activeIds = activeReasoningIdsByMessageKey.current.get(key) ?? new Set<string>();
+    activeIds.add(reasoningID);
+    activeReasoningIdsByMessageKey.current.set(key, activeIds);
+    // Keep grace for already-ended sibling segments while another segment streams.
+  }, []);
+
+  const markReasoningEnded = useCallback((key: string, reasoningID: string) => {
+    const activeIds = activeReasoningIdsByMessageKey.current.get(key);
+    activeIds?.delete(reasoningID);
+    // A segment can finish while siblings remain active; protect its final snapshot independently.
+    reasoningSnapshotProtectUntil.current.set(key, Date.now() + REASONING_SNAPSHOT_GRACE_MS);
+    if (activeIds && activeIds.size > 0) return;
+
+    activeReasoningIdsByMessageKey.current.delete(key);
   }, []);
 
   const shouldRetainMissingReasoningMessage = useCallback((message: MessageWithParts) => {
@@ -254,7 +253,7 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
     if (!sessionID) return false;
 
     const key = getMessageKey(sessionID, message.info.id);
-    if (activeReasoningMessageKeys.current.has(key)) return true;
+    if ((activeReasoningIdsByMessageKey.current.get(key)?.size ?? 0) > 0) return true;
 
     const protectUntil = reasoningSnapshotProtectUntil.current.get(key);
     if (protectUntil != null && protectUntil > Date.now()) return true;
@@ -276,7 +275,9 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         }
 
         if (!reasoningMessageKeys.current.has(key)) {
-          const previousMessage = prev.find((message) => message.info.id === incomingMessage.info.id);
+          const previousMessage = prev.find(
+            (message) => message.info.id === incomingMessage.info.id && getMessageSessionID(message) === sessionID,
+          );
 
           const activeDelta = incomingMessage.parts.some((part) => deltaBuffers.current.has(part.id));
           const orphanedDelta =
@@ -289,21 +290,25 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
           const protectedParts = incomingMessage.parts.map((part) => {
             const buffered = deltaBuffers.current.get(part.id);
             if (buffered == null) return part;
-            if (!("text" in part)) return part;
+            if (!isTextualPart(part) || typeof part.text !== "string") return part;
 
-            const incomingText = (part as { text: string }).text;
+            const incomingText = part.text;
             const previousPart = previousMessage?.parts.find((p) => p.id === part.id);
-            const previousText = previousPart && "text" in previousPart ? (previousPart as { text: string }).text : "";
+            const previousText =
+              previousPart && isTextualPart(previousPart) && typeof previousPart.text === "string"
+                ? previousPart.text
+                : "";
             const text = getLongestText(buffered, previousText, incomingText);
 
             return { ...part, text };
           });
 
-          const preservedOrphans = orphanedDelta.map((part) => {
+          const preservedOrphans: MessagePart[] = orphanedDelta.flatMap((part) => {
             const buffered = deltaBuffers.current.get(part.id)!;
-            const currentText = "text" in part ? (part as { text: string }).text : "";
+            if (!isTextualPart(part) || typeof part.text !== "string") return [];
+            const currentText = part.text;
             const text = getLongestText(buffered, currentText);
-            return { ...part, text };
+            return [{ ...part, text }];
           });
 
           return {
@@ -312,68 +317,88 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
           };
         }
 
-        const canonicalPartID = reasoningPartIdByMessageKey.current.get(key);
-        if (!canonicalPartID) return incomingMessage;
+        const trackedReasoningIDs = reasoningIdsByMessageKey.current.get(key);
+        if (!trackedReasoningIDs) return incomingMessage;
 
-        const previousMessage = prev.find((message) => message.info.id === incomingMessage.info.id);
-        const previousReasoning = previousMessage?.parts.find(
-          (part) => part.type === "reasoning" && part.id === canonicalPartID,
-        ) as ReasoningPart | undefined;
+        const previousMessage = prev.find(
+          (message) => message.info.id === incomingMessage.info.id && getMessageSessionID(message) === sessionID,
+        );
+        const activeReasoningIDs = activeReasoningIdsByMessageKey.current.get(key);
+        const hasActiveReasoning = (activeReasoningIDs?.size ?? 0) > 0;
+        const protectUntil = reasoningSnapshotProtectUntil.current.get(key);
+        const hasSnapshotGrace = protectUntil != null && protectUntil > Date.now();
+        const presentReasoningIDs = new Set<string>();
+        const parts = incomingMessage.parts.map((part) => {
+          if (part.type !== "reasoning" || !trackedReasoningIDs.has(part.id)) return part;
 
-        const incomingReasoning = incomingMessage.parts.find((part) => part.type === "reasoning") as
-          | ReasoningPart
-          | undefined;
+          presentReasoningIDs.add(part.id);
+          const bufferKey = getReasoningPartKey(sessionID, incomingMessage.info.id, part.id);
+          const previousPart = previousMessage?.parts.find(
+            (candidate): candidate is ReasoningPart => candidate.type === "reasoning" && candidate.id === part.id,
+          );
+          const bufferedText = reasoningBuffers.current.get(bufferKey);
+          const isActive = activeReasoningIDs?.has(part.id) ?? false;
+          const text =
+            isActive && bufferedText != null
+              ? getLongestText(bufferedText, previousPart?.text, part.text)
+              : (hasSnapshotGrace || hasActiveReasoning) && bufferedText != null
+                ? bufferedText
+                : part.text;
 
-        const bufferedText = reasoningBuffers.current.get(canonicalPartID);
-        const previousText = previousReasoning?.text;
-        const incomingText = incomingReasoning?.text;
-        const text = getLongestText(bufferedText, previousText, incomingText);
+          reasoningBuffers.current.set(bufferKey, text);
+          traceTextChange({
+            source: "mergeSnapshotPreservingReasoning",
+            sessionID,
+            messageID: incomingMessage.info.id,
+            partID: part.id,
+            nextText: text,
+          });
 
-        if (!previousReasoning && !incomingReasoning && !text) return incomingMessage;
-
-        reasoningBuffers.current.set(canonicalPartID, text);
-
-        traceTextChange({
-          source: "mergeSnapshotPreservingReasoning",
-          sessionID,
-          messageID: incomingMessage.info.id,
-          partID: canonicalPartID,
-          nextText: text,
+          return text === part.text ? part : { ...part, text };
         });
 
-        const sourceReasoning = incomingReasoning ?? previousReasoning;
-        const reasoningPart: ReasoningPart = {
-          id: canonicalPartID,
-          sessionID,
-          messageID: incomingMessage.info.id,
-          type: "reasoning",
-          text,
-          time: {
-            start: sourceReasoning?.time?.start ?? Date.now(),
-            end: sourceReasoning?.time?.end,
-          },
-          ...(sourceReasoning?.metadata !== undefined ? { metadata: sourceReasoning.metadata } : {}),
-        };
+        if (previousMessage) {
+          for (const [previousIndex, previousPart] of previousMessage.parts.entries()) {
+            if (previousPart.type !== "reasoning" || !trackedReasoningIDs.has(previousPart.id)) continue;
+            if (presentReasoningIDs.has(previousPart.id)) continue;
+            if (!activeReasoningIDs?.has(previousPart.id) && !hasActiveReasoning && !hasSnapshotGrace) continue;
 
-        const partsWithoutReasoning = incomingMessage.parts.filter((part) => part.type !== "reasoning");
-        const previousIndex = previousMessage?.parts.findIndex(
-          (part) => part.type === "reasoning" && part.id === canonicalPartID,
-        );
-        const insertIndex =
-          typeof previousIndex === "number" && previousIndex >= 0
-            ? Math.min(previousIndex, partsWithoutReasoning.length)
-            : 0;
+            const bufferKey = getReasoningPartKey(sessionID, incomingMessage.info.id, previousPart.id);
+            const bufferedText = reasoningBuffers.current.get(bufferKey);
+            const text =
+              activeReasoningIDs?.has(previousPart.id) && bufferedText != null
+                ? getLongestText(bufferedText, previousPart.text)
+                : previousPart.text;
+            reasoningBuffers.current.set(bufferKey, text);
 
-        const parts = [...partsWithoutReasoning];
-        parts.splice(insertIndex, 0, reasoningPart);
+            const preservedPart = text === previousPart.text ? previousPart : { ...previousPart, text };
+            const nextSharedPart = previousMessage.parts
+              .slice(previousIndex + 1)
+              .find((candidate) => parts.some((incomingPart) => incomingPart.id === candidate.id));
+            const nextSharedIndex = nextSharedPart
+              ? parts.findIndex((incomingPart) => incomingPart.id === nextSharedPart.id)
+              : -1;
+            const insertIndex = nextSharedIndex >= 0 ? nextSharedIndex : Math.min(previousIndex, parts.length);
+
+            parts.splice(insertIndex, 0, preservedPart);
+            presentReasoningIDs.add(previousPart.id);
+          }
+        }
 
         return { ...incomingMessage, parts };
       });
 
-      const incomingIds = new Set(incoming.map((message) => message.info.id));
+      const incomingKeys = new Set(
+        incoming.map((message) => {
+          const sessionID = getMessageSessionID(message);
+          return sessionID ? getMessageKey(sessionID, message.info.id) : message.info.id;
+        }),
+      );
 
       const retained = prev.filter((message) => {
-        if (incomingIds.has(message.info.id)) return false;
+        const sessionID = getMessageSessionID(message);
+        const messageKey = sessionID ? getMessageKey(sessionID, message.info.id) : message.info.id;
+        if (incomingKeys.has(messageKey)) return false;
         return shouldRetainMissingReasoningMessage(message);
       });
 
@@ -437,9 +462,7 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
     deltaBuffers.current.clear();
     reasoningMessageKeys.current.clear();
     reasoningIdsByMessageKey.current.clear();
-    reasoningPartIdByMessageKey.current.clear();
-    reasoningIdToPartId.current.clear();
-    activeReasoningMessageKeys.current.clear();
+    activeReasoningIdsByMessageKey.current.clear();
     reasoningSnapshotProtectUntil.current.clear();
     cotTextLengthByPartId.current.clear();
     missingSnapshotLoggedKeys.current.clear();
@@ -456,7 +479,7 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
       const activeId = activeSessionRef.current?.id;
       switch (event.type) {
         case "message.updated": {
-          const info = event.properties.info as ChatMessage;
+          const info = event.properties.info;
           // アクティブセッション以外のメッセージイベントは無視する。
           // サブエージェント（子セッション）のメッセージが親セッションの表示に混入するのを防ぐ。
           if (activeId && info.sessionID !== activeId) break;
@@ -477,52 +500,54 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         case "message.part.updated": {
           const part = event.properties.part;
           if (activeId && part.sessionID !== activeId) break;
-          if (
-            part.type === "reasoning" &&
-            reasoningMessageKeys.current.has(getMessageKey(part.sessionID, part.messageID))
-          ) {
-            const canonicalPartID = reasoningPartIdByMessageKey.current.get(
-              getMessageKey(part.sessionID, part.messageID),
-            );
-            const knownLength = canonicalPartID ? (reasoningBuffers.current.get(canonicalPartID)?.length ?? 0) : 0;
-            const incomingText = (part as { text?: string }).text ?? "";
-            if (knownLength > 0 && incomingText.length < knownLength) {
+          const messageKey = getMessageKey(part.sessionID, part.messageID);
+          const trackedReasoningIDs = reasoningIdsByMessageKey.current.get(messageKey);
+          if (part.type === "reasoning" && trackedReasoningIDs?.has(part.id)) {
+            const bufferKey = getReasoningPartKey(part.sessionID, part.messageID, part.id);
+            const bufferedText = reasoningBuffers.current.get(bufferKey);
+            const isActive = activeReasoningIdsByMessageKey.current.get(messageKey)?.has(part.id) ?? false;
+            if (isActive && bufferedText != null && part.text.length < bufferedText.length) {
               warnCotGlitch({
                 source: "message.part.updated-skip",
                 eventType: event.type,
                 sessionID: part.sessionID,
                 messageID: part.messageID,
                 partID: part.id,
-                previousLength: knownLength,
-                nextLength: incomingText.length,
-                nextTextPreview: getTextPreview(incomingText),
+                previousLength: bufferedText.length,
+                nextLength: part.text.length,
                 reason: "skipped stale managed reasoning snapshot",
               });
+              break;
             }
+
+            const protectCompletedText =
+              (reasoningSnapshotProtectUntil.current.get(messageKey) ?? 0) > Date.now() ||
+              (activeReasoningIdsByMessageKey.current.get(messageKey)?.size ?? 0) > 0;
+            const text =
+              isActive && bufferedText != null
+                ? getLongestText(bufferedText, part.text)
+                : protectCompletedText && bufferedText != null
+                  ? bufferedText
+                  : part.text;
+            reasoningBuffers.current.set(bufferKey, text);
+            setMessages((prev) => upsertPart(prev, { ...part, text }));
             break;
           }
-          const serverText = (part as { text?: string }).text;
+          const textualPart = isTextualPart(part) && typeof part.text === "string";
+          const serverText = textualPart ? part.text : undefined;
           const bufferedText = deltaBuffers.current.get(part.id);
-          const reasoningBuffered = reasoningBuffers.current.get(part.id);
-          // Reasoning delta stream owns this part while active — skip stale server snapshots
-          if (reasoningBuffered != null) break;
           // バッファが存在する & サーバーから空テキストが送られてきた場合、
           // ストリーミング中の部分を上書きしないために setMessages をスキップする。
           if (bufferedText != null && !serverText) break;
           setMessages((prev) => {
             const msgIdx = prev.findIndex((m) => m.info.id === part.messageID);
             const existingPart = msgIdx >= 0 ? prev[msgIdx].parts.find((p) => p.id === part.id) : null;
-            const existingText =
-              existingPart && "text" in existingPart ? (existingPart as { text: string }).text : null;
+            const existingText = existingPart && isTextualPart(existingPart) ? existingPart.text : null;
             const finalText =
               bufferedText != null ? bufferedText : existingText != null ? existingText : (serverText ?? "");
-            return upsertPart(prev, { ...part, text: finalText });
+            return upsertPart(prev, textualPart ? { ...part, text: finalText } : part);
           });
-          if (
-            (part as Record<string, unknown>)?.time &&
-            typeof (part as Record<string, unknown>).time === "object" &&
-            "end" in ((part as Record<string, unknown>).time as object)
-          ) {
+          if ("time" in part && part.time != null && typeof part.time === "object" && "end" in part.time) {
             deltaBuffers.current.delete(part.id);
           }
           break;
@@ -531,27 +556,16 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
           if (activeId && event.properties.sessionID !== activeId) break;
           const key = getMessageKey(event.properties.sessionID, event.properties.messageID);
           reasoningMessageKeys.current.delete(key);
-          activeReasoningMessageKeys.current.delete(key);
+          activeReasoningIdsByMessageKey.current.delete(key);
           reasoningSnapshotProtectUntil.current.delete(key);
-
-          const canonicalPartID = reasoningPartIdByMessageKey.current.get(key);
-          if (canonicalPartID) {
-            reasoningBuffers.current.delete(canonicalPartID);
-            deltaBuffers.current.delete(canonicalPartID);
-            reasoningPartIdByMessageKey.current.delete(key);
-          }
 
           const reasoningIds = reasoningIdsByMessageKey.current.get(key);
           if (reasoningIds) {
             for (const reasoningID of reasoningIds) {
-              const mappedPartID = reasoningIdToPartId.current.get(reasoningID);
-              if (mappedPartID) {
-                reasoningBuffers.current.delete(mappedPartID);
-                deltaBuffers.current.delete(mappedPartID);
-              }
-              reasoningBuffers.current.delete(reasoningID);
+              reasoningBuffers.current.delete(
+                getReasoningPartKey(event.properties.sessionID, event.properties.messageID, reasoningID),
+              );
               deltaBuffers.current.delete(reasoningID);
-              reasoningIdToPartId.current.delete(reasoningID);
             }
             reasoningIdsByMessageKey.current.delete(key);
           }
@@ -562,32 +576,33 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         case "session.next.reasoning.started": {
           const { sessionID, assistantMessageID, reasoningID } = event.properties;
           if (activeId && sessionID !== activeId) break;
-          const partID = trackReasoningMessage(sessionID, assistantMessageID, reasoningID);
+          const { key, bufferKey } = trackReasoningMessage(sessionID, assistantMessageID, reasoningID);
+          markReasoningActive(key, reasoningID);
 
-          const existingBuffered = reasoningBuffers.current.get(partID);
+          const existingBuffered = reasoningBuffers.current.get(bufferKey);
           if (existingBuffered == null) {
-            reasoningBuffers.current.set(partID, "");
+            reasoningBuffers.current.set(bufferKey, "");
           }
 
           setMessages((prev) => {
-            const msg = prev.find((m) => m.info.id === assistantMessageID);
-            const existingPart = msg?.parts.find((p) => p.id === partID && p.type === "reasoning");
-            const existingText = existingPart && "text" in existingPart ? (existingPart as { text: string }).text : "";
+            const msg = prev.find(
+              (message) => message.info.id === assistantMessageID && getMessageSessionID(message) === sessionID,
+            );
+            const existingPart = msg?.parts.find((part) => part.id === reasoningID && part.type === "reasoning");
+            const existingText = existingPart?.type === "reasoning" ? existingPart.text : "";
             const text = getLongestText(existingBuffered, existingText, "");
-            if (text) {
-              reasoningBuffers.current.set(partID, text);
-            }
+            reasoningBuffers.current.set(bufferKey, text);
             traceTextChange({
               source: "reasoning.started",
               eventType: event.type,
               sessionID,
               messageID: assistantMessageID,
               reasoningID,
-              partID,
+              partID: reasoningID,
               nextText: text,
             });
             const reasoningPart: ReasoningPart = {
-              id: partID,
+              id: reasoningID,
               sessionID,
               messageID: assistantMessageID,
               type: "reasoning",
@@ -601,16 +616,17 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         case "session.next.reasoning.delta": {
           const { sessionID, assistantMessageID, reasoningID, delta } = event.properties;
           if (activeId && sessionID !== activeId) break;
-          const partID = trackReasoningMessage(sessionID, assistantMessageID, reasoningID);
-          const accumulated = (reasoningBuffers.current.get(partID) || "") + delta;
-          reasoningBuffers.current.set(partID, accumulated);
+          const { key, bufferKey } = trackReasoningMessage(sessionID, assistantMessageID, reasoningID);
+          markReasoningActive(key, reasoningID);
+          const accumulated = (reasoningBuffers.current.get(bufferKey) ?? "") + delta;
+          reasoningBuffers.current.set(bufferKey, accumulated);
           traceTextChange({
             source: "reasoning.delta-buffer",
             eventType: event.type,
             sessionID,
             messageID: assistantMessageID,
             reasoningID,
-            partID,
+            partID: reasoningID,
             nextText: accumulated,
           });
           if (reasoningPending.current == null) {
@@ -621,25 +637,17 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         case "session.next.reasoning.ended": {
           const { sessionID, assistantMessageID, reasoningID, text } = event.properties;
           if (activeId && sessionID !== activeId) break;
-          const partID = trackReasoningMessage(sessionID, assistantMessageID, reasoningID);
+          const { key, bufferKey } = trackReasoningMessage(sessionID, assistantMessageID, reasoningID);
 
-          const bufferedText = reasoningBuffers.current.get(partID);
-          deltaBuffers.current.delete(partID);
-
-          const key = getMessageKey(sessionID, assistantMessageID);
-          activeReasoningMessageKeys.current.delete(key);
-          reasoningSnapshotProtectUntil.current.set(key, Date.now() + REASONING_SNAPSHOT_GRACE_MS);
-
-          if (reasoningPending.current != null) {
-            cancelAnimationFrame(reasoningPending.current);
-            reasoningPending.current = null;
-          }
+          markReasoningEnded(key, reasoningID);
+          deltaBuffers.current.delete(reasoningID);
 
           setMessages((prev) => {
-            const msg = prev.find((m) => m.info.id === assistantMessageID);
-            const existingPart = msg?.parts.find((p) => p.id === partID && p.type === "reasoning");
-            const existingText = existingPart && "text" in existingPart ? (existingPart as { text: string }).text : "";
-            const finalText = getLongestText(text, bufferedText, existingText);
+            const msg = prev.find(
+              (message) => message.info.id === assistantMessageID && getMessageSessionID(message) === sessionID,
+            );
+            const existingPart = msg?.parts.find((part) => part.id === reasoningID && part.type === "reasoning");
+            const finalText = text;
 
             traceTextChange({
               source: "reasoning.ended",
@@ -647,19 +655,22 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
               sessionID,
               messageID: assistantMessageID,
               reasoningID,
-              partID,
+              partID: reasoningID,
               nextText: finalText,
             });
 
-            reasoningBuffers.current.set(partID, finalText);
+            reasoningBuffers.current.set(bufferKey, finalText);
 
             const endedPart: ReasoningPart = {
-              id: partID,
+              id: reasoningID,
               sessionID,
               messageID: assistantMessageID,
               type: "reasoning",
               text: finalText,
-              time: { start: Date.now(), end: Date.now() },
+              time: {
+                start: existingPart?.type === "reasoning" ? (existingPart.time?.start ?? Date.now()) : Date.now(),
+                end: Date.now(),
+              },
             };
 
             return upsertPart(prev, endedPart);
@@ -669,17 +680,17 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         case "message.part.delta": {
           const { sessionID, messageID, partID, delta } = event.properties;
           if (activeId && sessionID !== activeId) break;
-          const reasoningPartID = getReasoningPartID(partID);
-          if (reasoningBuffers.current.has(reasoningPartID)) {
+          const messageKey = getMessageKey(sessionID, messageID);
+          const reasoningBufferKey = getReasoningPartKey(sessionID, messageID, partID);
+          if (reasoningIdsByMessageKey.current.get(messageKey)?.has(partID)) {
             warnCotGlitch({
               source: "message.part.delta-skip",
               eventType: event.type,
               sessionID,
               messageID,
               partID,
-              previousLength: reasoningBuffers.current.get(reasoningPartID)?.length ?? 0,
+              previousLength: reasoningBuffers.current.get(reasoningBufferKey)?.length ?? 0,
               nextLength: delta.length,
-              nextTextPreview: getTextPreview(delta),
               reason: "skipped competing delta for managed reasoning part",
             });
             break;
@@ -693,7 +704,7 @@ export function useMessages(activeSessionRef: RefObject<ChatSession | null>) {
         }
       }
     },
-    [activeSessionRef, trackReasoningMessage, getReasoningPartID, traceTextChange],
+    [activeSessionRef, markReasoningActive, markReasoningEnded, trackReasoningMessage, traceTextChange],
   );
 
   useEffect(() => {

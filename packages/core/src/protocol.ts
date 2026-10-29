@@ -31,7 +31,7 @@ import type {
   TodoItem,
 } from "./domain";
 import type { ReasoningAssistStage, ReasoningAssistSummary } from "./reasoning-assist";
-import type { ReasoningReviewRuntime } from "./reasoning-review";
+import type { ReasoningReviewProgressStage, ReasoningReviewRuntime, ReasoningReviewSummary } from "./reasoning-review";
 
 // ============================================================
 // UI -> Host
@@ -112,6 +112,18 @@ export type UIToHostMessage =
        * the Workspace target. No runtime, executable, or path data is carried.
        */
       preference: { userEnabled?: boolean; workspaceOptOut?: boolean };
+    }
+  | {
+      type: "requestReasoningReview";
+      sessionId: string;
+      messageId: string;
+      requestId: string;
+    }
+  | {
+      type: "cancelReasoningReview";
+      sessionId: string;
+      messageId: string;
+      requestId: string;
     }
 
   // --- Shell (via agent) ---
@@ -273,6 +285,26 @@ export type HostToUIMessage =
        * `userEnabled && !workspaceOptOut && runtime available` state.
        */
       preference: { userEnabled: boolean; workspaceOptOut: boolean; effective: boolean };
+    }
+  | {
+      type: "reasoningReviewProgress";
+      sessionId: string;
+      messageId: string;
+      requestId: string;
+      stage: ReasoningReviewProgressStage;
+    }
+  | {
+      type: "reasoningReviewResult";
+      sessionId: string;
+      messageId: string;
+      requestId: string;
+      summary: ReasoningReviewSummary;
+    }
+  | {
+      type: "reasoningReviewCancelled";
+      sessionId: string;
+      messageId: string;
+      requestId: string;
     }
 
   // --- Prompt-scoped reasoning assist ---

@@ -1,12 +1,12 @@
+import type { TodoItem } from "@opencode-chat/core";
 import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { TodoHeader } from "../../../components/molecules/TodoHeader";
-import type { TodoItem } from "../../../utils/todo";
 
 const sampleTodos: TodoItem[] = [
-  { content: "Task 1", status: "completed", priority: undefined },
-  { content: "Task 2", status: "in_progress", priority: "high" },
-  { content: "Task 3", status: "pending", priority: undefined },
+  { id: "task-1", content: "Task 1", status: "completed", priority: "" },
+  { id: "task-2", content: "Task 2", status: "in_progress", priority: "high" },
+  { id: "task-3", content: "Task 3", status: "pending", priority: "" },
 ];
 
 describe("TodoHeader", () => {
@@ -53,8 +53,8 @@ describe("TodoHeader", () => {
     // shows full completion count
     it("全完了数を表示すること", () => {
       const allDone: TodoItem[] = [
-        { content: "Done 1", status: "completed", priority: undefined },
-        { content: "Done 2", status: "done", priority: undefined },
+        { id: "done-1", content: "Done 1", status: "completed", priority: "" },
+        { id: "done-2", content: "Done 2", status: "done", priority: "" },
       ];
       const { container } = render(<TodoHeader todos={allDone} />);
       expect(container.querySelector(".count")?.textContent).toBe("2/2");

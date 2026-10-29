@@ -6,8 +6,10 @@ import { stageBundledResearchResources } from "../../scripts/stage-bundled-resea
 import {
   deriveExpectedExtensionManifest,
   EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS,
+  REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS,
   readZipArchiveEntries,
   verifyBundledResearchArchiveEntries,
+  verifyBundledScribeContextPluginArchiveEntries,
   verifyVsixArchiveHygiene,
   verifyVsixManifest,
 } from "../../scripts/verify-bundled-research-package";
@@ -85,6 +87,7 @@ function makeArchive(extraEntries: Readonly<Record<string, string>> = {}): Uint8
     "extension/package.json": JSON.stringify(expectedManifest),
     "extension/dist/extension.js": "bundle",
     ...Object.fromEntries(EXPECTED_BUNDLED_RESEARCH_ARCHIVE_PATHS.map((entry) => [entry, "resource"])),
+    ...Object.fromEntries(REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS.map((entry) => [entry, "plugin"])),
     ...extraEntries,
   });
 }
@@ -265,6 +268,30 @@ describe("verifyBundledResearchArchiveEntries", () => {
   });
 });
 
+describe("verifyBundledScribeContextPluginArchiveEntries", () => {
+  it("requires each plugin byte in the installed extension root exactly once", () => {
+    expect(() =>
+      verifyBundledScribeContextPluginArchiveEntries(REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS),
+    ).not.toThrow();
+    expect(() =>
+      verifyBundledScribeContextPluginArchiveEntries(
+        REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS.map((entry) => `./${entry}`),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      verifyBundledScribeContextPluginArchiveEntries(REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS.slice(1)),
+    ).toThrow(
+      "VSIX is missing bundled Scribe context plugin resources: extension/dist/scribe-context-plugin/package.json",
+    );
+    expect(() =>
+      verifyBundledScribeContextPluginArchiveEntries([
+        ...REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS,
+        REQUIRED_BUNDLED_SCRIBE_PLUGIN_ARCHIVE_PATHS[0],
+      ]),
+    ).toThrow("VSIX contains duplicate bundled Scribe context plugin resources");
+  });
+});
+
 describe("verify VSIX archive manifest and hygiene", () => {
   it("accepts a valid archive and reads its central-directory entries", () => {
     const archive = makeArchive();
@@ -272,6 +299,7 @@ describe("verify VSIX archive manifest and hygiene", () => {
     expect(() => verifyVsixManifest(archive, expectedManifest, entries)).not.toThrow();
     expect(() => verifyVsixArchiveHygiene(entries)).not.toThrow();
     expect(() => verifyBundledResearchArchiveEntries(entries)).not.toThrow();
+    expect(() => verifyBundledScribeContextPluginArchiveEntries(entries)).not.toThrow();
   });
 
   it.each([

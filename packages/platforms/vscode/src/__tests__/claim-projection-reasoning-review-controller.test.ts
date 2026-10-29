@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ClaimProjectionReasoningReviewController } from "../vibefeld/claim-projection-reasoning-review-controller";
-import type { ClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
+import type { ClaimProjectionCapability, ClaimProjectionSeam } from "../vibefeld/claim-projection-seam";
 import { createFixtureOnlyClaimProjectionSeam } from "../vibefeld/fixture-claim-projection-seam";
 
 const source = "CONCLUSION: claim-1\nCLAIM: claim-1|deductive|A bounded conclusion.";
@@ -28,7 +28,7 @@ describe("ClaimProjectionReasoningReviewController", () => {
   it("does not invoke the seam for an invalid graph", async () => {
     const project = vi.fn();
     const seam: ClaimProjectionSeam = {
-      getCapability: vi.fn(() => ({ supported: true, operation: "claim_projection" })),
+      getCapability: vi.fn((): ClaimProjectionCapability => ({ supported: true, operation: "claim_projection" })),
       project,
     };
     const controller = new ClaimProjectionReasoningReviewController(seam);
@@ -42,7 +42,7 @@ describe("ClaimProjectionReasoningReviewController", () => {
 
   it("keeps the current unsupported seam unavailable and non-structural", async () => {
     const seam: ClaimProjectionSeam = {
-      getCapability: vi.fn(() => ({ supported: false })),
+      getCapability: vi.fn((): ClaimProjectionCapability => ({ supported: false })),
       project: vi.fn(),
     };
     const controller = new ClaimProjectionReasoningReviewController(seam);
@@ -68,6 +68,7 @@ describe("ClaimProjectionReasoningReviewController", () => {
     const seam: ClaimProjectionSeam = {
       getCapability: () => ({ supported: true, operation: "claim_projection" }),
       project: async (graph, signal) => {
+        if (!signal) throw new Error("projection signal missing");
         const result = project(graph, signal);
         const cancellation = new Promise<{ status: "unavailable"; reason: "cancelled" }>((completion) =>
           signal?.addEventListener("abort", () => completion({ status: "unavailable", reason: "cancelled" }), {

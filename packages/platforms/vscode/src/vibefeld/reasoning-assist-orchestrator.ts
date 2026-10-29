@@ -2,9 +2,9 @@
  * Host-private reasoning-assist preflight orchestrator.
  *
  * For one eligible Scribe text prompt this module runs exactly one bounded
- * architect preflight, then optional AF structure recording and one optional
- * critic stage concurrently, and publishes ordered, prompt-scoped progress. It
- * owns no AF, critic, provider, VS Code, or webview dependency beyond the
+ * architect preflight, then optional AF structure recording, and publishes
+ * prompt-scoped progress only after a valid argument map exists. It owns no AF,
+ * provider, VS Code, or webview dependency beyond the
  * injected adapter, recorder, and progress sink, and performs no I/O.
  *
  * An elapsed deadline is not staleness: only an aborted signal or a superseded
@@ -28,10 +28,15 @@ import {
   type ArchitectPacketIneligibleReason,
   type ArchitectRecentTurn,
   buildArchitectPacket,
-  parseArchitectResult,
+  parseArchitectResultWithDetails,
 } from "./reasoning-assist-architect";
-import { buildCriticPacket, type CriticObjection, parseCriticResult } from "./reasoning-assist-critic";
 import type { ReasoningAssistStructureRecorder } from "./reasoning-assist-structure-recorder";
+import {
+  createReasoningDiagnosticClock,
+  elapsedReasoningMilliseconds,
+  type ReasoningDiagnosticEvent,
+  type ReasoningDiagnosticOutcome,
+} from "./reasoning-diagnostics";
 import type {
   ReasoningAssistContextMetadata,
   ReasoningAssistRestrictedReviewAdapter,
@@ -88,7 +93,7 @@ const STAGE_FAILURE_UNCHANGED_REASONS: Readonly<
  */
 export type ReasoningAssistPreflightAdapter = Pick<
   ReasoningAssistRestrictedReviewAdapter,
-  "createReasoningAssistContext" | "runReasoningAssistStage" | "cancelReasoningAssistContext" | "supportedStages"
+  "createReasoningAssistContext" | "runReasoningAssistStage" | "cancelReasoningAssistContext"
 >;
 
 /** The bounded preflight inputs; nothing else is accepted. */
@@ -125,7 +130,6 @@ export type ReasoningAssistPreflightOutcome =
       graph: ClaimGraph;
       facts: ArchitectAssistFacts;
       afState: "recorded" | "not_available";
-      objections: readonly CriticObjection[];
       promptToken: string;
     }>;
 
@@ -141,7 +145,14 @@ export type ReasoningAssistPreflightRun = ReasoningAssistPreflightInput &
     signal?: AbortSignal;
     isCurrent: () => boolean;
     publishProgress: (stage: ReasoningAssistStage, promptToken: string) => void;
+    /**
+     * Called only after the architect has returned a fully validated argument
+     * map. `turn-finished` preserves the valid result for the host to discard
+     * explicitly without starting AF work or publishing progress.
+     */
+    onArgumentConfirmed?: (promptToken: string) => boolean | "turn-finished" | Promise<boolean | "turn-finished">;
     now?: () => number;
+    onDiagnostic?: (event: ReasoningDiagnosticEvent) => void;
   }>;
 
 let promptTokenCounter = 0;
@@ -173,54 +184,6 @@ function startAfRecording(
   }
 }
 
-/**
- * One self-contained critic chain: build the fixed packet from the validated
- * graph, run one restricted critic stage, and normalize at most two bounded
- * objections. A non-eligible packet, a missing context, a failed or throwing
- * stage, and a malformed or empty result all yield no objections. The critic
- * context is always disposed here and raw critic text never leaves this
- * helper.
- */
-async function runCriticEnrichment(
-  adapter: ReasoningAssistPreflightAdapter,
-  graph: ClaimGraph,
-  signal: AbortSignal,
-): Promise<readonly CriticObjection[]> {
-  let criticContext: ReasoningAssistContextMetadata | undefined;
-  try {
-    const packet = buildCriticPacket({ graph });
-    if (packet.kind !== "packet") return [];
-
-    try {
-      criticContext = await adapter.createReasoningAssistContext("critic");
-    } catch {
-      return [];
-    }
-    if (!criticContext) return [];
-
-    let result: Awaited<ReturnType<ReasoningAssistPreflightAdapter["runReasoningAssistStage"]>>;
-    try {
-      result = await adapter.runReasoningAssistStage(criticContext, packet.packet, "critic", signal);
-    } catch {
-      return [];
-    }
-    if (!result?.ok) return [];
-
-    const criticResult = parseCriticResult(result.text, packet.targets);
-    return criticResult.kind === "objections" ? criticResult.objections : [];
-  } catch {
-    return [];
-  } finally {
-    if (criticContext) {
-      try {
-        await adapter.cancelReasoningAssistContext(criticContext);
-      } catch {
-        // Disposal is best-effort; its failure must not change the outcome.
-      }
-    }
-  }
-}
-
 export async function runReasoningAssistPreflight(
   input: ReasoningAssistPreflightRun,
 ): Promise<ReasoningAssistPreflightOutcome> {
@@ -228,8 +191,45 @@ export async function runReasoningAssistPreflight(
   if (typeof input.userText !== "string") return { kind: "not-eligible" };
 
   const promptToken = mintPromptToken();
-  const now = input.now ?? Date.now;
+  const now = createReasoningDiagnosticClock(input.now);
   const startedAt = now();
+  let architectStartedAt: number | undefined;
+  let architectReported = false;
+  const report = (
+    stage: ReasoningDiagnosticEvent["stage"],
+    outcome: ReasoningDiagnosticOutcome,
+    stageStartedAt?: number,
+    details?: Pick<ReasoningDiagnosticEvent, "malformedShape" | "dependencySubreason" | "normalization">,
+  ): void => {
+    const elapsedMs = stageStartedAt === undefined ? undefined : elapsedReasoningMilliseconds(now, stageStartedAt);
+    try {
+      input.onDiagnostic?.({
+        stage,
+        outcome,
+        ...(details ?? {}),
+        ...(elapsedMs === undefined ? {} : { elapsedMs }),
+      });
+    } catch {
+      // Diagnostics are optional and cannot change preflight or dispatch behavior.
+    }
+  };
+  const reportArchitect = (outcome: ReasoningDiagnosticOutcome): void => {
+    if (architectReported) return;
+    architectReported = true;
+    report("architect", outcome, architectStartedAt);
+  };
+  const finish = <T extends ReasoningAssistPreflightOutcome>(outcome: T): T => {
+    const label: ReasoningDiagnosticOutcome =
+      outcome.kind === "dispatch-unchanged"
+        ? outcome.reason
+        : outcome.kind === "argument"
+          ? "argument"
+          : outcome.kind === "stale"
+            ? "stale"
+            : "not-eligible";
+    report("total", label, startedAt);
+    return outcome;
+  };
   const invalidated = (): boolean => input.signal?.aborted === true || !input.isCurrent();
   const deadlineExceeded = (): boolean => now() - startedAt >= REASONING_ASSIST_PREFLIGHT_DEADLINE_MS;
 
@@ -248,7 +248,8 @@ export async function runReasoningAssistPreflight(
 
   const stale = async (): Promise<ReasoningAssistPreflightOutcome> => {
     await discardContext();
-    return { kind: "stale", promptToken };
+    if (architectStartedAt !== undefined) reportArchitect("stale");
+    return finish({ kind: "stale", promptToken });
   };
 
   /**
@@ -264,7 +265,8 @@ export async function runReasoningAssistPreflight(
   ): Promise<ReasoningAssistPreflightOutcome> => {
     const stageElapsedMs = reason.startsWith("stage-failed") || reason === "deadline" ? now() - startedAt : undefined;
     await discardContext();
-    return {
+    reportArchitect(reason);
+    return finish({
       kind: "dispatch-unchanged",
       promptToken,
       reason,
@@ -273,7 +275,7 @@ export async function runReasoningAssistPreflight(
       // only; no other unchanged reason carries one.
       ...(reason === "invalid-result" && parseReason !== undefined ? { parseReason } : {}),
       ...(stageElapsedMs === undefined ? {} : { stageElapsedMs }),
-    };
+    });
   };
 
   // Invalidation (a superseded or cancelled prompt) is stale and publishes
@@ -282,8 +284,6 @@ export async function runReasoningAssistPreflight(
   // both hold, invalidation wins.
   if (invalidated()) return stale();
   if (deadlineExceeded()) return unchanged("deadline");
-
-  input.publishProgress("assessing", promptToken);
 
   const packet = buildArchitectPacket({
     userText: input.userText,
@@ -297,34 +297,71 @@ export async function runReasoningAssistPreflight(
   if (invalidated()) return stale();
   if (deadlineExceeded()) return unchanged("deadline");
 
+  architectStartedAt = now();
   try {
-    context = await input.adapter.createReasoningAssistContext("architect");
+    context = input.signal
+      ? await input.adapter.createReasoningAssistContext("architect", input.signal)
+      : await input.adapter.createReasoningAssistContext("architect");
   } catch {
+    if (invalidated()) return stale();
     return unchanged("stage-unavailable");
   }
+  if (invalidated()) return stale();
   if (!context) return unchanged("stage-unavailable");
 
-  if (invalidated()) return stale();
   if (deadlineExceeded()) return unchanged("deadline");
 
   let result: Awaited<ReturnType<ReasoningAssistPreflightAdapter["runReasoningAssistStage"]>>;
   try {
     result = await input.adapter.runReasoningAssistStage(context, packet.packet, "architect", input.signal);
   } catch {
+    if (invalidated()) return stale();
     return unchanged("stage-failed");
   }
+  if (invalidated()) return stale();
   if (!result) return unchanged("stage-failed");
-  if (!result.ok) return unchanged(STAGE_FAILURE_UNCHANGED_REASONS[result.reason]);
+  if (!result.ok) return unchanged(STAGE_FAILURE_UNCHANGED_REASONS[result.reason] ?? "stage-failed");
 
   if (invalidated()) return stale();
   if (deadlineExceeded()) return unchanged("deadline");
 
-  const parsed = parseArchitectResult(result.text);
+  const parseStartedAt = now();
+  report("architect-result-parse", "started");
+  const parseDetails = parseArchitectResultWithDetails(result.text);
+  const parsed = parseDetails.result;
+  report("architect-result-parse", parsed.kind === "no-assist" ? parsed.reason : "success", parseStartedAt, {
+    ...(parseDetails.malformedShape ? { malformedShape: parseDetails.malformedShape } : {}),
+    ...(parseDetails.dependencySubreason ? { dependencySubreason: parseDetails.dependencySubreason } : {}),
+    ...(parseDetails.normalizationApplied ? { normalization: "fenced" as const } : {}),
+  });
   if (parsed.kind === "ordinary") return unchanged("ordinary");
   // The only other non-argument parse result is `no-assist`; its bounded
   // diagnostic facts are the numeric stage text length and the schema
   // validation sub-reason.
   if (parsed.kind !== "argument") return unchanged("invalid-result", result.text.length, parsed.reason);
+
+  reportArchitect("argument");
+
+  if (input.onArgumentConfirmed) {
+    let confirmation: boolean | "turn-finished" = false;
+    try {
+      confirmation = await input.onArgumentConfirmed(promptToken);
+    } catch {
+      confirmation = false;
+    }
+    if (invalidated()) return stale();
+    if (confirmation === "turn-finished") {
+      await discardContext();
+      return finish({
+        kind: "argument",
+        graph: parsed.graph,
+        facts: parsed.facts,
+        afState: "not_available",
+        promptToken,
+      });
+    }
+    if (!confirmation) return unchanged("stage-unavailable");
+  }
 
   input.publishProgress("mapping", promptToken);
   await discardContext();
@@ -340,20 +377,18 @@ export async function runReasoningAssistPreflight(
       afRequested = false;
     }
   }
-  const criticRequested =
-    Array.isArray(input.adapter.supportedStages) && input.adapter.supportedStages.includes("critic");
-
   let afState: "recorded" | "not_available" = "not_available";
-  let objections: readonly CriticObjection[] = [];
+  let afOutcome: "recorded" | "not-recorded" | "not-requested" | "deadline" | "cancelled" = afRequested
+    ? "not-recorded"
+    : "not-requested";
 
   // Optional enrichment runs only inside the remaining preflight budget. No
   // budget means no labels and no work, and a deadline expiry during enrichment
   // omits only its facts: an elapsed deadline still returns the argument.
   const remainingBudget = REASONING_ASSIST_PREFLIGHT_DEADLINE_MS - (now() - startedAt);
   let enrichmentController: AbortController | undefined;
-  if (remainingBudget > 0 && (afRequested || criticRequested)) {
+  if (remainingBudget > 0 && afRequested) {
     if (afRequested) input.publishProgress("recording", promptToken);
-    if (criticRequested) input.publishProgress("critiquing", promptToken);
 
     const controller = new AbortController();
     enrichmentController = controller;
@@ -363,29 +398,42 @@ export async function runReasoningAssistPreflight(
       input.signal?.addEventListener("abort", relayAbort, { once: true });
       timer = setTimeout(() => controller.abort(), remainingBudget);
 
-      // Both optional chains start before either is awaited so AF recording and
-      // the restricted critic share the remaining budget concurrently.
+      // AF recording is the only optional enrichment in the assist path; the
+      // architect remains the sole semantic classifier.
+      const afStartedAt = afRequested ? now() : undefined;
       const afTask: Promise<"recorded" | "not_available"> | undefined =
         afRequested && recorder ? startAfRecording(recorder, parsed.graph, controller.signal) : undefined;
-      const criticTask: Promise<readonly CriticObjection[]> | undefined = criticRequested
-        ? runCriticEnrichment(input.adapter, parsed.graph, controller.signal)
-        : undefined;
+      const timedAfTask = afTask?.then((state) => {
+        afState = state;
+        afOutcome =
+          state === "recorded"
+            ? "recorded"
+            : controller.signal.aborted
+              ? input.signal?.aborted
+                ? "cancelled"
+                : "deadline"
+              : "not-recorded";
+        report("af", afOutcome, afStartedAt);
+        return state;
+      });
       const started: Array<Promise<unknown>> = [];
-      if (afTask) started.push(afTask);
-      if (criticTask) started.push(criticTask);
+      if (timedAfTask) started.push(timedAfTask);
       if (started.length > 0) await Promise.allSettled(started);
-      if (afTask) afState = await afTask;
-      if (criticTask) objections = await criticTask;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       input.signal?.removeEventListener("abort", relayAbort);
     }
+  } else {
+    if (afRequested) afOutcome = "deadline";
   }
+
+  if (!afRequested) report("af", "not-requested");
+  else if (afOutcome === "deadline") report("af", afOutcome);
 
   if (invalidated()) {
     enrichmentController?.abort();
     return stale();
   }
 
-  return { kind: "argument", graph: parsed.graph, facts: parsed.facts, afState, objections, promptToken };
+  return finish({ kind: "argument", graph: parsed.graph, facts: parsed.facts, afState, promptToken });
 }

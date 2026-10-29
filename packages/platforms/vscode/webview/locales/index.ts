@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { LocaleSchema } from "./en";
 import { en } from "./en";
 import { es } from "./es";
 import { ja } from "./ja";
@@ -11,7 +12,7 @@ import { zhTw } from "./zh-tw";
 export type SupportedLocale = "en" | "ja" | "zh-cn" | "ko" | "zh-tw" | "es" | "pt-br" | "ru";
 export type LocaleSetting = "auto" | SupportedLocale;
 
-const locales: Record<SupportedLocale, typeof en> = {
+const locales: Record<SupportedLocale, LocaleSchema> = {
   en,
   ja,
   "zh-cn": zhCn,
@@ -35,15 +36,15 @@ export function resolveLocale(setting: LocaleSetting, vscodeLanguage: string): S
   return "en";
 }
 
-export function getStrings(locale: SupportedLocale): typeof en {
+export function getStrings(locale: SupportedLocale): LocaleSchema {
   return locales[locale] ?? locales.en;
 }
 
 // React Context
-const LocaleContext = createContext<typeof en>(en);
+const LocaleContext = createContext<LocaleSchema>(en);
 
 export const LocaleProvider = LocaleContext.Provider;
 
-export function useLocale(): typeof en {
+export function useLocale(): LocaleSchema {
   return useContext(LocaleContext);
 }

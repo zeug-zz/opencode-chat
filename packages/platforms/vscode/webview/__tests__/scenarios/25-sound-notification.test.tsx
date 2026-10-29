@@ -93,12 +93,41 @@ describe("サウンド通知", () => {
     await sendExtMessage({
       type: "event",
       event: {
-        type: "permission.updated",
-        properties: { id: "perm1", title: "allow bash", sessionID: "s1", messageID: "m1", type: "execute" },
+        type: "permission.asked",
+        properties: {
+          id: "perm1",
+          sessionID: "s1",
+          permission: "bash",
+          patterns: ["git status"],
+          metadata: {},
+          always: [],
+          tool: { messageID: "m1", callID: "call1" },
+        },
       },
     });
 
     expect(AudioContext).toHaveBeenCalled();
+  });
+
+  it("別セッションの permission.asked ではサウンドが再生されないこと", async () => {
+    await setupForSoundSettings();
+
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "permission.asked",
+        properties: {
+          id: "perm-child",
+          sessionID: "child-session",
+          permission: "bash",
+          patterns: ["git status"],
+          metadata: {},
+          always: [],
+        },
+      },
+    });
+
+    expect(AudioContext).not.toHaveBeenCalled();
   });
 
   // Error event triggers sound

@@ -2,6 +2,7 @@ import type { QuestionRequest } from "@opencode-chat/core";
 import type { MessageWithParts } from "../../../App";
 import { useAutoScroll } from "../../../hooks/useAutoScroll";
 import type { ReasoningAssistRowState } from "../../../hooks/useReasoningAssist";
+import type { ReasoningReviewViewState } from "../../../hooks/useReasoningReview";
 import { useLocale } from "../../../locales";
 import { ForkIcon, RevertIcon } from "../../atoms/icons";
 import { ScrollToBottomButton } from "../../atoms/ScrollToBottomButton";
@@ -17,6 +18,10 @@ type Props = {
   showAllThinking?: boolean;
   questions: Map<string, QuestionRequest>;
   reasoningAssistRows?: ReasoningAssistRowState[];
+  reasoningReviewAvailable?: boolean;
+  reasoningReviews?: ReadonlyMap<string, ReasoningReviewViewState>;
+  onRequestReasoningReview?: (sessionId: string, messageId: string) => void;
+  onCancelReasoningReview?: (sessionId: string, messageId: string) => void;
   onEditAndResend: (messageId: string, text: string) => void;
   onRevertToCheckpoint: (assistantMessageId: string, userText: string | null) => void;
   onForkFromCheckpoint: (messageId: string) => void;
@@ -52,6 +57,10 @@ export function MessagesArea({
   showAllThinking = false,
   questions,
   reasoningAssistRows,
+  reasoningReviewAvailable = false,
+  reasoningReviews,
+  onRequestReasoningReview,
+  onCancelReasoningReview,
   onEditAndResend,
   onRevertToCheckpoint,
   onForkFromCheckpoint,
@@ -84,6 +93,10 @@ export function MessagesArea({
               activeSessionId={activeSessionId}
               showAllThinking={showAllThinking}
               questions={isAssistant ? getQuestionsForMessage(questions, msg.info.id) : new Map()}
+              reasoningReviewAvailable={reasoningReviewAvailable}
+              reasoningReview={reasoningReviews?.get(`${activeSessionId}\u0000${msg.info.id}`)}
+              onRequestReasoningReview={onRequestReasoningReview}
+              onCancelReasoningReview={onCancelReasoningReview}
               onEditAndResend={onEditAndResend}
             />
             {anchoredRows?.map((row) => (

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import { promptForInitialNonoProfile, readSelectedNonoProfile, selectNonoProfile } from "../nono-profile-settings";
 
-const workspaceTarget = { fsPath: "/workspace/project", scheme: "file" };
+const workspaceTarget = vscode.Uri.file("/workspace/project");
 
 vi.mock("../nono-resolver", () => ({
   discoverNonoProfiles: vi.fn().mockResolvedValue(["opencode-local", "writing"]),

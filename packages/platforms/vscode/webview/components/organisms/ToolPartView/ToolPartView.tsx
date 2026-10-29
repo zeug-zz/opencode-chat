@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useAppContext } from "../../../contexts/AppContext";
 import { useLocale } from "../../../locales";
 import { getFileIcon } from "../../../utils/file-icons";
+import { asRecord, formatToolOutput } from "../../../utils/format-tool-output";
 import { parseTodos } from "../../../utils/todo";
 import { CATEGORY_LABEL_KEYS, getCategory, type ToolCategory } from "../../../utils/tool-categories";
 import {
@@ -78,7 +79,9 @@ export function ToolPartView({ part }: Props) {
   const actionLabel = t[CATEGORY_LABEL_KEYS[category]];
   const title = formatTitle(part);
 
-  const input = (state.status !== "pending" ? state.input : null) as Record<string, unknown> | null;
+  const input = asRecord(state.status !== "pending" ? state.input : null);
+  const output = state.status === "completed" ? formatToolOutput(state.output, t["tool.outputUnavailable"]) : null;
+  const error = state.status === "error" ? formatToolOutput(state.error, t["tool.outputUnavailable"]) : null;
   const isEdit = input ? isFileEditInput(input) : false;
   const isCreate = input ? isFileCreateInput(input) : false;
 
@@ -87,8 +90,8 @@ export function ToolPartView({ part }: Props) {
   const todos = useMemo(() => {
     if (!isTodoTool) return null;
     // outputから試す（todoread, todowrite完了後）
-    if (isCompleted && state.output) {
-      const fromOutput = parseTodos(state.output);
+    if (isCompleted && output !== null) {
+      const fromOutput = parseTodos(output);
       if (fromOutput) return fromOutput;
     }
     // inputから試す（todowrite）
@@ -97,7 +100,7 @@ export function ToolPartView({ part }: Props) {
       if (fromInput) return fromInput;
     }
     return null;
-  }, [isTodoTool, isCompleted, state, input]);
+  }, [isTodoTool, isCompleted, output, input]);
 
   // タイトル表示: todoツールの場合は件数を正しく表示
   const displayTitle = useMemo(() => {
@@ -188,9 +191,11 @@ export function ToolPartView({ part }: Props) {
             <FileCreateView content={input.content as string} />
           ) : (
             <>
-              {isCompleted && state.output && <pre className={styles.output}>{state.output}</pre>}
-              {isError && <pre className={`${styles.output} ${styles.outputError}`}>{state.error}</pre>}
-              {isActive && input && <pre className={styles.output}>{JSON.stringify(input, null, 2)}</pre>}
+              {isCompleted && output !== null && <pre className={styles.output}>{output}</pre>}
+              {isError && error !== null && <pre className={`${styles.output} ${styles.outputError}`}>{error}</pre>}
+              {isActive && input && (
+                <pre className={styles.output}>{formatToolOutput(input, t["tool.outputUnavailable"], 2)}</pre>
+              )}
             </>
           )}
         </div>

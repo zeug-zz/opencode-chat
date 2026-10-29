@@ -1,8 +1,9 @@
+import type { AgentEvent, ToolPart } from "@opencode-chat/core";
 import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPersistedState, postMessage, setPersistedState } from "../../vscode-api";
-import { createMessage, createSession, createTextPart } from "../factories";
+import { createMessage, createSession, createTextPart, createToolPart } from "../factories";
 import { renderApp, sendExtMessage } from "../helpers";
 
 /** アクティブセッションを持つ状態をセットアップする */
@@ -16,6 +17,147 @@ async function setupActiveSession() {
 
 // Messaging
 describe("メッセージング", () => {
+  it("renders native execute progress, partial result, and final text from host events", async () => {
+    const session = await setupActiveSession();
+    const assistant = createMessage({ id: "native-execute", sessionID: session.id, role: "assistant" });
+    await sendExtMessage({ type: "messages", sessionId: session.id, messages: [{ info: assistant, parts: [] }] });
+    const running: ToolPart = createToolPart("execute", {
+      id: "execute-call",
+      sessionID: session.id,
+      messageID: assistant.id,
+      state: {
+        status: "running",
+        input: { code: 'return await search({ namespace: "firecrawl_fixture", limit: 20 })' },
+        metadata: { toolCalls: [{ tool: "search", status: "running", input: { query: "fixture" } }] },
+      },
+    });
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "message.updated",
+        properties: { sessionID: session.id, info: assistant, parts: [running] },
+      } satisfies AgentEvent,
+    });
+    const progressed: ToolPart = {
+      ...running,
+      state: {
+        ...running.state,
+        status: "running",
+        input: { code: 'return await search({ namespace: "firecrawl_fixture", limit: 20 })' },
+        metadata: { toolCalls: [{ tool: "search", status: "completed", input: { query: "fixture" } }] },
+      },
+    };
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "message.part.updated",
+        properties: { sessionID: session.id, part: progressed },
+      } satisfies AgentEvent,
+    });
+    const output = JSON.stringify({
+      sources: [
+        { url: "https://fixture.invalid/source/shared", title: "Shared synthetic source" },
+        { url: "https://fixture.invalid/source/firecrawl", title: "firecrawl source" },
+        { url: "https://fixture.invalid/source/context-mode", title: "context-mode source" },
+      ],
+      failures: ["Fixture source unavailable"],
+      fetched: { fixture: "native-fetch-ok" },
+      denials: [
+        { status: "rejected", classification: "unknown-tool" },
+        { status: "rejected", classification: "permission-denied" },
+      ],
+    });
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: session.id,
+          part: { ...progressed, state: { status: "completed", input: { code: "return results" }, output } },
+        },
+      } satisfies AgentEvent,
+    });
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: session.id,
+          part: createTextPart("Research summary", { sessionID: session.id, messageID: assistant.id }),
+        },
+      } satisfies AgentEvent,
+    });
+
+    fireEvent.click(document.querySelector(".header")!);
+    expect(document.querySelector(".output")).toHaveTextContent("https://fixture.invalid/source/shared");
+    expect(document.querySelector(".output")).toHaveTextContent("https://fixture.invalid/source/firecrawl");
+    expect(document.querySelector(".output")).toHaveTextContent("https://fixture.invalid/source/context-mode");
+    expect(document.querySelector(".output")).toHaveTextContent("Fixture source unavailable");
+    expect(screen.getByText("Research summary")).toBeInTheDocument();
+  });
+
+  it("Stop aborts a running execute once and the native error restores idle controls", async () => {
+    const session = await setupActiveSession();
+    const assistant = createMessage({ id: "stopped-execute", sessionID: session.id, role: "assistant" });
+    const running = createToolPart("execute", {
+      id: "stopped-execute-part",
+      sessionID: session.id,
+      messageID: assistant.id,
+      state: { status: "running", input: { code: 'await search({ namespace: "firecrawl_fixture", limit: 20 })' } },
+    });
+    await sendExtMessage({
+      type: "messages",
+      sessionId: session.id,
+      messages: [{ info: assistant, parts: [running] }],
+    });
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "session.status",
+        properties: { sessionID: session.id, status: { type: "busy" } },
+      } satisfies AgentEvent,
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("Stop"));
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "abort", sessionId: session.id });
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "toolInvocation" }));
+
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: session.id,
+          part: {
+            ...running,
+            state: {
+              status: "error",
+              input: { code: 'await search({ namespace: "firecrawl_fixture", limit: 20 })' },
+              error: "Tool execution failed.",
+            },
+          },
+        },
+      } satisfies AgentEvent,
+    });
+    await sendExtMessage({
+      type: "event",
+      event: {
+        type: "session.status",
+        properties: { sessionID: session.id, status: { type: "idle" } },
+      } satisfies AgentEvent,
+    });
+
+    fireEvent.click(document.querySelector(".header")!);
+    expect(screen.getByText("Tool execution failed.")).toBeInTheDocument();
+    expect(screen.getByTitle("Send")).toBeInTheDocument();
+    expect(screen.queryByTitle("Stop")).not.toBeInTheDocument();
+    expect(document.querySelector(".outputError")).toHaveTextContent("Tool execution failed.");
+    expect(document.querySelector(".output:not(.outputError)")).not.toBeInTheDocument();
+  });
+
   it("mcpPrefs を受信すると保存された設定で mcpStatus を再適用すること", async () => {
     const persistedState = { mcpEnabledByServer: {} } as NonNullable<ReturnType<typeof getPersistedState>>;
     vi.mocked(getPersistedState).mockReturnValue(persistedState);
@@ -38,7 +180,8 @@ describe("メッセージング", () => {
     });
 
     expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "filesystem" });
-    expect(postMessage).toHaveBeenCalledWith({ type: "connectMcp", server: "locked" });
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "connectMcp", server: "locked" });
+    expect(persistedState.mcpEnabledByServer).toEqual({ filesystem: true, locked: true });
   });
 
   it("failed status does not auto-connect and an identical disabled echo is suppressed", async () => {
@@ -178,6 +321,41 @@ describe("メッセージング", () => {
     });
 
     expect(screen.getByText("New response")).toBeInTheDocument();
+  });
+
+  it("renders an admitted user prompt once when its history snapshot is refreshed", async () => {
+    const session = await setupActiveSession();
+    const admittedUser = createMessage({ id: "admitted-user", sessionID: session.id, role: "user" });
+    const admittedPart = createTextPart("Prompt visible before history refresh", {
+      messageID: admittedUser.id,
+      sessionID: session.id,
+    });
+    const headerEvent: AgentEvent = {
+      type: "message.updated",
+      properties: { sessionID: session.id, info: admittedUser },
+    };
+    const partEvent: AgentEvent = {
+      type: "message.part.updated",
+      properties: { sessionID: session.id, part: admittedPart },
+    };
+
+    await sendExtMessage({ type: "event", event: headerEvent });
+    await sendExtMessage({ type: "event", event: partEvent });
+    await sendExtMessage({ type: "event", event: headerEvent });
+    await sendExtMessage({ type: "event", event: partEvent });
+
+    expect(screen.getAllByText("Prompt visible before history refresh")).toHaveLength(1);
+    const reloadedUser = {
+      ...admittedUser,
+      time: { ...admittedUser.time, created: admittedUser.time.created + 1 },
+    };
+    await sendExtMessage({
+      type: "messages",
+      sessionId: session.id,
+      messages: [{ info: reloadedUser, parts: [admittedPart] }],
+    });
+
+    expect(screen.getAllByText("Prompt visible before history refresh")).toHaveLength(1);
   });
 
   // session.status busy shows StreamingIndicator and stop button

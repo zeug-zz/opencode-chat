@@ -1,7 +1,7 @@
 {
   "name": "opencode-chat-monorepo",
   "private": true,
-  "version": "0.17.1",
+  "version": "0.18.0",
   "packageManager": "pnpm@10.16.0",
   "license": "MIT",
   "repository": {
@@ -21,14 +21,16 @@
   },
   "pnpm": {
     "overrides": {
-      "undici": "^7.29.0",
       "picomatch": "^4.0.4",
       "fast-uri": "^3.1.6",
+      "shell-quote": "^1.11.0",
+      "source-map-js": "^1.2.2",
       "lodash": "^4.18.0",
+      "mermaid>katex": "0.18.11",
       "tmp": "^0.2.6",
       "postcss": "^8.5.20",
       "uuid": "^11.1.1",
-      "qs": "^6.16.0",
+      "qs": "^6.16.1",
       "brace-expansion": "^5.0.9",
       "esbuild": "^0.28.1",
       "form-data": "^4.0.6",
@@ -37,7 +39,9 @@
       "linkify-it": "^5.0.2",
       "nanoid": "^3.3.18",
       "lodash-es": "^4.18.0",
-      "react-dom": "19.3.0"
+      "react-dom": "19.3.0",
+      "@vscode/sandbox-runtime>zod": "4.6.6",
+      "@azure/identity>@azure/msal-node": "7.1.0"
     }
   }
 }

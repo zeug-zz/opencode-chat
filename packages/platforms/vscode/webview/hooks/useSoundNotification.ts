@@ -94,9 +94,11 @@ export function useSoundNotification(activeSessionRef: RefObject<ChatSession | n
           }
           break;
         }
-        case "permission.updated":
+        case "permission.asked": {
+          if (activeId && event.properties.sessionID !== activeId) break;
           eventType = "permissionRequest";
           break;
+        }
         case "question.asked": {
           if (activeId && event.properties.sessionID !== activeId) break;
           eventType = "questionAsked";

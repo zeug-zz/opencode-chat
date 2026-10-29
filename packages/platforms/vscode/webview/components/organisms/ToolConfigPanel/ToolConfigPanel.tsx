@@ -30,6 +30,7 @@ type Props = {
   soundSettings: SoundSettings;
   onSoundSettingChange: (eventType: SoundEventType, setting: Partial<SoundEventSetting>) => void;
   mcpServers?: McpStatus | null;
+  mcpLocked?: readonly string[];
   onMcpToggle?: (server: string, enabled: boolean) => void;
   sandboxStatus?: ChatSandboxStatus;
   onChatSandboxSettingsChange?: (settings: ChatSandboxSettings) => void;
@@ -50,6 +51,7 @@ export function ToolConfigPanel({
   soundSettings,
   onSoundSettingChange,
   mcpServers,
+  mcpLocked = [],
   onMcpToggle,
   sandboxStatus,
   onChatSandboxSettingsChange,
@@ -211,15 +213,21 @@ export function ToolConfigPanel({
                 {Object.entries(mcpServers).map(([name, server]) => {
                   const lifecycleLabel =
                     !server.connected && server.status !== "unknown" ? formatMcpLifecycle(server) : null;
+                  const isLocked = mcpLocked.includes(name);
                   return (
                     <label key={name} className={`${styles.toggle} ${styles.toolItem} ${styles.mcpRow}`}>
                       <input
                         type="checkbox"
-                        checked={server.connected}
+                        checked={server.connected && !isLocked}
+                        disabled={isLocked}
                         onChange={(e) => onMcpToggle?.(name, e.target.checked)}
                       />
                       <span className={styles.toolName}>{name}</span>
-                      {lifecycleLabel && <span className={styles.mcpLifecycle}>{lifecycleLabel}</span>}
+                      {isLocked ? (
+                        <span className={styles.mcpLifecycle}>{t["config.mcpLocked"]}</span>
+                      ) : (
+                        lifecycleLabel && <span className={styles.mcpLifecycle}>{lifecycleLabel}</span>
+                      )}
                     </label>
                   );
                 })}

@@ -35,22 +35,32 @@ export type OpenCodeCommandDefinition = {
   template: string;
 };
 
-export type OpenCodePluginEntry = string | readonly [string, ...(readonly unknown[])];
+export type OpenCodePluginEntry = string | Readonly<{ package: string; options?: Readonly<Record<string, unknown>> }>;
 
 export type OpenCodeGuidanceOverlay = {
   skills?: { paths: readonly string[] };
   command?: Record<string, OpenCodeCommandDefinition>;
 };
 
-export type OpenCodeRestrictedReviewConfiguration = {
-  model: string;
+type OpenCodeRestrictedReviewConfigurationBase = {
   prompt: string;
   maxSteps: number;
   dynamicToolNames?: readonly string[];
 };
 
+/**
+ * Existing callers may pin a reviewed model explicitly. Production V2 launch
+ * configuration instead uses the deliberate native-default mode, which
+ * leaves the model absent from the hidden agent entry until the host resolves
+ * and pins the active workspace's OpenCode default for a review session.
+ */
+export type OpenCodeRestrictedReviewConfiguration = OpenCodeRestrictedReviewConfigurationBase &
+  ({ model: string; modelResolution?: "pinned" } | { model?: never; modelResolution: "native-default" });
+
 export type OpenCodeLaunchConfiguration = {
   workspacePath: string;
+  /** Host-resolved path facts; these are not reported by the V2 API. */
+  hostPaths?: Readonly<{ config: string; state: string }>;
   /** Set by the extension host for every new companion connection. */
   backend?: OpenCodeLaunchBackend;
   sandbox: {
@@ -63,8 +73,10 @@ export type OpenCodeLaunchConfiguration = {
   executable: OpenCodeExecutableSelection;
   /** Resolved nono executable and trusted profile, required when backend is nono. */
   nono?: OpenCodeNonoLaunch;
+  /** Native sources for the private child overlay only; never persisted to user/project configuration. */
   pluginSources?: readonly OpenCodePluginEntry[];
-  mcpOverlay?: { mcp: Record<string, { enabled: boolean }> };
+  /** Host-composed native MCP config fragment, serialized only for the child. */
+  mcpOverlay?: { mcp: Record<string, unknown> };
   mcpTransport?: Readonly<Record<string, import("./mcp-inventory").McpTransport>>;
   guidanceOverlay?: OpenCodeGuidanceOverlay;
   hindsightCompanionIntegration?: HindsightCompanionIntegration;

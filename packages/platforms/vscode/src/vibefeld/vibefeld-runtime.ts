@@ -64,7 +64,7 @@ export type AfRuntimeBridgeOptions = Readonly<{
   architecture: "arm64" | "x64" | "arm" | "ia32";
   resolveExecutable: () => string | undefined | Promise<string | undefined>;
   policy: AfExecutionPolicyAdapter | undefined;
-  proofStore: ProofWorkspaceStore;
+  proofStore: Pick<ProofWorkspaceStore, "allocate" | "resolvePath" | "cleanup">;
   /**
    * Mode-selected parsers. The production default is the live parser set, so
    * fixture-shaped evidence is never promoted by a production caller.
@@ -86,7 +86,20 @@ const failureReason = (value: AfProcessResult<unknown>): AfBridgeFailureReason =
   if (value.ok) return "operation-not-ready";
   if (value.classification.outcome === "audit-failed")
     return value.diagnostic === "cleanup" ? "cleanup-failure" : "audit-failure";
-  return value.diagnostic === "policy" ? "policy-unavailable" : value.diagnostic;
+  switch (value.diagnostic) {
+    case "policy":
+      return "policy-unavailable";
+    case "signal":
+      return "signaled";
+    case "cleanup":
+      return "cleanup-failure";
+    case "timeout":
+    case "cancelled":
+    case "non-zero":
+    case "malformed":
+    case "oversized":
+      return value.diagnostic;
+  }
 };
 
 const failureDiagnostic = (reason: AfBridgeFailureReason): AfBridgeResult["diagnostic"] =>

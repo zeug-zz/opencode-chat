@@ -14,13 +14,13 @@
     "test:all": "vitest run"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.18.18",
     "@opencode-chat/core": "workspace:*",
+    "@opencode/client": "2.1.0",
     "@vscode/sandbox-runtime": "0.0.1"
   },
   "devDependencies": {
-    "@types/node": "^26.5.1",
+    "@types/node": "^26.6.5",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.5"
   }
 }

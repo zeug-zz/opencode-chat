@@ -1,13 +1,17 @@
 # OpenCode Scribe
 
-[![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.134.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
+[![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.137.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
 [![License](https://img.shields.io/github/license/zeug-zz/opencode-chat)](LICENSE)
 [![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
 [![Security Audit](<https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github>)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)
 
-An unofficial VS Code **chat, research, and report-writing harness** for [OpenCode](https://github.com/anomalyco/opencode). It is deliberately not another coding-agent GUI: use it to read workspace context, research with connected sources, discuss findings, and save reports to files. It runs **alongside** the OpenCode TUI, with unrestricted coding and shell work available through **Hand off to TUI** without killing chat.
+## 0.18.0 — rebuilt for OpenCode V2 only
 
-**This extension project began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui) and is not affiliated with or endorsed by the OpenCode project.**
+This is a major architectural rebuild, not an incremental fork update. Scribe now uses a native V2 adapter, an authenticated foreground server owned by the extension, in-memory overlays, and V2 event, session, and reasoning integrations. Scout research, Write reports, and the independent TUI handoff remain. Native Code Mode composes the tools each role is already permitted to use; it does not add shell access or expand security authority. OpenCode V1 is unsupported; see [Requirements](#requirements) for the supported version range.
+
+Scribe began as a fork of [ktmage/opencode-gui](https://github.com/ktmage/opencode-gui), but has since diverged substantially from that project and its own upstream lineage. This remains an unofficial extension, not affiliated with or endorsed by OpenCode.
+
+An unofficial VS Code **chat, research, and report-writing harness** for [OpenCode](https://github.com/anomalyco/opencode). It is deliberately not another coding-agent GUI: use it to read workspace context, research with connected sources, discuss findings, and save reports to files. It runs **alongside** the OpenCode TUI, with unrestricted coding and shell work available through **Hand off to TUI** without killing chat.
 
 ---
 
@@ -44,6 +48,7 @@ alongside the OpenCode TUI, not another coding-agent sidebar.
 - **Write** — Report authoring backed by OpenCode Build. Reads, searches, and edits requested artifacts within the workspace; agent Bash and subagent execution are denied.
 - **Purpose-built prompts** — Separate chat and write system prompts, so a read-only research assistant is never mixed with a report writer or coding-agent persona.
 - **Hand off to TUI** — Export the session to an independent OpenCode TUI while chat keeps running. The supported path for coding, shell, and unrestricted Build work.
+- **Native Code Mode** — Uses native `execute` and search over tools already permitted to each role; it adds no shell capability or security authority.
 
 **Interface**
 
@@ -64,9 +69,9 @@ alongside the OpenCode TUI, not another coding-agent sidebar.
 
 Scribe works without any of these; each is external tooling detected at runtime.
 
-- **Sandbox — [nono](https://github.com/nolabs-ai/nono)** — When Chat sandboxing is enabled on macOS/Linux, one process boundary covers the extension's OpenCode server, local and remote MCPs, and their descendants, with a versioned deny baseline for credentials, shell history, and browser/private data. Uses nono and its built-in `opencode` profile when available, otherwise the VS Code compatibility sandbox; fails closed with no unsandboxed retry. Unsupported on Windows.
+- **Sandbox — [nono](https://github.com/nolabs-ai/nono)** — When Chat sandboxing is enabled on macOS/Linux, the selected OS boundary covers the extension's OpenCode server and local MCP descendants. Remote MCP access is governed by network policy; remote execution remains an untrusted downstream boundary, not part of local process containment. Native nono uses the selected existing profile's grants; the VS Code compatibility backend applies Scribe's sandbox policy. Fails closed with no unsandboxed retry. Unsupported on Windows.
 - **Memory — [Hindsight](https://github.com/vectorize-io/hindsight)** — Provider-backed recall and reflection when the approved provider is detected. `AGENTS.md` stays ordinary project guidance, not session memory. Writes follow provider, lifecycle, and sandbox gates: explicit retention is confirmation-gated, and automatic summaries exclude secrets, raw tool payloads, and untrusted content.
-- **Logic — [Vibefeld](https://github.com/tobiasosborne/vibefeld)** — Optional prompt-scoped reasoning assist: for eligible Scout text prompts the host runs one bounded, hidden preflight — an architect maps the argument, an optional critic raises bounded objections, and the `af` bridge records the structure — then quietly appends a bounded brief to the response's system instructions while a compact row shows the lifecycle and applied summary. Not a theorem prover or evidence verifier; activates only when a compatible `af` runtime is detected and OpenCode's configured default model can be pinned for the hidden stages; any workspace can opt out. The brief rides the per-message system instruction — servers that ignore per-request system overrides in agent-mode sessions would show the assist lifecycle without informing the response (deferred: synthetic-part fallback).
+- **Logic — [Vibefeld](https://github.com/tobiasosborne/vibefeld)** — Optional reasoning assist. For eligible Scout prompts, the architect runs in parallel with prompt admission; the `af` bridge records structure on the host. A bundled private plugin can provide an ephemeral, current-turn brief, while critic and verifier reviews are optional and on demand. Ordinary prompts have no assist UI; completed answers offer manual review under the secondary **More actions** menu. Any workspace can opt out.
 
 **Security posture**
 
@@ -81,12 +86,14 @@ Scribe works without any of these; each is external tooling detected at runtime.
 
 ### Requirements
 
-- [OpenCode](https://github.com/anomalyco/opencode) installed
+- [OpenCode](https://github.com/anomalyco/opencode) stable V2, version `>=2.1.3` and `<3.0.0` (V1, earlier versions, prereleases, and OpenCode 3.x are unsupported). This is a production eligibility range, not a qualification claim for every future release; Scribe still verifies its authenticated child process, endpoint, version, location, and response contracts fail closed.
 - LLM provider authentication configured in OpenCode
 - Optional integrations, detected at runtime:
   - **Sandbox** — [nono](https://github.com/nolabs-ai/nono), external sandbox for enabled Chat sandboxing
   - **Memory** — [Hindsight](https://github.com/vectorize-io/hindsight), provider-backed recall and reflection
   - **Logic** — [Vibefeld](https://github.com/tobiasosborne/vibefeld), prompt-scoped reasoning assist (argument map, critique, AF structure recording) when a compatible `af` runtime is present
+
+Provider authentication remains configured in OpenCode; do not copy or share credentials for Scribe setup. Keep OpenCode and Scribe updated to supported versions; do not downgrade OpenCode to work around a startup failure. For launch and prompt diagnostics, open **Output → OpenCode Scribe**. Records show the selected backend, preflight, safe profile status/name, and bounded stages; they are not proof of OS containment. Share only the latest relevant redacted lines and their timestamp. If a candidate is broken, disable or uninstall it and use the independent OpenCode V2 TUI; released 0.17.1 is V1 and is not a V2 rollback.
 
 #### Recommended MCP research tools
 

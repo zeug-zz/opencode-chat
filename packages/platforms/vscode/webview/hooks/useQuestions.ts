@@ -35,6 +35,9 @@ export function useQuestions(activeSessionRef: RefObject<ChatSession | null>) {
     (event: AgentEvent) => {
       const activeId = activeSessionRef.current?.id;
       switch (event.type) {
+        case "server.connected":
+          clearQuestions();
+          break;
         case "question.asked": {
           if (activeId && event.properties.sessionID !== activeId) break;
           addQuestion(event.properties);
@@ -48,7 +51,7 @@ export function useQuestions(activeSessionRef: RefObject<ChatSession | null>) {
           break;
       }
     },
-    [activeSessionRef, addQuestion, removeQuestion],
+    [activeSessionRef, addQuestion, clearQuestions, removeQuestion],
   );
 
   return {

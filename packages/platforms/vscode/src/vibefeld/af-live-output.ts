@@ -106,7 +106,9 @@ type AfLiveTextRead =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const failure = (reason: Parameters<typeof classifyAfRuntimeResult>[0]): AfLiveOutputResult<never> => ({
+const failure = (
+  reason: Exclude<Parameters<typeof classifyAfRuntimeResult>[0], "success">,
+): AfLiveOutputResult<never> => ({
   ok: false,
   failure: classifyAfRuntimeResult(reason),
 });

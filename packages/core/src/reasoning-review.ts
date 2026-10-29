@@ -27,6 +27,8 @@ export type ReasoningEvidenceStatus =
 
 export type ReasoningReviewInvocation = "manual" | "automatic";
 
+export type ReasoningReviewProgressStage = "claimProjection" | "adversarialReview";
+
 /** Stable, provider-neutral reasons for an automatically selected review. */
 export type ReasoningReviewRoutingReasonCode =
   | "evidence_dependent"

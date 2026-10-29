@@ -90,7 +90,7 @@ describe("private release updater", () => {
     });
   });
 
-  it.each([
+  it.each<[string, Partial<import("../private-release-updater").GitHubLatestRelease>]>([
     ["prerelease", { prerelease: true }],
     ["draft", { draft: true }],
     ["malformed tag", { tag_name: "release-0.16" }],
@@ -122,15 +122,12 @@ describe("private release updater", () => {
   });
 
   it("bounds network and JSON failures as no update", async () => {
-    const networkFailure = vi.fn(async () => {
+    const networkFailure: ReleaseMetadataFetcher = vi.fn(async () => {
       throw new Error("network");
-    }) as ReleaseMetadataFetcher;
-    const invalidJson = vi.fn(async () => ({
-      ok: true,
-      json: async () => {
-        throw new Error("invalid json");
-      },
-    })) as ReleaseMetadataFetcher;
+    });
+    const invalidJsonResponse = new Response(null, { status: 200 });
+    vi.spyOn(invalidJsonResponse, "json").mockRejectedValue(new Error("invalid json"));
+    const invalidJson: ReleaseMetadataFetcher = vi.fn().mockResolvedValue(invalidJsonResponse);
     await expect(findAvailablePrivateRelease("0.15.2", networkFailure)).resolves.toBeUndefined();
     await expect(findAvailablePrivateRelease("0.15.2", invalidJson)).resolves.toBeUndefined();
   });
@@ -218,12 +215,12 @@ describe("private release updater", () => {
   });
 
   it.each([
-    ["oversized compressed metadata", 0, 1024 * 1024 + 1, vsix()],
+    ["oversized compressed metadata", 0, 1024 * 1024 + 1, vsix(), undefined],
     ["oversized uncompressed metadata", 0, vsix().byteLength, vsix(), 1024 * 1024 + 1],
-    ["unsupported compression method", 99, vsix().byteLength, vsix()],
+    ["unsupported compression method", 99, vsix().byteLength, vsix(), undefined],
   ])(
     "rejects %s before manifest inflation or allocation",
-    async (_, method, compressedSize, bytes, uncompressedSize) => {
+    async (_, method, compressedSize, bytes, uncompressedSize?: number) => {
       const fileSystem = {
         mkdir: vi.fn(async () => undefined),
         writeFile: vi.fn(async () => undefined),

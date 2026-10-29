@@ -34,7 +34,9 @@ const readGate = (env: NodeJS.ProcessEnv): Gate => {
 const prepareIntegration = (
   env: NodeJS.ProcessEnv,
   seams: Readonly<{ resolveExecutable: (selected: string) => unknown; spawn: () => unknown }>,
-): { readonly skipped: true; readonly reason: Gate["reason"] } | { readonly skipped: false } => {
+):
+  | { readonly skipped: true; readonly reason: Extract<Gate, { enabled: false }>["reason"] }
+  | { readonly skipped: false } => {
   const gate = readGate(env);
   if (!gate.enabled) return { skipped: true, reason: gate.reason };
   seams.resolveExecutable(gate.executable);

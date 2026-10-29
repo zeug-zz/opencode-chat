@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { loadChatSandboxSettings, updateChatSandboxSettings } from "../chat-sandbox-settings";
 
 describe("updateChatSandboxSettings", () => {
-  const workspaceTarget = { fsPath: "/workspace/project", scheme: "file" };
+  const workspaceTarget = vscode.Uri.file("/workspace/project");
   const update = vi.fn().mockResolvedValue(undefined);
   const getConfiguration = vi.mocked(vscode.workspace.getConfiguration);
 
@@ -52,7 +52,7 @@ describe("updateChatSandboxSettings", () => {
   });
 
   it("fails before updating a managed Chat sandbox setting", async () => {
-    getConfiguration.mockImplementation((section: string) => {
+    getConfiguration.mockImplementation((section?: string) => {
       if (section === "opencode-chat") {
         return {
           get: vi.fn((key: string) => (key === "chatSandbox.mode" ? "inherit" : true)),
@@ -70,7 +70,7 @@ describe("updateChatSandboxSettings", () => {
   });
 
   it("reports unsupported platforms and disables an otherwise requested sandbox", () => {
-    vi.mocked(vscode.workspace.getConfiguration).mockImplementation((section: string) => {
+    vi.mocked(vscode.workspace.getConfiguration).mockImplementation((section?: string) => {
       if (section === "chat.agent.sandbox") {
         return { get: vi.fn(() => "on"), inspect: vi.fn(() => undefined) } as never;
       }
@@ -88,7 +88,7 @@ describe("updateChatSandboxSettings", () => {
   });
 
   it("keeps an explicitly requested sandbox inactive on unsupported Windows", () => {
-    vi.mocked(vscode.workspace.getConfiguration).mockImplementation((section: string) => {
+    vi.mocked(vscode.workspace.getConfiguration).mockImplementation((section?: string) => {
       if (section === "chat.agent.sandbox") {
         return { get: vi.fn(() => "off"), inspect: vi.fn(() => undefined) } as never;
       }
@@ -109,7 +109,7 @@ describe("updateChatSandboxSettings", () => {
 });
 
 describe("loadChatSandboxSettings", () => {
-  const workspaceTarget = { fsPath: "/workspace/project", scheme: "file" };
+  const workspaceTarget = vscode.Uri.file("/workspace/project");
 
   it.each([
     ["on", true, true],
@@ -121,7 +121,7 @@ describe("loadChatSandboxSettings", () => {
     ["true", false, false],
     ["false", false, false],
   ] as const)("normalizes native enabled value %s", (nativeValue, enabled, valid) => {
-    vi.mocked(vscode.workspace.getConfiguration).mockImplementation((section: string) => {
+    vi.mocked(vscode.workspace.getConfiguration).mockImplementation((section?: string) => {
       if (section === "chat.agent.sandbox") {
         return {
           get: vi.fn(() => nativeValue),

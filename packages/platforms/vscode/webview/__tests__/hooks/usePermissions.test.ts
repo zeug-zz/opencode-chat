@@ -57,6 +57,24 @@ describe("usePermissions", () => {
     });
   });
 
+  it("clears old pending permissions on reconnect and restores only active-session asks", () => {
+    const ref = createSessionRef({ id: "active" } as ChatSession);
+    const { result } = renderHook(() => usePermissions(ref));
+    const ask = (id: string, sessionID: string) =>
+      result.current.handlePermissionEvent({
+        type: "permission.asked",
+        properties: { id, sessionID, permission: "bash", patterns: ["*"] },
+      } as unknown as AgentEvent);
+    act(() => ask("old", "active"));
+    act(() =>
+      result.current.handlePermissionEvent({ type: "server.connected", properties: {} } as unknown as AgentEvent),
+    );
+    expect(result.current.permissions.size).toBe(0);
+    act(() => ask("restored", "active"));
+    act(() => ask("foreign", "other"));
+    expect([...result.current.permissions.keys()]).toEqual(["restored"]);
+  });
+
   // permission.replied
   context("permission.replied イベントを受信した場合", () => {
     // removes permission from the map

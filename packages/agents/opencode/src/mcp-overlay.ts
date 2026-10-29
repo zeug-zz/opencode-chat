@@ -1,16 +1,20 @@
-import type { McpInventory } from "./mcp-inventory";
+import type { McpInventory, McpServerDefinition } from "./mcp-inventory";
 
 export type McpOverlay = {
-  mcp: Record<string, { enabled: boolean }>;
-  locked: string[];
+  mcp: {
+    timeout?: { startup?: number; catalog?: number; execution?: number };
+    servers: Record<string, McpServerDefinition>;
+  };
 };
 
 export function buildMcpOverlay(inventory: McpInventory, prefs: Record<string, boolean>): McpOverlay {
-  const mcp: Record<string, { enabled: boolean }> = {};
-
+  const servers: Record<string, McpServerDefinition> = Object.create(null) as Record<string, McpServerDefinition>;
   for (const name of Object.keys(inventory.servers).sort()) {
-    mcp[name] = { enabled: prefs[name] === true };
+    const selectedDefinition = structuredClone(inventory.servers[name].definition);
+    // Native V2 uses `disabled`; a selected ordinary server may override that
+    // field, while native system/managed configuration loads later and wins.
+    selectedDefinition.disabled = prefs[name] !== true;
+    servers[name] = selectedDefinition;
   }
-
-  return { mcp, locked: [] };
+  return { mcp: { ...(inventory.timeout ? { timeout: { ...inventory.timeout } } : {}), servers } };
 }

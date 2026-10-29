@@ -308,6 +308,32 @@ describe("ToolConfigPanel", () => {
       expect(mcpCheckboxes).toHaveLength(2);
     });
 
+    it("disables a locked server's checkbox, shows the localized hint, and never reports it enabled", async () => {
+      const onMcpToggle = vi.fn();
+      const { container } = render(
+        <ToolConfigPanel
+          {...defaultProps}
+          mcpServers={{
+            corp: { connected: true, status: "connected" },
+            github: { connected: false, status: "disabled" },
+          }}
+          mcpLocked={["corp"]}
+          onMcpToggle={onMcpToggle}
+        />,
+      );
+      const boxFor = (name: string) =>
+        Array.from(container.querySelectorAll("label"))
+          .find((label) => label.textContent?.startsWith(name))
+          ?.querySelector<HTMLInputElement>('input[type="checkbox"]') as HTMLInputElement;
+      const corp = boxFor("corp");
+      const github = boxFor("github");
+      expect(corp.disabled).toBe(true);
+      expect(corp.checked).toBe(false);
+      expect(github.disabled).toBe(false);
+      expect(container.textContent).toContain("Blocked by system or managed policy.");
+      expect(onMcpToggle).not.toHaveBeenCalled();
+    });
+
     // calls onMcpToggle with correct arguments when checkbox changed
     it("チェックボックス変更時に onMcpToggle を呼び出すこと", async () => {
       const onMcpToggle = vi.fn();
