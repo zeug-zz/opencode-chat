@@ -1,6 +1,6 @@
 # Release 0.18.0 CodeQL Alert Review
 
-**Status:** Alerts 6–9 independently reviewed as false positives. The GitHub dismissal status is primary-owned; this note does not claim the alerts are dismissed or the review is complete. No production trust boundary changed, and no finding was fixed by altering fixtures.
+**Status:** Alerts 6–9 were individually dismissed as false positives after primary review. Dismissals apply only to these fixture-only alerts; required CodeQL scanners remain enabled. No production trust boundary changed, and no finding was fixed by altering fixtures.
 
 ## Reviewed alerts
 

@@ -1,6 +1,6 @@
 # OpenCode Scribe
 
-[![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.134.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
+[![Visual Studio Code](<https://img.shields.io/badge/VS%20Code-^1.137.0-007ACC?logo=visual-studio-code>)](https://code.visualstudio.com/)
 [![License](https://img.shields.io/github/license/zeug-zz/opencode-chat)](LICENSE)
 [![Test](https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/test.yml?branch=main&logo=github)](https://github.com/zeug-zz/opencode-chat/actions/workflows/test.yml)
 [![Security Audit](<https://img.shields.io/github/actions/workflow/status/zeug-zz/opencode-chat/security-audit.yml?branch=main&label=security%20audit&logo=github>)](https://github.com/zeug-zz/opencode-chat/actions/workflows/security-audit.yml)

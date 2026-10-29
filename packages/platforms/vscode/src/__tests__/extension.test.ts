@@ -3145,6 +3145,25 @@ describe("extension", () => {
         assetName: "opencode-scribe-0.16.0.vsix",
         downloadUrl: "https://github.com/zeug-zz/opencode-chat/releases/download/v0.16.0/opencode-scribe-0.16.0.vsix",
       };
+      const updatePromptMessage = `OpenCode Scribe update available: ${availableRelease.version}`;
+      const reloadPromptMessage = "OpenCode Scribe was updated. Restart VS Code to finish.";
+
+      function respondToUpdaterPrompts(
+        updateAction: "Update" | "View Release" | undefined,
+        reloadAction: "Restart VS Code" | undefined = undefined,
+      ) {
+        vscodeMock.showInformationMessage.mockImplementation(async (message, ...actions) => {
+          if (message === updatePromptMessage && updateAction && actions.includes(updateAction)) return updateAction;
+          if (message === reloadPromptMessage && reloadAction && actions.includes(reloadAction)) return reloadAction;
+          return undefined;
+        });
+      }
+
+      async function waitForUpdaterPrompt(message: string, ...actions: string[]) {
+        await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(message, ...actions), {
+          timeout: 10_000,
+        });
+      }
 
       beforeEach(() => {
         mockUpdaterUx = true;
@@ -3166,12 +3185,10 @@ describe("extension", () => {
       });
 
       it("does not download, install, or reload when Update is dismissed", async () => {
-        vscodeMock.showInformationMessage.mockResolvedValue(undefined);
+        respondToUpdaterPrompts(undefined);
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
-        await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalled(), {
-          timeout: 10_000,
-        });
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
 
         expect(mockDownloadAndValidate).not.toHaveBeenCalled();
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
@@ -3182,9 +3199,10 @@ describe("extension", () => {
       });
 
       it("opens the release page without installing when that action is chosen", async () => {
-        vscodeMock.showInformationMessage.mockResolvedValue("View Release");
+        respondToUpdaterPrompts("View Release");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(() => expect(vscode.env.openExternal).toHaveBeenCalled(), {
           timeout: 10_000,
         });
@@ -3199,9 +3217,10 @@ describe("extension", () => {
       });
 
       it("installs the consented local VSIX, cleans it up, and asks separately before reload", async () => {
-        vscodeMock.showInformationMessage.mockResolvedValueOnce("Update").mockResolvedValueOnce(undefined);
+        respondToUpdaterPrompts("Update");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(() => expect(mockDownloadAndValidate).toHaveBeenCalled(), {
           timeout: 10_000,
         });
@@ -3219,13 +3238,15 @@ describe("extension", () => {
           () => expect(mockAbandonLocalInstaller).toHaveBeenCalledWith(expect.objectContaining({ scheme: "file" })),
           { timeout: 10_000 },
         );
+        await waitForUpdaterPrompt(reloadPromptMessage, "Restart VS Code");
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
       }, 15_000);
 
       it("reloads only after the separate restart confirmation", async () => {
-        vscodeMock.showInformationMessage.mockResolvedValueOnce("Update").mockResolvedValueOnce("Restart VS Code");
+        respondToUpdaterPrompts("Update", "Restart VS Code");
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(
           () => expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.reloadWindow"),
           { timeout: 10_000 },
@@ -3238,10 +3259,11 @@ describe("extension", () => {
 
       it("reports a bounded download failure and keeps the manual retry command available", async () => {
         mockDownloadAndValidate.mockResolvedValueOnce(undefined);
-        vscodeMock.showInformationMessage.mockResolvedValue("Update");
+        respondToUpdaterPrompts("Update");
         const ext = await importExtension();
         const context = updaterContext(new Map());
         await ext.activate(context as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
         await vi.waitFor(
           () =>
             expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
@@ -3257,10 +3279,11 @@ describe("extension", () => {
       });
 
       it("bounds installer rejection, cleans up the local artifact, and does not ask to reload", async () => {
-        vscodeMock.showInformationMessage.mockResolvedValue("Update");
+        respondToUpdaterPrompts("Update");
         vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("installer rejected"));
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
 
         await vi.waitFor(
           () =>
@@ -3278,12 +3301,13 @@ describe("extension", () => {
       });
 
       it("bounds reload rejection after cleanup and preserves the manual retry path", async () => {
-        vscodeMock.showInformationMessage.mockResolvedValueOnce("Update").mockResolvedValueOnce("Restart VS Code");
+        respondToUpdaterPrompts("Update", "Restart VS Code");
         vi.mocked(vscode.commands.executeCommand)
           .mockResolvedValueOnce(undefined)
           .mockRejectedValueOnce(new Error("reload rejected"));
         const ext = await importExtension();
         await ext.activate(updaterContext(new Map()) as never);
+        await waitForUpdaterPrompt(updatePromptMessage, "Update", "View Release");
 
         await vi.waitFor(
           () =>

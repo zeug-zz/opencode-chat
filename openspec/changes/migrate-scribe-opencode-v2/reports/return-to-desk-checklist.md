@@ -1,5 +1,9 @@
 # 0.18.0 return-to-desk checklist
 
+## Current release decision (2026-10-30)
+
+The user explicitly authorizes GitHub 0.18.0 publication despite the deferred qualification items below. This authorization changes the publication decision only: actual-host containment/privacy, reconnect latency/grace, inherited integrations, retention, and soak remain **DEFERRED / UNVERIFIED**, not passed, waived, or fully accepted. Partial manual review remains possible when the strict bounded verifier rejects; no validation or budgets were relaxed. The older “no publication authorized/not ready” statements below are historical decision records, not current authorization. No task checkbox is closed and full acceptance is not claimed.
+
 ## Final writing handoff (2026-10-30)
 
 Local UI cleanup is complete. No further formal isolated-host programme is planned. Remaining migration, live-host, latency/grace, inherited-integration, retention, soak, and audit gates remain **DEFERRED / UNVERIFIED** and are not release acceptance; no archive or publication is authorized. RC28 does not contain the latest UI cleanup. The new local user-test package is `packages/platforms/vscode/opencode-scribe-0.18.0.vsix`, SHA-256 `9df42c0170178ca8970ad21aef46640d50204784f84472ba1cf84f2dc212f503`; it is not installed or published. Partial manual review can reject a verifier over-limit result; no bounds were relaxed and no code fix is claimed. Recovery is the independent OpenCode V2 TUI; do not downgrade.

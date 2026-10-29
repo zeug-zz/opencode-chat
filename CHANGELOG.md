@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-30
+
 ### Overview
 
 - **0.18.0 is a major architectural rebuild for OpenCode V2 only**, not an incremental fork update. It replaces the legacy integration with a native V2 adapter, an authenticated extension-owned foreground server, in-memory overlays, and native event, session, and reasoning integrations, while retaining Scout research, Write reports, and independent TUI handoff.
@@ -14,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Reasoning assist uses an ephemeral current-turn brief through Scribe's bundled private plugin; completed-answer review is available under secondary **More actions**, without dedicated thinking/review Markdown-copy controls.
+- Optional critic and verifier reviews run only when explicitly invoked; the hidden reviewers are not exposed as ordinary agents or tools.
 - **Breaking:** Scribe now runs on OpenCode V2 only. Production version eligibility accepts stable canonical OpenCode versions `>=2.1.3` and `<3.0.0`; exact patch equality is not required. This does not qualify every future release: the private authenticated child PID, endpoint, version/location binding, and response-contract checks remain fail-closed. V1 support is removed.
 - Native V2 Code Mode (`execute`/search over permitted tools) for Scout, the research worker and Write; restricted reviewers stay tool-free. This composes existing permitted tools and adds no shell or security authority.
 - Hindsight memory is detected through the exact approved plugin being active in the native plugin list (V2 has no tool-ID catalog).
@@ -31,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Added bounded, redacted launch, prompt-stage, and plugin-activation diagnostics in the **Output → OpenCode Scribe** channel; an optional Hindsight inventory probe is bounded separately from launch.
 - Session diffs show binary or capped files as "content unavailable" instead of failing.
 - Independent TUI handoff deletes its temporary session export after import.
+
+### Security
+
+- Patched audited dependencies using bounded, parent-edge overrides and compatible updates. Scoped Zod, MSAL, and Mermaid/KaTeX compatibility were tested; the full audit reports no known vulnerabilities.
+- CodeQL alerts 6–9 were dismissed individually as fixture-only false positives; no global rule suppression or fixture rewrite was made.
+
+### Known limitations
+
+- Actual-host containment, injection privacy, reconnect behavior and latency/grace, inherited integrations, retention, and soak have not been fully qualified.
+- Manual review can be partial when the strict bounded verifier rejects a result. Validation and budgets have not been relaxed.
 
 ## [0.17.1] - 2026-09-26
 
@@ -395,7 +408,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Todo display
 - i18n support (English, Japanese)
 
-[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/zeug-zz/opencode-chat/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.17.1...v0.18.0
 [0.16.0]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/zeug-zz/opencode-chat/compare/v0.15.0...v0.15.1
