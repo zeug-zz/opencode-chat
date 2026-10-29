@@ -33,5 +33,11 @@ jobs:
       - name: Lint & Format check
         run: pnpm check
 
+      - name: Check sandbox dependency compatibility
+        run: pnpm --filter @opencode-chat/agent-opencode exec vitest run src/__tests__/sandbox-dependency-compatibility.test.ts
+
+      - name: Check release dependency compatibility
+        run: node packages/platforms/vscode/scripts/test-release-dependency-compatibility.mjs
+
       - name: Test
         run: pnpm test:all
