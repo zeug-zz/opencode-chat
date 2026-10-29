@@ -1185,9 +1185,17 @@ describe("OpenCodeAgent", () => {
       expect(agents.scout).toMatchObject({ mode: "all", system: expect.any(String) });
       expect(agents["chat-research-worker"]).toMatchObject({ mode: "subagent", system: expect.any(String) });
       expect(agents.build.mode).toBe("all");
-      expect(agents.scout.system).toContain("Consider the hidden chat-reasoning-critic");
-      expect(agents.scout.system).toContain("each exact target at most once per user turn");
-      expect(agents.scout.system).toContain("supports background execution");
+      expect(agents.scout.system).toContain(
+        "chat-reasoning-critic and chat-reasoning-verifier are hidden agent IDs, not tools",
+      );
+      expect(agents.scout.system).toContain("Invoke via native subagent with agent set to the exact ID");
+      expect(agents.scout.system).toContain("absent from the agent catalog; omission is not unavailability");
+      expect(agents.scout.system).toContain("Never call either for ordinary questions");
+      expect(agents.scout.system).toContain(
+        "Only a missing subagent tool or an actual failed/denied invocation means unavailable",
+      );
+      expect(agents.scout.system).toContain("Invoke each at most once per user turn");
+      expect(agents.scout.system).toContain("Background is allowed, but await completion");
       expect(nativePermissionEffect(agents.scout, "execute")).toBe("allow");
       expect(nativePermissionEffect(agents.scout, "subagent", "chat-research-worker")).toBe("allow");
       expect(nativePermissionEffect(agents.scout, "subagent", "chat-reasoning-critic")).toBe("allow");

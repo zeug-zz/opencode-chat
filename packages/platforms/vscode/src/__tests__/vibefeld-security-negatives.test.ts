@@ -347,9 +347,14 @@ describe("Vibefeld runtime bridge security negatives", () => {
     );
     expect(agentSource).not.toMatch(/(?:\baf\b|vibefeld|proofWorkspace|customTools)/iu);
     expect(chatPrompt).toMatch(/delegate only to\s+the injected read-only `chat-research-worker`/u);
-    expect(chatPrompt).toContain("Use the hidden `chat-reasoning-critic`");
-    expect(chatPrompt).toContain("`chat-reasoning-verifier` only to check critic objections");
-    expect(chatPrompt).toMatch(/each exact\s+target may be called at most once per user turn/u);
+    expect(chatPrompt).toContain("`chat-reasoning-critic` and `chat-reasoning-verifier` are hidden agent IDs,");
+    expect(chatPrompt).toContain("Invoke via native subagent with `agent` set to the exact ID");
+    expect(chatPrompt).toContain("absent from the agent catalog; omission is not unavailability");
+    expect(chatPrompt).toContain("verifier only for\n  critic objections");
+    expect(chatPrompt).toContain("Never call either for ordinary questions");
+    expect(chatPrompt).toContain("subagent tool is");
+    expect(chatPrompt).toContain("invocation actually fails/is denied");
+    expect(chatPrompt).toContain("once per user turn");
     expect(writePrompt).toContain("Write never uses task or subagent workflows");
   });
 
